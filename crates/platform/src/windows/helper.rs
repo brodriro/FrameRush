@@ -91,6 +91,7 @@ pub struct Helper {
     conn: Mutex<BufReader<File>>,
     /// Handle del proceso del helper (mantiene válido su PID mientras dure la conexión).
     _process: Option<OwnedHandle>,
+    pid: Option<u32>,
 }
 
 impl Helper {
@@ -110,7 +111,13 @@ impl Helper {
         Ok(Helper {
             conn: Mutex::new(BufReader::new(file)),
             _process: Some(process),
+            pid: Some(pid),
         })
+    }
+
+    /// PID del proceso del helper.
+    pub(super) fn pid(&self) -> Option<u32> {
+        self.pid
     }
 
     pub(super) fn apply_tweak(&self, tweak: Tweak) -> Result<()> {
@@ -443,6 +450,7 @@ mod tests {
         Helper {
             conn: Mutex::new(BufReader::new(file)),
             _process: None,
+            pid: None,
         }
     }
 

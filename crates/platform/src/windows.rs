@@ -27,13 +27,19 @@ use crate::{
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE};
+use windows_sys::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE, INVALID_HANDLE_VALUE,
+};
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+};
 use windows_sys::Win32::System::Threading::{
     ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetPriorityClass,
     GetProcessAffinityMask, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
-    OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
-    PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, REALTIME_PRIORITY_CLASS, SetPriorityClass,
-    SetProcessAffinityMask, TerminateProcess,
+    OpenProcess, OpenThread, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_SET_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, REALTIME_PRIORITY_CLASS,
+    ResumeThread, SetPriorityClass, SetProcessAffinityMask, SuspendThread, THREAD_SUSPEND_RESUME,
+    TerminateProcess,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
@@ -50,6 +56,8 @@ pub struct WindowsPlatform {
     /// Helper elevado para los ajustes que piden admin. Sin él se intentan en este proceso,
     /// que falla con `AccessDenied` si no está elevado.
     helper: Option<Helper>,
+    /// PID del helper: como la propia app, nunca se congela ni se cierra (V17).
+    helper_pid: Option<u32>,
 }
 
 impl WindowsPlatform {
@@ -60,6 +68,7 @@ impl WindowsPlatform {
     /// Plataforma que delega en `helper` los ajustes que piden admin.
     pub fn with_helper(helper: Helper) -> Self {
         Self {
+            helper_pid: helper.pid(),
             helper: Some(helper),
         }
     }
@@ -92,11 +101,12 @@ impl WindowsPlatform {
         Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
     }
 
-    /// Nunca se congela ni se cierra el proceso que tiene que reanudar al resto (V17).
-    fn refuse_self(target: &Target) -> Result<()> {
-        if target.pid == std::process::id() {
+    /// Nunca se congela ni se cierra el proceso que tiene que reanudar al resto, ni el helper
+    /// (V17).
+    fn refuse_own(&self, target: &Target) -> Result<()> {
+        if target.pid == std::process::id() || Some(target.pid) == self.helper_pid {
             Err(PlatformError::AccessDenied(
-                "FrameRush no actúa sobre su propio proceso".into(),
+                "FrameRush no actúa sobre sus propios procesos".into(),
             ))
         } else {
             Ok(())
@@ -119,6 +129,55 @@ fn last_error(target: &Target) -> PlatformError {
         )),
         Some(ERROR_INVALID_PARAMETER) => PlatformError::NotFound(format!("pid {}", target.pid)),
         _ => PlatformError::Os(e.to_string()),
+    }
+}
+
+/// Aplica `op` (`SuspendThread` o `ResumeThread`) a cada hilo de `pid`. No es atómico: un hilo
+/// creado durante el recorrido queda sin tocar. Un hilo que ya terminó se salta.
+fn for_each_thread(pid: u32, op: unsafe extern "system" fn(HANDLE) -> u32) -> Result<()> {
+    // SAFETY: sin punteros; devuelve un handle nuevo o INVALID_HANDLE_VALUE.
+    let raw = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if raw == INVALID_HANDLE_VALUE {
+        return Err(PlatformError::Os(format!(
+            "listar los hilos: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    // SAFETY: `raw` es un handle válido y propio.
+    let snapshot = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let mut entry = THREADENTRY32 {
+        dwSize: size_of::<THREADENTRY32>() as u32,
+        ..Default::default()
+    };
+    let (mut touched, mut failed) = (0usize, 0usize);
+    // SAFETY: `entry` es un THREADENTRY32 con `dwSize` puesto, vivo durante el recorrido.
+    let mut more = unsafe { Thread32First(handle(&snapshot), &mut entry) } != 0;
+    while more {
+        if entry.th32OwnerProcessID == pid {
+            // SAFETY: OpenThread no toma punteros; devuelve un handle nuevo o null.
+            let t = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+            if !t.is_null() {
+                // SAFETY: `t` es un handle propio que se cierra al soltarlo.
+                let t = unsafe { OwnedHandle::from_raw_handle(t) };
+                // SAFETY: `t` se abrió con THREAD_SUSPEND_RESUME.
+                if unsafe { op(handle(&t)) } == u32::MAX {
+                    failed += 1;
+                } else {
+                    touched += 1;
+                }
+            }
+        }
+        // SAFETY: como en Thread32First.
+        more = unsafe { Thread32Next(handle(&snapshot), &mut entry) } != 0;
+    }
+    match (touched, failed) {
+        (0, _) => Err(PlatformError::Os(format!(
+            "ningún hilo accesible en el pid {pid}"
+        ))),
+        (_, 0) => Ok(()),
+        (_, n) => Err(PlatformError::Os(format!(
+            "{n} hilo(s) del pid {pid} sin cambiar"
+        ))),
     }
 }
 
@@ -186,21 +245,31 @@ impl ProcessControl for WindowsPlatform {
         Ok(())
     }
 
+    /// `NtSuspendProcess` y, si falla, hilo a hilo (V17).
     fn suspend(&self, target: &Target) -> Result<()> {
-        Self::refuse_self(target)?;
+        self.refuse_own(target)?;
         let h = self.open(target, PROCESS_SUSPEND_RESUME)?;
         // SAFETY: `h` es un handle abierto con PROCESS_SUSPEND_RESUME.
-        nt_status(unsafe { NtSuspendProcess(handle(&h)) })
+        if nt_status(unsafe { NtSuspendProcess(handle(&h)) }).is_ok() {
+            return Ok(());
+        }
+        self.revalidate(target)?;
+        for_each_thread(target.pid, SuspendThread)
     }
 
+    /// `NtResumeProcess` y, si falla, hilo a hilo.
     fn resume(&self, target: &Target) -> Result<()> {
         let h = self.open(target, PROCESS_SUSPEND_RESUME)?;
         // SAFETY: `h` es un handle abierto con PROCESS_SUSPEND_RESUME.
-        nt_status(unsafe { NtResumeProcess(handle(&h)) })
+        if nt_status(unsafe { NtResumeProcess(handle(&h)) }).is_ok() {
+            return Ok(());
+        }
+        self.revalidate(target)?;
+        for_each_thread(target.pid, ResumeThread)
     }
 
     fn kill(&self, target: &Target) -> Result<()> {
-        Self::refuse_self(target)?;
+        self.refuse_own(target)?;
         let h = self.open(target, PROCESS_TERMINATE)?;
         // SAFETY: `h` es un handle abierto con PROCESS_TERMINATE.
         if unsafe { TerminateProcess(handle(&h), 1) } == 0 {
@@ -798,6 +867,34 @@ mod tests {
     fn restore_without_a_backup_is_refused() {
         let w = WindowsPlatform::new();
         assert!(w.restore_tweak(Tweak::GameDvrOff, &[]).is_err());
+    }
+
+    /// El fallback por hilos congela y reanuda el hijo sin matarlo.
+    #[test]
+    fn thread_fallback_suspends_and_resumes_a_child() {
+        let mut v = victim();
+        for_each_thread(v.target.pid, SuspendThread).unwrap();
+        for_each_thread(v.target.pid, ResumeThread).unwrap();
+        assert!(v.child.try_wait().unwrap().is_none(), "sigue vivo");
+        assert!(for_each_thread(u32::MAX - 3, SuspendThread).is_err());
+    }
+
+    /// El helper, como la propia app, queda fuera de congelar y cerrar.
+    #[test]
+    fn never_suspends_the_helper() {
+        let v = victim();
+        let w = WindowsPlatform {
+            helper: None,
+            helper_pid: Some(v.target.pid),
+        };
+        assert!(matches!(
+            w.suspend(&v.target),
+            Err(PlatformError::AccessDenied(_))
+        ));
+        assert!(matches!(
+            w.kill(&v.target),
+            Err(PlatformError::AccessDenied(_))
+        ));
     }
 
     #[test]
