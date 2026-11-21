@@ -10,5 +10,12 @@ publish.workspace = true
 name = "framerush-helper"
 path = "src/main.rs"
 
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+framerush-platform.workspace = true
+
 [lints]
 workspace = true
