@@ -10,11 +10,11 @@ publish.workspace = true
 framerush-device.workspace = true
 framerush-platform.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 framerush-device = { workspace = true, features = ["samples"] }
-serde_json.workspace = true
 
 [lints]
 workspace = true
