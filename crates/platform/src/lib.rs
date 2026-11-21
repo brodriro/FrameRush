@@ -3,6 +3,8 @@
 //! El código `unsafe` o específico de un SO solo vive en este crate.
 
 mod error;
+#[cfg(any(test, feature = "mock"))]
+pub mod mock;
 mod process;
 mod system;
 

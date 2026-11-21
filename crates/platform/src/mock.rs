@@ -1,0 +1,371 @@
+//! `MockPlatform`: plataforma en memoria para los tests de `core` (feature `mock`).
+//!
+//! Imita las reglas que debe cumplir una plataforma real: revalida el [`Target`] antes de
+//! cada operación, un proceso cerrado desaparece y un servicio que no existe es `None`.
+//! Los valores de los tests los pone cada test; aquí no hay datos de ningún equipo.
+
+use crate::{
+    Capabilities, CapabilitySet, GameTuning, PlatformError, PowerControl, PowerPlan, Priority,
+    ProcessControl, ProcessInfo, Result, ServiceControl, ServiceState, StartTime, Target,
+};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
+
+#[derive(Debug, Clone)]
+struct MockProcess {
+    info: ProcessInfo,
+    priority: Priority,
+    suspended: bool,
+    affinity: Vec<usize>,
+}
+
+#[derive(Debug, Default)]
+struct State {
+    processes: Vec<MockProcess>,
+    services: BTreeMap<String, ServiceState>,
+    plans: Vec<PowerPlan>,
+    active_plan: Option<String>,
+    logical_cpus: usize,
+    caps: CapabilitySet,
+    next_start: u64,
+}
+
+/// Plataforma en memoria.
+#[derive(Debug)]
+pub struct MockPlatform {
+    state: Mutex<State>,
+}
+
+impl MockPlatform {
+    /// Plataforma vacía que admite todo, con `logical_cpus` CPU lógicas.
+    pub fn new(logical_cpus: usize) -> Self {
+        let caps = CapabilitySet {
+            set_priority: true,
+            suspend: true,
+            kill: true,
+            services: true,
+            power_plans: true,
+            affinity: true,
+        };
+        Self {
+            state: Mutex::new(State {
+                logical_cpus,
+                caps,
+                next_start: 1,
+                ..State::default()
+            }),
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, State> {
+        // Un test que hace panic con el lock tomado ya ha fallado; se sigue con el estado.
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Añade un proceso con prioridad Normal y todas las CPU, y devuelve su [`Target`].
+    pub fn spawn(&self, pid: u32, name: &str, exe_path: &str, memory_bytes: u64) -> Target {
+        let mut s = self.lock();
+        let target = Target {
+            pid,
+            start_time: StartTime(s.next_start),
+            exe_path: PathBuf::from(exe_path),
+        };
+        s.next_start += 1;
+        let affinity = (0..s.logical_cpus).collect();
+        s.processes.retain(|p| p.info.target.pid != pid);
+        s.processes.push(MockProcess {
+            info: ProcessInfo {
+                target: target.clone(),
+                name: name.to_owned(),
+                memory_bytes,
+                cpu_percent: None,
+            },
+            priority: Priority::Normal,
+            suspended: false,
+            affinity,
+        });
+        target
+    }
+
+    /// Añade un servicio con su estado.
+    pub fn add_service(&self, name: &str, state: ServiceState) {
+        self.lock().services.insert(name.to_owned(), state);
+    }
+
+    /// Define los planes de energía y el activo.
+    pub fn set_power_plans(&self, plans: Vec<PowerPlan>, active_id: &str) {
+        let mut s = self.lock();
+        s.plans = plans;
+        s.active_plan = Some(active_id.to_owned());
+    }
+
+    /// Cambia lo que admite la plataforma.
+    pub fn set_capabilities(&self, caps: CapabilitySet) {
+        self.lock().caps = caps;
+    }
+
+    /// `true` si el proceso está congelado.
+    pub fn is_suspended(&self, target: &Target) -> Result<bool> {
+        self.with_process(target, |p| Ok(p.suspended))
+    }
+
+    fn with_process<R>(
+        &self,
+        target: &Target,
+        f: impl FnOnce(&mut MockProcess) -> Result<R>,
+    ) -> Result<R> {
+        let mut s = self.lock();
+        let p = s
+            .processes
+            .iter_mut()
+            .find(|p| p.info.target.pid == target.pid)
+            .ok_or_else(|| PlatformError::NotFound(format!("pid {}", target.pid)))?;
+        if p.info.target != *target {
+            return Err(PlatformError::TargetChanged { pid: target.pid });
+        }
+        f(p)
+    }
+
+    fn require(&self, cap: fn(&CapabilitySet) -> bool, what: &'static str) -> Result<()> {
+        if cap(&self.lock().caps) {
+            Ok(())
+        } else {
+            Err(PlatformError::Unsupported(what))
+        }
+    }
+}
+
+impl ProcessControl for MockPlatform {
+    fn processes(&self) -> Result<Vec<ProcessInfo>> {
+        Ok(self
+            .lock()
+            .processes
+            .iter()
+            .map(|p| p.info.clone())
+            .collect())
+    }
+
+    fn is_same_process(&self, target: &Target) -> Result<bool> {
+        match self.with_process(target, |_| Ok(())) {
+            Ok(()) => Ok(true),
+            Err(PlatformError::NotFound(_) | PlatformError::TargetChanged { .. }) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn priority(&self, target: &Target) -> Result<Priority> {
+        self.with_process(target, |p| Ok(p.priority))
+    }
+
+    fn set_priority(&self, target: &Target, priority: Priority) -> Result<()> {
+        self.require(|c| c.set_priority, "prioridad")?;
+        self.with_process(target, |p| {
+            p.priority = priority;
+            Ok(())
+        })
+    }
+
+    fn suspend(&self, target: &Target) -> Result<()> {
+        self.require(|c| c.suspend, "suspender")?;
+        self.with_process(target, |p| {
+            p.suspended = true;
+            Ok(())
+        })
+    }
+
+    fn resume(&self, target: &Target) -> Result<()> {
+        self.require(|c| c.suspend, "reanudar")?;
+        self.with_process(target, |p| {
+            p.suspended = false;
+            Ok(())
+        })
+    }
+
+    fn kill(&self, target: &Target) -> Result<()> {
+        self.require(|c| c.kill, "cerrar")?;
+        self.with_process(target, |_| Ok(()))?;
+        self.lock().processes.retain(|p| p.info.target != *target);
+        Ok(())
+    }
+}
+
+impl ServiceControl for MockPlatform {
+    fn service_state(&self, name: &str) -> Result<Option<ServiceState>> {
+        Ok(self.lock().services.get(name).copied())
+    }
+
+    fn stop_service(&self, name: &str) -> Result<()> {
+        self.set_service(name, ServiceState::Stopped)
+    }
+
+    fn start_service(&self, name: &str) -> Result<()> {
+        self.set_service(name, ServiceState::Running)
+    }
+}
+
+impl MockPlatform {
+    fn set_service(&self, name: &str, state: ServiceState) -> Result<()> {
+        self.require(|c| c.services, "servicios")?;
+        let mut s = self.lock();
+        let slot = s
+            .services
+            .get_mut(name)
+            .ok_or_else(|| PlatformError::NotFound(format!("servicio {name}")))?;
+        *slot = state;
+        Ok(())
+    }
+}
+
+impl PowerControl for MockPlatform {
+    fn power_plans(&self) -> Result<Vec<PowerPlan>> {
+        Ok(self.lock().plans.clone())
+    }
+
+    fn active_power_plan(&self) -> Result<PowerPlan> {
+        let s = self.lock();
+        let id = s
+            .active_plan
+            .as_deref()
+            .ok_or_else(|| PlatformError::NotFound("plan activo".into()))?;
+        s.plans
+            .iter()
+            .find(|p| p.id == id)
+            .cloned()
+            .ok_or_else(|| PlatformError::NotFound(format!("plan {id}")))
+    }
+
+    fn set_active_power_plan(&self, id: &str) -> Result<()> {
+        self.require(|c| c.power_plans, "planes de energía")?;
+        let mut s = self.lock();
+        if !s.plans.iter().any(|p| p.id == id) {
+            return Err(PlatformError::NotFound(format!("plan {id}")));
+        }
+        s.active_plan = Some(id.to_owned());
+        Ok(())
+    }
+}
+
+impl GameTuning for MockPlatform {
+    fn affinity(&self, target: &Target) -> Result<Vec<usize>> {
+        self.with_process(target, |p| Ok(p.affinity.clone()))
+    }
+
+    fn set_affinity(&self, target: &Target, cpus: &[usize]) -> Result<()> {
+        self.require(|c| c.affinity, "afinidad")?;
+        let n = self.lock().logical_cpus;
+        if cpus.is_empty() || cpus.iter().any(|&c| c >= n) {
+            return Err(PlatformError::Os(format!(
+                "afinidad inválida {cpus:?} con {n} CPU lógicas"
+            )));
+        }
+        self.with_process(target, |p| {
+            p.affinity = cpus.to_vec();
+            Ok(())
+        })
+    }
+}
+
+impl Capabilities for MockPlatform {
+    fn capabilities(&self) -> CapabilitySet {
+        self.lock().caps
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Platform;
+
+    fn platform() -> MockPlatform {
+        MockPlatform::new(8)
+    }
+
+    #[test]
+    fn is_a_full_platform() {
+        fn takes(_: &dyn Platform) {}
+        takes(&platform());
+    }
+
+    #[test]
+    fn suspend_and_resume_round_trip() {
+        let m = platform();
+        let t = m.spawn(10, "OneDrive.exe", r"C:\OneDrive\OneDrive.exe", 100);
+        m.suspend(&t).unwrap();
+        assert!(m.is_suspended(&t).unwrap());
+        m.resume(&t).unwrap();
+        assert!(!m.is_suspended(&t).unwrap());
+    }
+
+    #[test]
+    fn reused_pid_is_rejected() {
+        let m = platform();
+        let old = m.spawn(42, "a.exe", "/a", 1);
+        let new = m.spawn(42, "b.exe", "/b", 1);
+        assert_ne!(old, new);
+        assert!(!m.is_same_process(&old).unwrap());
+        assert_eq!(
+            m.set_priority(&old, Priority::Idle),
+            Err(PlatformError::TargetChanged { pid: 42 })
+        );
+        assert_eq!(m.priority(&new).unwrap(), Priority::Normal);
+    }
+
+    #[test]
+    fn kill_removes_the_process() {
+        let m = platform();
+        let t = m.spawn(7, "x.exe", "/x", 1);
+        m.kill(&t).unwrap();
+        assert!(!m.is_same_process(&t).unwrap());
+        assert!(matches!(m.resume(&t), Err(PlatformError::NotFound(_))));
+    }
+
+    #[test]
+    fn missing_service_is_none() {
+        let m = platform();
+        m.add_service("WSearch", ServiceState::Running);
+        assert_eq!(m.service_state("SysMain").unwrap(), None);
+        m.stop_service("WSearch").unwrap();
+        assert_eq!(
+            m.service_state("WSearch").unwrap(),
+            Some(ServiceState::Stopped)
+        );
+        assert!(matches!(
+            m.stop_service("SysMain"),
+            Err(PlatformError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn power_plan_must_exist() {
+        let m = platform();
+        let plan = |id: &str| PowerPlan {
+            id: id.into(),
+            name: format!("Plan {id}"),
+        };
+        m.set_power_plans(vec![plan("a"), plan("b")], "a");
+        m.set_active_power_plan("b").unwrap();
+        assert_eq!(m.active_power_plan().unwrap().id, "b");
+        assert!(m.set_active_power_plan("z").is_err());
+    }
+
+    #[test]
+    fn affinity_is_validated_against_the_cpu_count() {
+        let m = MockPlatform::new(4);
+        let t = m.spawn(1, "game", "/game", 1);
+        assert_eq!(m.affinity(&t).unwrap(), vec![0, 1, 2, 3]);
+        m.set_affinity(&t, &[2, 3]).unwrap();
+        assert_eq!(m.affinity(&t).unwrap(), vec![2, 3]);
+        assert!(m.set_affinity(&t, &[4]).is_err());
+        assert!(m.set_affinity(&t, &[]).is_err());
+    }
+
+    #[test]
+    fn unsupported_capabilities_fail() {
+        let m = platform();
+        let t = m.spawn(1, "a", "/a", 1);
+        m.set_capabilities(CapabilitySet::default());
+        assert_eq!(m.suspend(&t), Err(PlatformError::Unsupported("suspender")));
+        assert!(!m.capabilities().kill);
+    }
+}

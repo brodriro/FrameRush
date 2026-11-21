@@ -10,5 +10,9 @@ publish.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
+[features]
+# MockPlatform en memoria para los tests de otros crates.
+mock = []
+
 [lints]
 workspace = true
