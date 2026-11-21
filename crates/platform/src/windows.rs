@@ -417,6 +417,20 @@ fn reg_values(tweak: Tweak) -> &'static [RegValue] {
                 value: 0,
             },
         ],
+        // PLAN.md V8: 0x26, quantum corto y variable con más peso para el primer plano.
+        Tweak::SchedulerForegroundBoost => &[RegValue {
+            hive: Hive::LocalMachine,
+            path: r"SYSTEM\CurrentControlSet\Control\PriorityControl",
+            name: "Win32PrioritySeparation",
+            value: 38,
+        }],
+        // Directiva "Turn off Power Throttling" (ADMX_Power Policy CSP).
+        Tweak::PowerThrottlingOff => &[RegValue {
+            hive: Hive::LocalMachine,
+            path: r"SYSTEM\CurrentControlSet\Control\Power\PowerThrottling",
+            name: "PowerThrottlingOff",
+            value: 1,
+        }],
         Tweak::UwpBackgroundOff => &[RegValue {
             hive: HKCU,
             path: r"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications",
@@ -623,13 +637,20 @@ mod tests {
     }
 
     #[test]
-    fn only_the_policy_tweak_requires_admin() {
+    fn only_hklm_tweaks_require_admin() {
         let w = WindowsPlatform::new();
         let admin: Vec<Tweak> = Tweak::ALL
             .into_iter()
             .filter(|t| w.tweak_requires_admin(*t))
             .collect();
-        assert_eq!(admin, [Tweak::GameDvrPolicyOff]);
+        assert_eq!(
+            admin,
+            [
+                Tweak::GameDvrPolicyOff,
+                Tweak::SchedulerForegroundBoost,
+                Tweak::PowerThrottlingOff
+            ]
+        );
     }
 
     /// Falla en el primer valor, antes de escribir nada.

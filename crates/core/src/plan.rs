@@ -202,10 +202,12 @@ pub fn plan(
 }
 
 /// Nivel desde el que un ajuste viene marcado (design/SETTINGS.md: los de nivel usuario están
-/// activos en todos los niveles; la directiva de Game DVR, desde Agresivo).
+/// activos en todos los niveles; los de todo el equipo, desde Agresivo).
 pub fn tweak_min_level(tweak: Tweak) -> Level {
     match tweak {
-        Tweak::GameDvrPolicyOff => Level::Agresivo,
+        Tweak::GameDvrPolicyOff | Tweak::SchedulerForegroundBoost | Tweak::PowerThrottlingOff => {
+            Level::Agresivo
+        }
         Tweak::GameDvrOff
         | Tweak::WindowsGameMode
         | Tweak::NotificationsOff
@@ -223,7 +225,9 @@ pub fn tweak_scope(tweak: Tweak) -> Scope {
         | Tweak::GameDvrPolicyOff
         | Tweak::WindowsGameMode
         | Tweak::VisualEffectsPerformance
-        | Tweak::UwpBackgroundOff => Scope::Persistent,
+        | Tweak::UwpBackgroundOff
+        | Tweak::SchedulerForegroundBoost
+        | Tweak::PowerThrottlingOff => Scope::Persistent,
     }
 }
 

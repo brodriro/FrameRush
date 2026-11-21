@@ -329,9 +329,12 @@ impl SystemTweaks for MockPlatform {
         Tweak::ALL.to_vec()
     }
 
-    /// Como en Windows: solo la directiva de Game DVR.
+    /// Como en Windows: los de todo el equipo.
     fn tweak_requires_admin(&self, tweak: Tweak) -> bool {
-        tweak == Tweak::GameDvrPolicyOff
+        matches!(
+            tweak,
+            Tweak::GameDvrPolicyOff | Tweak::SchedulerForegroundBoost | Tweak::PowerThrottlingOff
+        )
     }
 
     fn read_tweak(&self, tweak: Tweak) -> Result<Vec<SavedValue>> {

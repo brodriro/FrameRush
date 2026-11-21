@@ -74,16 +74,22 @@ pub enum Tweak {
     VisualEffectsPerformance,
     /// `uwp-background-off`: las apps UWP no se ejecutan en segundo plano.
     UwpBackgroundOff,
+    /// `scheduler-foreground-boost`: quantum corto y más tiempo de CPU para el primer plano.
+    SchedulerForegroundBoost,
+    /// `power-throttling-off`: Windows no limita la frecuencia de los procesos en segundo plano.
+    PowerThrottlingOff,
 }
 
 impl Tweak {
-    pub const ALL: [Tweak; 6] = [
+    pub const ALL: [Tweak; 8] = [
         Tweak::GameDvrOff,
         Tweak::GameDvrPolicyOff,
         Tweak::WindowsGameMode,
         Tweak::NotificationsOff,
         Tweak::VisualEffectsPerformance,
         Tweak::UwpBackgroundOff,
+        Tweak::SchedulerForegroundBoost,
+        Tweak::PowerThrottlingOff,
     ];
 
     /// Id de design/SETTINGS.md.
@@ -95,6 +101,8 @@ impl Tweak {
             Tweak::NotificationsOff => "notifications-off",
             Tweak::VisualEffectsPerformance => "visual-effects-performance",
             Tweak::UwpBackgroundOff => "uwp-background-off",
+            Tweak::SchedulerForegroundBoost => "scheduler-foreground-boost",
+            Tweak::PowerThrottlingOff => "power-throttling-off",
         }
     }
 }
