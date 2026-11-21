@@ -19,7 +19,7 @@ use crate::{
     SystemTweaks, Target, Tweak, scan_processes,
 };
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE};
 use windows_sys::Win32::System::Threading::{
@@ -247,6 +247,34 @@ impl GameTuning for WindowsPlatform {
         }
         Ok(())
     }
+
+    fn compat_flags(&self, exe: &Path) -> Result<Option<String>> {
+        registry::read_string(COMPAT_LAYERS, &exe_value_name(exe)?)
+    }
+
+    fn disable_fullscreen_optimizations(&self, exe: &Path) -> Result<()> {
+        registry::write_string(COMPAT_LAYERS, &exe_value_name(exe)?, FSO_OFF_FLAG)
+    }
+
+    fn clear_compat_flags(&self, exe: &Path) -> Result<()> {
+        registry::delete_value(COMPAT_LAYERS, &exe_value_name(exe)?)
+    }
+}
+
+/// Flags de compatibilidad por exe del usuario (PLAN.md V10).
+const COMPAT_LAYERS: &str = r"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers";
+/// Valor de la referencia CS2-FPS-Boost y de PLAN.md V10.
+const FSO_OFF_FLAG: &str = "~ DISABLEDXMAXIMIZEDWINDOWEDMODE";
+
+/// El nombre del valor es la ruta completa del exe.
+fn exe_value_name(exe: &Path) -> Result<String> {
+    if !exe.is_absolute() {
+        return Err(PlatformError::NotFound(format!(
+            "ruta del exe del juego no válida: `{}`",
+            exe.display()
+        )));
+    }
+    Ok(exe.to_string_lossy().into_owned())
 }
 
 impl ServiceControl for WindowsPlatform {
@@ -518,6 +546,19 @@ mod tests {
             let got: Vec<String> = saved.into_iter().map(|s| s.location).collect();
             assert_eq!(got, expected, "{t:?}");
         }
+    }
+
+    /// Solo lectura; una ruta relativa se rechaza antes de tocar el registro.
+    #[test]
+    fn compat_flags_need_an_absolute_exe_path() {
+        let w = WindowsPlatform::new();
+        assert!(w.compat_flags(Path::new("game.exe")).is_err());
+        assert!(w.disable_fullscreen_optimizations(Path::new("")).is_err());
+        let nowhere = Path::new(
+            r"C:\FrameRush
+o-existe\game.exe",
+        );
+        assert_eq!(w.compat_flags(nowhere).unwrap(), None);
     }
 
     /// Falla en el primer valor, antes de escribir nada.

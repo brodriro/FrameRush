@@ -1,5 +1,6 @@
 use crate::{ProcessControl, Result, Target};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Estado de un servicio del sistema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -46,6 +47,13 @@ pub trait GameTuning {
     fn affinity(&self, target: &Target) -> Result<Vec<usize>>;
     /// Fija la afinidad. Es opt-in en todos los niveles y se desactiva con anticheat (P2).
     fn set_affinity(&self, target: &Target, cpus: &[usize]) -> Result<()>;
+    /// Flags de compatibilidad que el SO guarda para ese exe (`None`: no tiene).
+    fn compat_flags(&self, exe: &Path) -> Result<Option<String>>;
+    /// `fullscreen-optimizations-off`: desactiva las optimizaciones de pantalla completa solo
+    /// para ese exe (PLAN.md V10). Es opt-in.
+    fn disable_fullscreen_optimizations(&self, exe: &Path) -> Result<()>;
+    /// Borra los flags de compatibilidad del exe (revert).
+    fn clear_compat_flags(&self, exe: &Path) -> Result<()>;
 }
 
 /// Ajuste de sistema (PLAN.md It5.4). Qué valores toca cada uno lo decide la plataforma; su

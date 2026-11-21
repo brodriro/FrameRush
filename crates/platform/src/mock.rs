@@ -10,7 +10,7 @@ use crate::{
     SystemTweaks, Target, Tweak,
 };
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 #[derive(Debug, Clone)]
@@ -33,6 +33,8 @@ struct State {
     foreground: Option<Target>,
     /// Valores de los ajustes persistentes, por ubicación.
     values: BTreeMap<String, u32>,
+    /// Flags de compatibilidad por exe.
+    compat: BTreeMap<PathBuf, String>,
 }
 
 /// Plataforma en memoria.
@@ -113,6 +115,11 @@ impl MockPlatform {
     /// Valor de un ajuste en `location` (`None`: no existe).
     pub fn value(&self, location: &str) -> Option<u32> {
         self.lock().values.get(location).copied()
+    }
+
+    /// Pone flags de compatibilidad previos a un exe, como si el usuario los tuviera ya.
+    pub fn set_compat_flags(&self, exe: &str, flags: &str) {
+        self.lock().compat.insert(PathBuf::from(exe), flags.into());
     }
 
     /// Pone un valor previo, como si el usuario lo tuviera ya.
@@ -291,7 +298,26 @@ impl GameTuning for MockPlatform {
             Ok(())
         })
     }
+
+    fn compat_flags(&self, exe: &Path) -> Result<Option<String>> {
+        Ok(self.lock().compat.get(exe).cloned())
+    }
+
+    fn disable_fullscreen_optimizations(&self, exe: &Path) -> Result<()> {
+        self.lock()
+            .compat
+            .insert(exe.to_path_buf(), MOCK_FSO_FLAG.into());
+        Ok(())
+    }
+
+    fn clear_compat_flags(&self, exe: &Path) -> Result<()> {
+        self.lock().compat.remove(exe);
+        Ok(())
+    }
 }
+
+/// Flag que pone el mock al desactivar las FSO.
+pub const MOCK_FSO_FLAG: &str = "fso-off";
 
 /// Valor que pone cada ajuste en el mock: uno por ajuste, en `mock\<id>`, a 1.
 fn mock_location(tweak: Tweak) -> String {
@@ -397,6 +423,17 @@ mod tests {
         m.apply_tweak(Tweak::GameDvrOff).unwrap();
         m.restore_tweak(Tweak::GameDvrOff, &before).unwrap();
         assert_eq!(m.value(loc), Some(5));
+    }
+
+    #[test]
+    fn fullscreen_optimizations_round_trip() {
+        let m = platform();
+        let exe = Path::new("/games/game.exe");
+        assert_eq!(m.compat_flags(exe).unwrap(), None);
+        m.disable_fullscreen_optimizations(exe).unwrap();
+        assert_eq!(m.compat_flags(exe).unwrap().as_deref(), Some(MOCK_FSO_FLAG));
+        m.clear_compat_flags(exe).unwrap();
+        assert_eq!(m.compat_flags(exe).unwrap(), None);
     }
 
     #[test]
