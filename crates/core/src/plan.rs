@@ -4,7 +4,7 @@
 //! El plan no toca el sistema. Solo aparecen las reglas que coinciden con algo que existe en
 //! el equipo (P15). El nivel solo decide `default_checked`, y la decisión final es del checklist.
 
-use crate::protected::{is_protected, normalize};
+use crate::protected::{ProtectedReason, is_protected, normalize, protected_reason};
 use crate::{Action, Category, Level, Risk, Rule};
 use framerush_device::DeviceProfile;
 use framerush_platform::{ProcessInfo, ServiceState, Target};
@@ -69,6 +69,8 @@ impl PlanItem {
 pub struct Plan {
     pub level: Level,
     pub items: Vec<PlanItem>,
+    /// Procesos de anticheat en ejecución (It1.3), sin repetir. Ver [`running_anticheats`].
+    pub anticheats: Vec<String>,
 }
 
 impl Plan {
@@ -76,6 +78,30 @@ impl Plan {
     pub fn checked(&self) -> impl Iterator<Item = &PlanItem> {
         self.items.iter().filter(|i| i.default_checked)
     }
+
+    /// Afinidad y timer del juego (P2): el anticheat manda y los desactiva aunque el usuario
+    /// los haya pedido. Al juego solo se le toca la prioridad.
+    pub fn game_tuning_allowed(&self) -> bool {
+        self.anticheats.is_empty()
+    }
+}
+
+/// Anticheats en ejecución: los procesos protegidos con motivo `AntiCheat`, por nombre y sin
+/// repetir (PLAN.md It1.3).
+///
+/// Es un criterio de todo el equipo, no del juego: un anticheat que arranca con Windows
+/// (Vanguard) cuenta para cualquier juego. Es la opción conservadora hasta que los adaptadores
+/// de juego (M4) digan qué anticheat usa cada uno. Los anticheats sin proceso propio (Ricochet
+/// es un driver que se carga con el juego, V19) no se detectan aquí.
+pub fn running_anticheats(processes: &[ProcessInfo]) -> Vec<String> {
+    let mut names: Vec<String> = processes
+        .iter()
+        .filter(|p| protected_reason(&p.name) == Some(ProtectedReason::AntiCheat))
+        .map(|p| p.name.clone())
+        .collect();
+    names.sort_by_key(|n| n.to_lowercase());
+    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    names
 }
 
 /// Calcula el plan de `level` para este equipo.
@@ -141,7 +167,11 @@ pub fn plan(
             })
         })
         .collect();
-    Plan { level, items }
+    Plan {
+        level,
+        items,
+        anticheats: running_anticheats(&snapshot.processes),
+    }
 }
 
 #[cfg(test)]
@@ -382,6 +412,32 @@ mod tests {
         };
         let p = plan(Level::Extremo, &snap, &rules, &device, &opts);
         assert_eq!(p.items[0].action, Action::LowerPriority);
+    }
+
+    #[test]
+    fn an_anticheat_disables_game_tuning() {
+        let device = samples::hybrid_laptop();
+        let opts = PlanOptions::default();
+        let clean = Snapshot {
+            processes: vec![proc(1, "game.exe")],
+            ..Snapshot::default()
+        };
+        let p = plan(Level::Normal, &clean, &[], &device, &opts);
+        assert!(p.anticheats.is_empty());
+        assert!(p.game_tuning_allowed());
+
+        let guarded = Snapshot {
+            processes: vec![
+                proc(1, "game.exe"),
+                proc(2, "EasyAntiCheat.exe"),
+                proc(3, "easyanticheat.exe"),
+                proc(4, "BEService.exe"),
+            ],
+            ..Snapshot::default()
+        };
+        let p = plan(Level::Normal, &guarded, &[], &device, &opts);
+        assert_eq!(p.anticheats, ["BEService.exe", "EasyAntiCheat.exe"]);
+        assert!(!p.game_tuning_allowed());
     }
 
     #[test]
