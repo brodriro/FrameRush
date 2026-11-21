@@ -3,10 +3,10 @@
 //! No llama al SO: todo pasa por los traits de `framerush-platform`.
 
 pub mod defaults;
-pub mod model;
-pub mod plan;
-pub mod protected;
-pub mod rule;
+mod model;
+mod plan;
+mod protected;
+mod rule;
 
 pub use model::{Action, Category, Level, ParseError, Risk};
 pub use plan::{Plan, PlanItem, PlanOptions, Snapshot, Subject, plan};
