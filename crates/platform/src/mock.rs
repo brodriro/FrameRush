@@ -35,6 +35,8 @@ struct State {
     values: BTreeMap<String, u32>,
     /// Flags de compatibilidad por exe.
     compat: BTreeMap<PathBuf, String>,
+    /// Preferencia de GPU por exe.
+    gpu: BTreeMap<PathBuf, String>,
 }
 
 /// Plataforma en memoria.
@@ -120,6 +122,11 @@ impl MockPlatform {
     /// Pone flags de compatibilidad previos a un exe, como si el usuario los tuviera ya.
     pub fn set_compat_flags(&self, exe: &str, flags: &str) {
         self.lock().compat.insert(PathBuf::from(exe), flags.into());
+    }
+
+    /// Pone una preferencia de GPU previa a un exe, como si el usuario la tuviera ya.
+    pub fn set_gpu_preference(&self, exe: &str, value: &str) {
+        self.lock().gpu.insert(PathBuf::from(exe), value.into());
     }
 
     /// Pone un valor previo, como si el usuario lo tuviera ya.
@@ -315,6 +322,22 @@ impl GameTuning for MockPlatform {
         Ok(())
     }
 
+    fn gpu_preference(&self, exe: &Path) -> Result<Option<String>> {
+        Ok(self.lock().gpu.get(exe).cloned())
+    }
+
+    fn prefer_high_performance_gpu(&self, exe: &Path) -> Result<()> {
+        self.lock()
+            .gpu
+            .insert(exe.to_path_buf(), MOCK_HIGH_PERFORMANCE_GPU.into());
+        Ok(())
+    }
+
+    fn clear_gpu_preference(&self, exe: &Path) -> Result<()> {
+        self.lock().gpu.remove(exe);
+        Ok(())
+    }
+
     fn read_persistent_priority(&self, exe: &Path) -> Result<Vec<SavedValue>> {
         let location = mock_priority_location(exe);
         let value = self.lock().values.get(&location).copied();
@@ -343,6 +366,9 @@ pub const MOCK_HIGH_PRIORITY: u32 = 3;
 pub fn mock_priority_location(exe: &Path) -> String {
     format!(r"mock\ifeo\{}", exe.display())
 }
+
+/// Preferencia que pone el mock al elegir la GPU de alto rendimiento.
+pub const MOCK_HIGH_PERFORMANCE_GPU: &str = "gpu-alto";
 
 /// Flag que pone el mock al desactivar las FSO.
 pub const MOCK_FSO_FLAG: &str = "fso-off";
@@ -485,6 +511,20 @@ mod tests {
         assert_eq!(m.compat_flags(exe).unwrap().as_deref(), Some(MOCK_FSO_FLAG));
         m.clear_compat_flags(exe).unwrap();
         assert_eq!(m.compat_flags(exe).unwrap(), None);
+    }
+
+    #[test]
+    fn gpu_preference_round_trip() {
+        let m = platform();
+        let exe = Path::new("/games/game.exe");
+        assert_eq!(m.gpu_preference(exe).unwrap(), None);
+        m.prefer_high_performance_gpu(exe).unwrap();
+        assert_eq!(
+            m.gpu_preference(exe).unwrap().as_deref(),
+            Some(MOCK_HIGH_PERFORMANCE_GPU)
+        );
+        m.clear_gpu_preference(exe).unwrap();
+        assert_eq!(m.gpu_preference(exe).unwrap(), None);
     }
 
     #[test]

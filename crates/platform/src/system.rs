@@ -54,6 +54,13 @@ pub trait GameTuning {
     fn disable_fullscreen_optimizations(&self, exe: &Path) -> Result<()>;
     /// Borra los flags de compatibilidad del exe (revert).
     fn clear_compat_flags(&self, exe: &Path) -> Result<()>;
+    /// Preferencia de GPU que el SO guarda para ese exe (`None`: no tiene).
+    fn gpu_preference(&self, exe: &Path) -> Result<Option<String>>;
+    /// `gpu-preference = alto`: el exe usa la GPU de alto rendimiento (PLAN.md V22). Solo
+    /// `alto` está verificado; `ahorro` y `sistema` esperan fuente.
+    fn prefer_high_performance_gpu(&self, exe: &Path) -> Result<()>;
+    /// Borra la preferencia de GPU del exe (revert).
+    fn clear_gpu_preference(&self, exe: &Path) -> Result<()>;
     /// Estado actual de la prioridad persistente del exe (para el journal).
     fn read_persistent_priority(&self, exe: &Path) -> Result<Vec<SavedValue>>;
     /// `game-priority-persistent`: el SO arranca siempre ese exe en Alta (P1: solo Alta). Pide

@@ -353,6 +353,23 @@ impl GameTuning for WindowsPlatform {
         registry::delete_value(HKCU, COMPAT_LAYERS, &exe_value_name(exe)?)
     }
 
+    fn gpu_preference(&self, exe: &Path) -> Result<Option<String>> {
+        registry::read_string(HKCU, GPU_PREFERENCES, &exe_value_name(exe)?)
+    }
+
+    fn prefer_high_performance_gpu(&self, exe: &Path) -> Result<()> {
+        registry::write_string(
+            HKCU,
+            GPU_PREFERENCES,
+            &exe_value_name(exe)?,
+            HIGH_PERFORMANCE_GPU,
+        )
+    }
+
+    fn clear_gpu_preference(&self, exe: &Path) -> Result<()> {
+        registry::delete_value(HKCU, GPU_PREFERENCES, &exe_value_name(exe)?)
+    }
+
     fn read_persistent_priority(&self, exe: &Path) -> Result<Vec<SavedValue>> {
         let key = perf_options_key(exe)?;
         Ok(vec![SavedValue {
@@ -387,6 +404,12 @@ impl GameTuning for WindowsPlatform {
         }
     }
 }
+
+/// Preferencia de GPU por exe del usuario (lo que escribe Configuración > Pantalla > Gráficos).
+/// El nombre del valor es la ruta completa del exe (PLAN.md V22).
+const GPU_PREFERENCES: &str = r"Software\Microsoft\DirectX\UserGpuPreferences";
+/// GPU de alto rendimiento: valor de la referencia CS2-FPS-Boost, probado en un portátil Optimus.
+const HIGH_PERFORMANCE_GPU: &str = "GpuPreference=2;";
 
 /// Opciones por imagen (IFEO): la clave es el nombre del exe, no su ruta.
 const IFEO: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
@@ -822,6 +845,8 @@ mod tests {
         assert!(w.disable_fullscreen_optimizations(Path::new("")).is_err());
         let nowhere = Path::new(r"C:\FrameRush\no-existe\game.exe");
         assert_eq!(w.compat_flags(nowhere).unwrap(), None);
+        assert_eq!(w.gpu_preference(nowhere).unwrap(), None);
+        assert!(w.gpu_preference(Path::new("game.exe")).is_err());
     }
 
     #[test]
