@@ -10,5 +10,9 @@ publish.workspace = true
 fpsboost-platform.workspace = true
 serde.workspace = true
 
+[features]
+# Perfiles de ejemplo para los tests de otros crates.
+samples = []
+
 [lints]
 workspace = true

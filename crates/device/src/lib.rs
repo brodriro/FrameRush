@@ -4,6 +4,8 @@
 //! como fallback y se marca como "estimado".
 
 mod profile;
+#[cfg(any(test, feature = "samples"))]
+pub mod samples;
 
 pub use profile::{
     Battery, Core, CoreKind, Cpu, DeviceProfile, Display, Gpu, GpuVendor, Mode, Source, Sourced,
