@@ -10,8 +10,17 @@ use serde::Deserialize;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-/// Archivos embebidos en el binario: `(nombre, contenido)`.
-const EMBEDDED: &[(&str, &str)] = &[];
+/// Archivos de `rules/` embebidos en el binario: `(nombre, contenido)`.
+const EMBEDDED: &[(&str, &str)] = &[
+    ("browser.toml", include_str!("../../../rules/browser.toml")),
+    (
+        "launcher.toml",
+        include_str!("../../../rules/launcher.toml"),
+    ),
+    ("overlay.toml", include_str!("../../../rules/overlay.toml")),
+    ("service.toml", include_str!("../../../rules/service.toml")),
+    ("sync.toml", include_str!("../../../rules/sync.toml")),
+];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -244,6 +253,19 @@ description = "Indexador de búsqueda."
         let dup = r.clone();
         let ps = problems(&[r, dup]);
         assert!(ps.len() >= 5, "{ps:?}");
+    }
+
+    #[test]
+    fn embedded_rules_are_valid() {
+        let rules = embedded().unwrap();
+        assert_eq!(rules.len(), 60);
+        // Los navegadores vienen desmarcados (PLAN.md §3).
+        assert!(
+            rules
+                .iter()
+                .filter(|r| ["chrome", "firefox", "edge"].contains(&r.id.as_str()))
+                .all(|r| r.optional)
+        );
     }
 
     #[test]

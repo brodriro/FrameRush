@@ -1,0 +1,196 @@
+# Reglas de FrameRush (navegadores y apps). Esquema en PLAN.md §3, "Modelo de reglas".
+# Fuente de los nombres de Windows: proyecto de referencia CS2-FPS-Boost ($SuspendNames).
+# Los nombres de Linux y macOS faltan hasta verificarlos (PLAN.md §6, V20).
+
+# Navegadores: opcionales en Agresivo (desmarcados), PLAN.md §3.
+
+[[rule]]
+id = "chrome"
+match = { windows = ["chrome"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Google Chrome."
+optional = true
+
+[[rule]]
+id = "edge"
+match = { windows = ["msedge"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Microsoft Edge."
+optional = true
+
+[[rule]]
+id = "edge-webview2"
+match = { windows = ["msedgewebview2"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "medium"
+description = "WebView2: lo usan otras apps además de Edge."
+optional = true
+
+[[rule]]
+id = "firefox"
+match = { windows = ["firefox"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Mozilla Firefox."
+optional = true
+
+[[rule]]
+id = "brave"
+match = { windows = ["brave"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Brave."
+optional = true
+
+[[rule]]
+id = "opera"
+match = { windows = ["opera"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Opera."
+optional = true
+
+[[rule]]
+id = "vivaldi"
+match = { windows = ["vivaldi"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Vivaldi."
+optional = true
+
+# Apps: opcionales salvo los procesos de fondo de Adobe.
+
+[[rule]]
+id = "spotify"
+match = { windows = ["Spotify"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Spotify."
+optional = true
+
+[[rule]]
+id = "teams"
+match = { windows = ["Teams", "ms-teams"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "medium"
+description = "Microsoft Teams (app de voz: la lista keep-alive impide congelarla)."
+optional = true
+
+[[rule]]
+id = "slack"
+match = { windows = ["slack"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Slack."
+optional = true
+
+[[rule]]
+id = "whatsapp"
+match = { windows = ["WhatsApp"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "WhatsApp."
+optional = true
+
+[[rule]]
+id = "telegram"
+match = { windows = ["Telegram"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Telegram."
+optional = true
+
+[[rule]]
+id = "notion"
+match = { windows = ["Notion"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Notion."
+optional = true
+
+[[rule]]
+id = "vscode"
+match = { windows = ["Code"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "medium"
+description = "Visual Studio Code: puede tener trabajo sin guardar."
+optional = true
+
+[[rule]]
+id = "visual-studio"
+match = { windows = ["devenv"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "medium"
+description = "Visual Studio: puede tener trabajo sin guardar."
+optional = true
+
+[[rule]]
+id = "android-studio"
+match = { windows = ["studio64"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "medium"
+description = "Android Studio."
+optional = true
+
+[[rule]]
+id = "java"
+match = { windows = ["java", "javaw"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "high"
+description = "Procesos Java: también pueden ser juegos o herramientas en uso."
+optional = true
+
+[[rule]]
+id = "android-emulator"
+match = { windows = ["emulator", "qemu-system-x86_64", "adb"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "medium"
+description = "Emulador de Android y adb."
+optional = true
+
+[[rule]]
+id = "adobe-background"
+match = { windows = ["acrotray", "AdobeIPCBroker", "CCXProcess"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Procesos de fondo de Adobe Acrobat y Creative Cloud."

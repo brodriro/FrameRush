@@ -1,0 +1,39 @@
+# Reglas de FrameRush (launchers). Esquema en PLAN.md §3, "Modelo de reglas".
+# Fuente de los nombres de Windows: proyecto de referencia CS2-FPS-Boost ($SuspendNames).
+# Los nombres de Linux y macOS faltan hasta verificarlos (PLAN.md §6, V20).
+
+[[rule]]
+id = "epic-launcher"
+match = { windows = ["EpicGamesLauncher"] }
+category = "launcher"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Launcher de Epic Games."
+
+[[rule]]
+id = "ea-background"
+match = { windows = ["EABackgroundService"] }
+category = "launcher"
+action = "suspend"
+min_level = "agresivo"
+risk = "medium"
+description = "Servicio de fondo de la app de EA; los juegos de EA lo necesitan."
+
+[[rule]]
+id = "riot-client"
+match = { windows = ["RiotClientServices"] }
+category = "launcher"
+action = "suspend"
+min_level = "agresivo"
+risk = "medium"
+description = "Cliente de Riot; los juegos de Riot lo necesitan."
+
+[[rule]]
+id = "league-client"
+match = { windows = ["LeagueClient"] }
+category = "launcher"
+action = "suspend"
+min_level = "agresivo"
+risk = "medium"
+description = "Cliente de League of Legends."

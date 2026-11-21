@@ -1,0 +1,295 @@
+# Reglas de FrameRush (servicios grupo A y B). Esquema en PLAN.md §3, "Modelo de reglas".
+# Fuente de los nombres de Windows: proyecto de referencia CS2-FPS-Boost ($SvcAggressive y $SvcExtremeExtra).
+# Los nombres de Linux y macOS faltan hasta verificarlos (PLAN.md §6, V20).
+
+# Grupo A: desde Agresivo. Se detienen solo durante la sesión, sin cambiar el tipo de inicio.
+
+[[rule]]
+id = "sysmain"
+match = { windows = ["SysMain"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Prefetch/Superfetch: E/S de disco en segundo plano."
+
+[[rule]]
+id = "wsearch"
+match = { windows = ["WSearch"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Indexador de Windows Search: el mayor consumidor de CPU y disco en segundo plano según la referencia."
+
+[[rule]]
+id = "diagtrack"
+match = { windows = ["DiagTrack"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Telemetría de Windows (Experiencias del usuario y telemetría asociadas)."
+
+[[rule]]
+id = "dmwappushservice"
+match = { windows = ["dmwappushservice"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Enrutamiento de mensajes WAP Push, asociado a la telemetría."
+
+[[rule]]
+id = "mapsbroker"
+match = { windows = ["MapsBroker"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Administrador de mapas descargados."
+
+[[rule]]
+id = "wpcmonsvc"
+match = { windows = ["WpcMonSvc"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Control parental."
+
+[[rule]]
+id = "xblauthmanager"
+match = { windows = ["XblAuthManager"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "medium"
+description = "Autenticación de Xbox Live; los juegos de Xbox/Game Pass la necesitan."
+
+[[rule]]
+id = "xblgamesave"
+match = { windows = ["XblGameSave"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "medium"
+description = "Guardado en la nube de Xbox Live."
+
+[[rule]]
+id = "xboxnetapisvc"
+match = { windows = ["XboxNetApiSvc"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "medium"
+description = "Red de Xbox Live."
+
+[[rule]]
+id = "xboxgipsvc"
+match = { windows = ["XboxGipSvc"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "medium"
+description = "Accesorios de Xbox (mandos); puede afectar a mandos de Xbox."
+
+[[rule]]
+id = "nvtelemetrycontainer"
+match = { windows = ["NvTelemetryContainer"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Telemetría de NVIDIA (no se toca NvContainerLocalSystem)."
+
+[[rule]]
+id = "retaildemo"
+match = { windows = ["RetailDemo"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Modo de demostración para tiendas."
+
+[[rule]]
+id = "fax"
+match = { windows = ["Fax"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Servicio de fax."
+
+[[rule]]
+id = "pcasvc"
+match = { windows = ["PcaSvc"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Asistente para la compatibilidad de programas."
+
+[[rule]]
+id = "wersvc"
+match = { windows = ["WerSvc"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Informe de errores de Windows."
+
+[[rule]]
+id = "dps"
+match = { windows = ["DPS"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Servicio de directivas de diagnóstico."
+
+[[rule]]
+id = "wdiservicehost"
+match = { windows = ["WdiServiceHost"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Host del servicio de diagnóstico."
+
+[[rule]]
+id = "wdisystemhost"
+match = { windows = ["WdiSystemHost"] }
+category = "service"
+action = "stop_service"
+min_level = "agresivo"
+risk = "low"
+description = "Host del sistema de diagnóstico."
+
+# Grupo B: solo en Extremo.
+
+[[rule]]
+id = "wuauserv"
+match = { windows = ["wuauserv"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "Windows Update: evita descargas a mitad de partida."
+
+[[rule]]
+id = "bits"
+match = { windows = ["BITS"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "Transferencia inteligente en segundo plano (descargas de Windows Update y otras)."
+
+[[rule]]
+id = "usosvc"
+match = { windows = ["UsoSvc"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "Orquestador de actualizaciones."
+
+[[rule]]
+id = "waasmedicsvc"
+match = { windows = ["WaaSMedicSvc"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "medium"
+description = "Reparación de Windows Update; Windows puede impedir detenerlo."
+
+[[rule]]
+id = "spooler"
+match = { windows = ["Spooler"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "Cola de impresión."
+
+[[rule]]
+id = "printnotify"
+match = { windows = ["PrintNotify"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "Extensiones y notificaciones de impresora."
+
+[[rule]]
+id = "ssdpsrv"
+match = { windows = ["SSDPSRV"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "Detección SSDP de dispositivos en red."
+
+[[rule]]
+id = "upnphost"
+match = { windows = ["upnphost"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "Host de dispositivos UPnP."
+
+[[rule]]
+id = "lfsvc"
+match = { windows = ["lfsvc"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "Geolocalización."
+
+[[rule]]
+id = "sensorservice"
+match = { windows = ["SensorService"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "medium"
+description = "Sensores (rotación de pantalla, brillo adaptable)."
+
+[[rule]]
+id = "sensrsvc"
+match = { windows = ["SensrSvc"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "medium"
+description = "Supervisión de sensores."
+
+[[rule]]
+id = "tabletinputservice"
+match = { windows = ["TabletInputService"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "medium"
+description = "Teclado táctil y panel de escritura."
+
+[[rule]]
+id = "sharedaccess"
+match = { windows = ["SharedAccess"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "Conexión compartida a Internet."
+
+[[rule]]
+id = "phonesvc"
+match = { windows = ["PhoneSvc"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "Telefonía."

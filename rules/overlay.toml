@@ -1,0 +1,13 @@
+# Reglas de FrameRush (overlays y captura). Esquema en PLAN.md §3, "Modelo de reglas".
+# Fuente de los nombres de Windows: proyecto de referencia CS2-FPS-Boost ($SuspendNames).
+# Los nombres de Linux y macOS faltan hasta verificarlos (PLAN.md §6, V20).
+
+[[rule]]
+id = "obs"
+match = { windows = ["obs64"] }
+category = "overlay"
+action = "suspend"
+min_level = "agresivo"
+risk = "high"
+description = "OBS Studio: congelarlo corta una grabación o un directo."
+optional = true

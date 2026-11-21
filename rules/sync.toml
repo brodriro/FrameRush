@@ -1,0 +1,39 @@
+# Reglas de FrameRush (sync / nube). Esquema en PLAN.md §3, "Modelo de reglas".
+# Fuente de los nombres de Windows: proyecto de referencia CS2-FPS-Boost ($SuspendNames).
+# Los nombres de Linux y macOS faltan hasta verificarlos (PLAN.md §6, V20).
+
+[[rule]]
+id = "onedrive"
+match = { windows = ["OneDrive"] }
+category = "sync"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Sincronización de OneDrive: consume disco y red."
+
+[[rule]]
+id = "dropbox"
+match = { windows = ["Dropbox"] }
+category = "sync"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Sincronización de Dropbox: consume disco y red."
+
+[[rule]]
+id = "google-drive"
+match = { windows = ["GoogleDriveFS"] }
+category = "sync"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Sincronización de Google Drive: consume disco y red."
+
+[[rule]]
+id = "adobe-coresync"
+match = { windows = ["CoreSync"] }
+category = "sync"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Sincronización de Adobe Creative Cloud."
