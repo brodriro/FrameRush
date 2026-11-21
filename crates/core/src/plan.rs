@@ -195,11 +195,27 @@ pub fn plan(
     }
 }
 
-/// Nivel desde el que un ajuste viene marcado (design/SETTINGS.md: `game-dvr-off` y
-/// `windows-game-mode` están activos en todos los niveles).
+/// Nivel desde el que un ajuste viene marcado (design/SETTINGS.md: todos los de nivel usuario
+/// están activos en todos los niveles).
 pub fn tweak_min_level(tweak: Tweak) -> Level {
     match tweak {
-        Tweak::GameDvrOff | Tweak::WindowsGameMode => Level::Normal,
+        Tweak::GameDvrOff
+        | Tweak::WindowsGameMode
+        | Tweak::NotificationsOff
+        | Tweak::VisualEffectsPerformance
+        | Tweak::UwpBackgroundOff => Level::Normal,
+    }
+}
+
+/// Alcance de un ajuste (PLAN.md §3): `notifications-off` es de sesión y vuelve al cerrar el
+/// juego; el resto solo lo revierte Restaurar.
+pub fn tweak_scope(tweak: Tweak) -> Scope {
+    match tweak {
+        Tweak::NotificationsOff => Scope::Session,
+        Tweak::GameDvrOff
+        | Tweak::WindowsGameMode
+        | Tweak::VisualEffectsPerformance
+        | Tweak::UwpBackgroundOff => Scope::Persistent,
     }
 }
 

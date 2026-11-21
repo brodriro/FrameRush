@@ -48,8 +48,8 @@ pub trait GameTuning {
     fn set_affinity(&self, target: &Target, cpus: &[usize]) -> Result<()>;
 }
 
-/// Ajuste de sistema persistente (PLAN.md It5.4, alcance persistente). Qué valores toca cada uno
-/// lo decide la plataforma; el id es el de design/SETTINGS.md.
+/// Ajuste de sistema (PLAN.md It5.4). Qué valores toca cada uno lo decide la plataforma; su
+/// alcance y su nivel, `core`. El id es el de design/SETTINGS.md.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Tweak {
@@ -57,16 +57,31 @@ pub enum Tweak {
     GameDvrOff,
     /// `windows-game-mode`: Modo juego activado, sin el panel de inicio de la Game Bar.
     WindowsGameMode,
+    /// `notifications-off`: sin notificaciones emergentes.
+    NotificationsOff,
+    /// `visual-effects-performance`: efectos visuales "mejor rendimiento" y sin transparencias.
+    VisualEffectsPerformance,
+    /// `uwp-background-off`: las apps UWP no se ejecutan en segundo plano.
+    UwpBackgroundOff,
 }
 
 impl Tweak {
-    pub const ALL: [Tweak; 2] = [Tweak::GameDvrOff, Tweak::WindowsGameMode];
+    pub const ALL: [Tweak; 5] = [
+        Tweak::GameDvrOff,
+        Tweak::WindowsGameMode,
+        Tweak::NotificationsOff,
+        Tweak::VisualEffectsPerformance,
+        Tweak::UwpBackgroundOff,
+    ];
 
     /// Id de design/SETTINGS.md.
     pub fn id(self) -> &'static str {
         match self {
             Tweak::GameDvrOff => "game-dvr-off",
             Tweak::WindowsGameMode => "windows-game-mode",
+            Tweak::NotificationsOff => "notifications-off",
+            Tweak::VisualEffectsPerformance => "visual-effects-performance",
+            Tweak::UwpBackgroundOff => "uwp-background-off",
         }
     }
 }

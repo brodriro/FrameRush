@@ -43,15 +43,15 @@ impl Change {
         !matches!(self, Change::Kill { .. })
     }
 
-    /// Prioridad (incluida la del juego), congelados, cierres y servicios son de sesión; los
-    /// ajustes del sistema son persistentes.
+    /// Prioridad (incluida la del juego), congelados, cierres y servicios son de sesión; cada
+    /// ajuste tiene el suyo (`tweak_scope`).
     pub fn scope(&self) -> Scope {
         match self {
             Change::Priority { .. }
             | Change::Suspend { .. }
             | Change::Kill { .. }
             | Change::StopService { .. } => Scope::Session,
-            Change::Tweak { .. } => Scope::Persistent,
+            Change::Tweak { tweak, .. } => crate::tweak_scope(*tweak),
         }
     }
 

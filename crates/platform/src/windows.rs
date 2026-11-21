@@ -329,6 +329,28 @@ fn reg_values(tweak: Tweak) -> &'static [RegValue] {
                 value: 0,
             },
         ],
+        Tweak::NotificationsOff => &[RegValue {
+            path: r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings",
+            name: "NOC_GLOBAL_SETTING_TOAST_ENABLED",
+            value: 0,
+        }],
+        Tweak::VisualEffectsPerformance => &[
+            RegValue {
+                path: r"Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects",
+                name: "VisualFXSetting",
+                value: 2,
+            },
+            RegValue {
+                path: r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+                name: "EnableTransparency",
+                value: 0,
+            },
+        ],
+        Tweak::UwpBackgroundOff => &[RegValue {
+            path: r"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications",
+            name: "GlobalUserDisabled",
+            value: 1,
+        }],
     }
 }
 

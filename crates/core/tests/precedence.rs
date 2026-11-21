@@ -154,6 +154,24 @@ fn p5_persistent_changes_survive_the_session_revert() {
     assert!(!engine.has_open_session().unwrap());
 }
 
+/// §3: `notifications-off` es de sesión y vuelve al cerrar el juego; los demás ajustes no.
+#[test]
+fn notifications_come_back_with_the_session_revert() {
+    let m = MockPlatform::new(4);
+    let s = store("notif");
+    let engine = Engine::new(&m, &s);
+    let request = ApplyRequest {
+        tweaks: vec![Tweak::NotificationsOff, Tweak::VisualEffectsPerformance],
+        ..ApplyRequest::default()
+    };
+    engine.apply(&request).unwrap();
+    engine.revert_session().unwrap();
+    assert_eq!(m.value(r"mock\notifications-off"), None);
+    assert_eq!(m.value(r"mock\visual-effects-performance"), Some(1));
+    engine.revert_all().unwrap();
+    assert_eq!(m.value(r"mock\visual-effects-performance"), None);
+}
+
 /// Backup único: reaplicar un ajuste no sobrescribe el valor original.
 #[test]
 fn reapplying_a_tweak_keeps_the_original_backup() {
