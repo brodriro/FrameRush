@@ -1,4 +1,4 @@
-//! Tests de integración de la CLI: solo comandos de lectura, que no tocan el sistema.
+//! Tests de integración de la CLI: nunca aplican cambios al sistema.
 
 use std::process::Command;
 
@@ -36,4 +36,51 @@ fn scan_lists_processes() {
     let (ok, stdout) = framerush(&["scan"]);
     assert!(ok);
     assert!(stdout.trim_end().ends_with("procesos"));
+}
+
+/// Lanza la CLI con un journal en una carpeta temporal propia del test.
+fn framerush_in(dir: &std::path::Path, args: &[&str]) -> (bool, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_framerush"))
+        .env("FRAMERUSH_DATA_DIR", dir)
+        .args(args)
+        .output()
+        .expect("se puede lanzar el binario");
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+fn temp_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("framerush-cli-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn apply_without_yes_changes_nothing() {
+    let dir = temp_dir("apply");
+    let (ok, stdout) = framerush_in(&dir, &["apply", "--level", "extremo"]);
+    assert!(ok);
+    assert!(stdout.contains("no se aplica sin --yes"), "{stdout}");
+    assert!(!dir.join("session.json").exists());
+}
+
+#[test]
+fn unknown_rule_in_include_is_rejected() {
+    let dir = temp_dir("include");
+    let (ok, _) = framerush_in(&dir, &["apply", "--include", "no-existe"]);
+    assert!(!ok);
+}
+
+#[cfg(windows)]
+#[test]
+fn revert_without_session_does_nothing() {
+    let dir = temp_dir("revert");
+    for cmd in ["revert", "undo"] {
+        let (ok, stdout) = framerush_in(&dir, &[cmd]);
+        assert!(ok, "{cmd}");
+        assert!(stdout.contains("No había nada que hacer"), "{stdout}");
+    }
 }
