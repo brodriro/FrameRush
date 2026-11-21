@@ -52,17 +52,28 @@ pub fn thermal_warn_c(device: &DeviceProfile) -> Sourced<f32> {
     }
 }
 
-/// `keep-alive-list`: las apps de voz instaladas o en ejecución, con su nombre real.
-pub fn keep_alive(device: &DeviceProfile) -> Vec<String> {
-    device
-        .installed_apps
-        .iter()
-        .filter(|app| {
-            let lower = app.to_lowercase();
-            VOICE_APPS.iter().any(|v| lower.contains(v))
-        })
-        .cloned()
-        .collect()
+/// `keep-alive-list`: los tokens de [`VOICE_APPS`] de las apps de voz detectadas. El plan los
+/// busca como subcadena del nombre del proceso ("Microsoft Teams" instalado protege
+/// `ms-teams.exe`).
+///
+/// Sin apps detectadas (perfil sin detectar) el fallback, marcado como estimado, son todos los
+/// tokens: es más seguro no congelar una app de voz que congelarla (P7, P15).
+pub fn keep_alive(device: &DeviceProfile) -> Sourced<Vec<String>> {
+    if device.installed_apps.is_empty() {
+        return Sourced::estimated(VOICE_APPS.iter().map(|v| (*v).to_owned()).collect());
+    }
+    Sourced::detected(
+        VOICE_APPS
+            .iter()
+            .filter(|v| {
+                device
+                    .installed_apps
+                    .iter()
+                    .any(|app| app.to_lowercase().contains(*v))
+            })
+            .map(|v| (*v).to_owned())
+            .collect(),
+    )
 }
 
 /// Plan de energía del nivel (It6: "Máximo > Alto > actual"), o `None` si no hay que cambiarlo.
@@ -159,12 +170,26 @@ mod tests {
 
     #[test]
     fn keep_alive_lists_detected_voice_apps() {
-        assert_eq!(keep_alive(&samples::hybrid_laptop()), ["Discord"]);
         assert_eq!(
-            keep_alive(&samples::amd_desktop_linux()),
-            ["mumble", "Discord"]
+            keep_alive(&samples::hybrid_laptop()),
+            Sourced::detected(vec!["discord".into()])
         );
-        assert!(keep_alive(&samples::apple_silicon_mac()).is_empty());
+        assert_eq!(
+            keep_alive(&samples::amd_desktop_linux()).value,
+            ["discord", "mumble"]
+        );
+        let teams = DeviceProfile {
+            installed_apps: vec!["Microsoft Teams".into(), "Steam".into()],
+            ..DeviceProfile::undetected(Os::Windows)
+        };
+        assert_eq!(keep_alive(&teams).value, ["teams"]);
+    }
+
+    #[test]
+    fn keep_alive_falls_back_to_every_voice_app() {
+        let k = keep_alive(&DeviceProfile::undetected(Os::Windows));
+        assert!(k.is_estimated());
+        assert_eq!(k.value, VOICE_APPS);
     }
 
     #[test]

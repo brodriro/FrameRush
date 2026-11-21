@@ -47,7 +47,7 @@ fn render(level: Level, elevated: bool) -> String {
     let rules = framerush_rules::embedded().unwrap();
     let options = PlanOptions {
         elevated,
-        keep_alive: defaults::keep_alive(&device),
+        keep_alive: defaults::keep_alive(&device).value,
     };
     plan(level, &snapshot(), &rules, &device, &options)
         .items

@@ -24,7 +24,8 @@ pub struct Snapshot {
 pub struct PlanOptions {
     /// Hay elevación (helper disponible); sin ella, lo que pide admin sale con candado (P14).
     pub elevated: bool,
-    /// Procesos que no se congelan (`keep-alive-list`). Bajarles la prioridad sigue permitido (P7).
+    /// Tokens de `keep-alive-list`: un proceso cuyo nombre contiene uno no se congela. Bajarle la
+    /// prioridad sigue permitido (P7).
     pub keep_alive: Vec<String>,
 }
 
@@ -118,6 +119,12 @@ pub fn plan(
 ) -> Plan {
     let os = device.os;
     let keep_alive: Vec<String> = options.keep_alive.iter().map(|n| normalize(n)).collect();
+    let kept_alive = |name: &str| {
+        let name = normalize(name);
+        keep_alive
+            .iter()
+            .any(|k| !k.is_empty() && name.contains(k.as_str()))
+    };
     let items = rules
         .iter()
         .filter_map(|rule| {
@@ -150,7 +157,7 @@ pub fn plan(
             let frozen = matches!(action, Action::Suspend | Action::Kill);
             if frozen
                 && matches!(&subject, Subject::Processes(ps)
-                    if ps.iter().any(|p| keep_alive.contains(&normalize(&p.name))))
+                    if ps.iter().any(|p| kept_alive(&p.name)))
             {
                 action = Action::LowerPriority;
             }
@@ -442,6 +449,29 @@ mod tests {
         let p = plan(Level::Normal, &guarded, &[], &device, &opts);
         assert_eq!(p.anticheats, ["BEService.exe", "EasyAntiCheat.exe"]);
         assert!(!p.game_tuning_allowed());
+    }
+
+    /// El token `teams` protege el proceso `ms-teams.exe` aunque el nombre no sea igual.
+    #[test]
+    fn keep_alive_tokens_match_inside_process_names() {
+        let device = samples::hybrid_laptop();
+        let rules = vec![rule(
+            "teams",
+            &["ms-teams"],
+            Action::Suspend,
+            Level::Normal,
+            Risk::Medium,
+        )];
+        let snap = Snapshot {
+            processes: vec![proc(1, "ms-teams.exe")],
+            ..Snapshot::default()
+        };
+        let opts = PlanOptions {
+            elevated: false,
+            keep_alive: vec!["teams".into()],
+        };
+        let p = plan(Level::Normal, &snap, &rules, &device, &opts);
+        assert_eq!(p.items[0].action, Action::LowerPriority);
     }
 
     #[test]

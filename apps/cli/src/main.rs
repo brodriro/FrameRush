@@ -194,7 +194,7 @@ fn build_plan(
     };
     let options = PlanOptions {
         elevated: admin,
-        keep_alive: defaults::keep_alive(&device),
+        keep_alive: defaults::keep_alive(&device).value,
     };
     Ok((plan(level, &snapshot, &rules, &device, &options), game))
 }
