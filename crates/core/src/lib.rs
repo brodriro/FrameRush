@@ -15,7 +15,7 @@ pub use engine::{
     describe,
 };
 pub use journal::{Change, Entry, EntryStatus, FileStore, Journal, JournalError, JournalStore};
-pub use model::{Action, Category, Level, ParseError, Risk};
+pub use model::{Action, Category, Level, ParseError, Risk, Scope};
 pub use plan::{Plan, PlanItem, PlanOptions, Snapshot, Subject, plan, running_anticheats};
 pub use protected::{ProtectedReason, is_protected, protected_reason};
 pub use rule::{OsNames, Rule};

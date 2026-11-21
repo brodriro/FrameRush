@@ -11,7 +11,7 @@
 
 use crate::journal::{Change, Entry, EntryStatus, Journal, JournalError, JournalStore};
 use crate::protected::is_protected;
-use crate::{Action, PlanItem, Subject};
+use crate::{Action, PlanItem, Scope, Subject};
 use framerush_platform::{Platform, PlatformError, Priority, Target};
 
 /// Prioridad que se pone al bajar la de un proceso de fondo (propuesta de diseño, PLAN.md §6).
@@ -168,6 +168,12 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
     /// Deshace toda la sesión. Lo que no se pudo deshacer queda en el journal.
     pub fn revert_all(&self) -> Result<Report, EngineError> {
         self.revert_where(|_| true)
+    }
+
+    /// Deshace los cambios de sesión y deja los persistentes (watchdog al cerrar el juego,
+    /// `auto-revert-on-exit`). Restaurar es [`Engine::revert_all`].
+    pub fn revert_session(&self) -> Result<Report, EngineError> {
+        self.revert_where(|e| e.change.scope() == Scope::Session)
     }
 
     /// Deshace solo el último lote (`undo-last`).
@@ -461,6 +467,35 @@ mod tests {
         let report = engine.revert_all().unwrap();
         assert_eq!(report.failed(), 0);
         assert_eq!(state(&m, &all, &svcs), initial);
+        assert!(!engine.has_open_session().unwrap());
+    }
+
+    /// Todos los cambios que existen hoy son de sesión: el watchdog los deshace todos.
+    #[test]
+    fn revert_session_undoes_every_session_change() {
+        let m = MockPlatform::new(4);
+        let a = m.spawn(1, "a.exe", "/a", 1);
+        let game = m.spawn(9, "game.exe", "/game", 1);
+        let initial = state(&m, &[&a, &game], &[]);
+        let items = [item(Action::Suspend, procs(&m, &[&a]))];
+        assert!(items.iter().all(|i| i.scope() == Scope::Session));
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        let mut req = request(&items);
+        req.game = boost(&game, Priority::High, false).game;
+        engine.apply(&req).unwrap();
+        assert!(
+            store
+                .load()
+                .unwrap()
+                .entries
+                .iter()
+                .all(|e| e.change.scope() == Scope::Session)
+        );
+
+        let report = engine.revert_session().unwrap();
+        assert_eq!(report.failed(), 0);
+        assert_eq!(state(&m, &[&a, &game], &[]), initial);
         assert!(!engine.has_open_session().unwrap());
     }
 

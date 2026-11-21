@@ -5,7 +5,7 @@
 //! el equipo (P15). El nivel solo decide `default_checked`, y la decisión final es del checklist.
 
 use crate::protected::{ProtectedReason, is_protected, normalize, protected_reason};
-use crate::{Action, Category, Level, Risk, Rule};
+use crate::{Action, Category, Level, Risk, Rule, Scope};
 use framerush_device::DeviceProfile;
 use framerush_platform::{ProcessInfo, ServiceState, Target};
 
@@ -61,6 +61,10 @@ impl PlanItem {
             Subject::Processes(ps) => ps.iter().map(|p| p.memory_bytes).sum(),
             Subject::Services(_) => 0,
         }
+    }
+
+    pub fn scope(&self) -> Scope {
+        self.action.scope()
     }
 }
 

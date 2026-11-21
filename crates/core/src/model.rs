@@ -122,6 +122,22 @@ impl Action {
             other => other,
         }
     }
+
+    /// Todas las acciones sobre procesos y servicios son de sesión (PLAN.md §3).
+    pub fn scope(self) -> Scope {
+        Scope::Session
+    }
+}
+
+/// Alcance de un cambio (PLAN.md §3, "Precedencia y alcance").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Scope {
+    /// Lo revierte el watchdog al cerrar el juego (`auto-revert-on-exit`) y Restaurar.
+    Session,
+    /// Registro, IFEO, config del juego, Defender, `bcdedit`…: solo lo revierte Restaurar.
+    /// Algunos piden reiniciar. Todavía no hay ningún cambio persistente (llegan en M1/M5).
+    Persistent,
 }
 
 /// Riesgo de tocar un proceso o servicio, mostrado en cada fila.

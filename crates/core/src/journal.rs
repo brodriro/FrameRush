@@ -4,6 +4,7 @@
 //! después. Si la app se cierra de golpe, el journal sigue en disco y al arrancar se ofrece
 //! "Restaurar sesión anterior".
 
+use crate::Scope;
 use framerush_platform::{Priority, Target};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -34,6 +35,16 @@ pub enum Change {
 impl Change {
     pub fn is_reversible(&self) -> bool {
         !matches!(self, Change::Kill { .. })
+    }
+
+    /// Prioridad (incluida la del juego), congelados, cierres y servicios: todo es de sesión.
+    pub fn scope(&self) -> Scope {
+        match self {
+            Change::Priority { .. }
+            | Change::Suspend { .. }
+            | Change::Kill { .. }
+            | Change::StopService { .. } => Scope::Session,
+        }
     }
 
     /// Proceso al que afecta, si es un cambio de proceso.
