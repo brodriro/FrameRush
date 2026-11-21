@@ -554,10 +554,7 @@ mod tests {
         let w = WindowsPlatform::new();
         assert!(w.compat_flags(Path::new("game.exe")).is_err());
         assert!(w.disable_fullscreen_optimizations(Path::new("")).is_err());
-        let nowhere = Path::new(
-            r"C:\FrameRush
-o-existe\game.exe",
-        );
+        let nowhere = Path::new(r"C:\FrameRush\no-existe\game.exe");
         assert_eq!(w.compat_flags(nowhere).unwrap(), None);
     }
 
