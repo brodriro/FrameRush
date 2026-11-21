@@ -1,6 +1,6 @@
 [package]
-name = "fpsboost-core"
-description = "Dominio puro de FPS Boost: niveles, reglas, plan, journal y motor apply/revert."
+name = "framerush-core"
+description = "Dominio puro de FrameRush: niveles, reglas, plan, journal y motor apply/revert."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

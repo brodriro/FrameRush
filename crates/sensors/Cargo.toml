@@ -1,6 +1,6 @@
 [package]
-name = "fpsboost-sensors"
-description = "Sensores de temperatura y ventiladores de FPS Boost."
+name = "framerush-sensors"
+description = "Sensores de temperatura y ventiladores de FrameRush."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

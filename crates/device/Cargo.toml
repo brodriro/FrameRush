@@ -1,13 +1,13 @@
 [package]
-name = "fpsboost-device"
-description = "DeviceProfile: inventario real del equipo para FPS Boost."
+name = "framerush-device"
+description = "DeviceProfile: inventario real del equipo para FrameRush."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-fpsboost-platform.workspace = true
+framerush-platform.workspace = true
 serde.workspace = true
 
 [features]

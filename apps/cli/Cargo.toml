@@ -1,13 +1,13 @@
 [package]
-name = "fpsboost-cli"
-description = "CLI de FPS Boost: scan, plan, apply, revert, sensors y power."
+name = "framerush-cli"
+description = "CLI de FrameRush: scan, plan, apply, revert, sensors y power."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "fpsboost"
+name = "framerush"
 path = "src/main.rs"
 
 [dependencies]

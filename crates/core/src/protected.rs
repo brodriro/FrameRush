@@ -74,9 +74,9 @@ const LIST: &[(Match, ProtectedReason)] = &[
     (Exact("vgc"), AntiCheat),
     (Prefix("faceit"), AntiCheat),
     (Prefix("eaanticheat"), AntiCheat),
-    // FPS Boost
-    (Exact("fpsboost"), SelfApp),
-    (Exact("fpsboost-helper"), SelfApp),
+    // FrameRush
+    (Exact("framerush"), SelfApp),
+    (Exact("framerush-helper"), SelfApp),
 ];
 
 /// Normaliza un nombre o ruta de proceso: último componente (con `/` o `\`), minúsculas y sin
@@ -141,8 +141,8 @@ mod tests {
 
     #[test]
     fn the_app_and_its_helper_are_protected() {
-        assert_eq!(protected_reason("fpsboost.exe"), Some(SelfApp));
-        assert_eq!(protected_reason("/usr/bin/fpsboost-helper"), Some(SelfApp));
+        assert_eq!(protected_reason("framerush.exe"), Some(SelfApp));
+        assert_eq!(protected_reason("/usr/bin/framerush-helper"), Some(SelfApp));
     }
 
     #[test]

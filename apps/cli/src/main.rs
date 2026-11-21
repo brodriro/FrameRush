@@ -1,4 +1,4 @@
-//! `fpsboost`: CLI sobre el mismo núcleo que la GUI.
+//! `framerush`: CLI sobre el mismo núcleo que la GUI.
 //!
 //! Los subcomandos (`scan`, `plan --level`, `apply`, `revert`, `sensors`, `power`) llegan en M1 y M2.
 
@@ -7,7 +7,7 @@ use tracing_subscriber::EnvFilter;
 
 /// Sube los FPS limitando procesos de fondo por niveles.
 #[derive(Debug, Parser)]
-#[command(name = "fpsboost", version, about)]
+#[command(name = "framerush", version, about)]
 struct Cli {}
 
 fn main() {

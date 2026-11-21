@@ -114,7 +114,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
-name = "fpsboost-cli"
+name = "framerush-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
@@ -123,7 +123,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fpsboost-core"
+name = "framerush-core"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -132,23 +132,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "fpsboost-device"
+name = "framerush-device"
 version = "0.1.0"
 dependencies = [
- "fpsboost-platform",
+ "framerush-platform",
  "serde",
 ]
 
 [[package]]
-name = "fpsboost-games"
+name = "framerush-games"
 version = "0.1.0"
 
 [[package]]
-name = "fpsboost-helper"
+name = "framerush-helper"
 version = "0.1.0"
 
 [[package]]
-name = "fpsboost-platform"
+name = "framerush-platform"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -156,15 +156,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "fpsboost-rules"
+name = "framerush-rules"
 version = "0.1.0"
 
 [[package]]
-name = "fpsboost-sensors"
+name = "framerush-sensors"
 version = "0.1.0"
 
 [[package]]
-name = "fpsboost-steam"
+name = "framerush-steam"
 version = "0.1.0"
 
 [[package]]

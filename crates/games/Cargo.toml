@@ -1,6 +1,6 @@
 [package]
-name = "fpsboost-games"
-description = "Adaptadores por juego de FPS Boost."
+name = "framerush-games"
+description = "Adaptadores por juego de FrameRush."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

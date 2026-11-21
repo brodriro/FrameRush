@@ -1,4 +1,4 @@
-use fpsboost_platform::{Os, PowerPlan};
+use framerush_platform::{Os, PowerPlan};
 use serde::{Deserialize, Serialize};
 
 /// De dónde sale un valor que se muestra o se usa como valor por defecto.

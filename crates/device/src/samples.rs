@@ -4,7 +4,7 @@
 //! las situaciones que el código tiene que manejar.
 
 use crate::{Battery, Core, CoreKind, Cpu, DeviceProfile, Display, Gpu, GpuVendor, Mode};
-use fpsboost_platform::{Os, PowerPlan};
+use framerush_platform::{Os, PowerPlan};
 
 const GIB: u64 = 1024 * 1024 * 1024;
 

@@ -1,6 +1,6 @@
 [package]
-name = "fpsboost-steam"
-description = "Detección de Steam, bibliotecas y juego en ejecución para FPS Boost."
+name = "framerush-steam"
+description = "Detección de Steam, bibliotecas y juego en ejecución para FrameRush."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

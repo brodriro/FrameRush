@@ -1,13 +1,13 @@
 [package]
-name = "fpsboost-helper"
-description = "Proceso elevado mínimo de FPS Boost con IPC tipado y lista blanca de comandos."
+name = "framerush-helper"
+description = "Proceso elevado mínimo de FrameRush con IPC tipado y lista blanca de comandos."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "fpsboost-helper"
+name = "framerush-helper"
 path = "src/main.rs"
 
 [lints]
