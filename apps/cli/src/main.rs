@@ -344,6 +344,13 @@ fn notify_open_session() {
 }
 
 fn print_plan(plan: &Plan, checked: &[&PlanItem]) {
+    if !plan.game_tuning_allowed() {
+        println!(
+            "Anticheat en ejecución: {}. Al juego solo se le toca la prioridad; \
+             afinidad y timer quedan desactivados.\n",
+            plan.anticheats.join(", ")
+        );
+    }
     println!("Equipo sin detectar todavía: los valores por defecto son estimados.");
     println!("Servicios: todavía no se consultan.\n");
     if plan.items.is_empty() {

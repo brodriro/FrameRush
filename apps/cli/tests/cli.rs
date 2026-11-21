@@ -115,3 +115,30 @@ fn unknown_game_is_rejected() {
     let (ok, _) = framerush_in(&dir, &["plan", "--game", "no-existe-framerush.exe"]);
     assert!(!ok);
 }
+
+/// Un `ping` copiado como `EasyAntiCheat.exe`: un anticheat falso, propio del test.
+#[cfg(windows)]
+#[test]
+fn a_running_anticheat_is_reported() {
+    let dir = temp_dir("anticheat");
+    let fake = dir.join("EasyAntiCheat.exe");
+    let windir = std::env::var_os("SystemRoot").expect("Windows define SystemRoot");
+    std::fs::copy(
+        std::path::Path::new(&windir).join(r"System32\PING.EXE"),
+        &fake,
+    )
+    .unwrap();
+    let mut child = Command::new(&fake)
+        .args(["-n", "30", "127.0.0.1"])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let (ok, stdout) = framerush_in(&dir, &["plan"]);
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(ok);
+    assert!(
+        stdout.contains("Anticheat en ejecución: EasyAntiCheat.exe"),
+        "{stdout}"
+    );
+}
