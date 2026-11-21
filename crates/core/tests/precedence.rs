@@ -9,7 +9,7 @@ use framerush_core::{
 };
 use framerush_device::{DeviceProfile, samples};
 use framerush_platform::mock::MockPlatform;
-use framerush_platform::{Os, Priority, ProcessControl, ServiceState, Tweak};
+use framerush_platform::{GameTuning, Os, Priority, ProcessControl, ServiceState, Tweak};
 use std::path::PathBuf;
 
 fn rule(id: &str, name: &str, action: Action, min_level: Level, risk: Risk) -> Rule {
@@ -63,6 +63,7 @@ fn boost(m: &MockPlatform, priority: Priority, confirmed: bool) -> ApplyRequest<
             target: game,
             priority,
             realtime_confirmed: confirmed,
+            fullscreen_optimizations_off: false,
         }),
     }
 }
@@ -170,6 +171,41 @@ fn notifications_come_back_with_the_session_revert() {
     assert_eq!(m.value(r"mock\visual-effects-performance"), Some(1));
     engine.revert_all().unwrap();
     assert_eq!(m.value(r"mock\visual-effects-performance"), None);
+}
+
+/// `fullscreen-optimizations-off`: persistente, solo si el exe no tenía flags, y Restaurar
+/// los borra.
+#[test]
+fn fso_off_is_persistent_and_respects_existing_flags() {
+    let m = MockPlatform::new(4);
+    let s = store("fso");
+    let engine = Engine::new(&m, &s);
+    let mut request = boost(&m, Priority::High, false);
+    let exe = request.game.as_ref().unwrap().target.exe_path.clone();
+    if let Some(g) = request.game.as_mut() {
+        g.fullscreen_optimizations_off = true;
+    }
+
+    let report = engine.apply(&request).unwrap();
+    assert_eq!(report.done(), 2, "{report:?}");
+    assert_eq!(
+        m.compat_flags(&exe).unwrap().as_deref(),
+        Some(framerush_platform::mock::MOCK_FSO_FLAG)
+    );
+    engine.revert_session().unwrap();
+    assert!(m.compat_flags(&exe).unwrap().is_some(), "persistente");
+    engine.revert_all().unwrap();
+    assert_eq!(m.compat_flags(&exe).unwrap(), None);
+
+    // Con flags previos del usuario no se toca nada.
+    m.set_compat_flags(&exe.to_string_lossy(), "~ RUNASADMIN");
+    let report = engine.apply(&request).unwrap();
+    assert_eq!(report.done(), 1, "solo la prioridad: {report:?}");
+    engine.revert_all().unwrap();
+    assert_eq!(
+        m.compat_flags(&exe).unwrap().as_deref(),
+        Some("~ RUNASADMIN")
+    );
 }
 
 /// Backup único: reaplicar un ajuste no sobrescribe el valor original.

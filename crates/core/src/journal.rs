@@ -36,6 +36,11 @@ pub enum Change {
         tweak: Tweak,
         previous: Vec<SavedValue>,
     },
+    /// FSO desactivadas para el exe del juego. Solo se aplica si el exe no tenía flags de
+    /// compatibilidad, así que deshacerlo es borrarlos.
+    FullscreenOptimizationsOff {
+        exe: PathBuf,
+    },
 }
 
 impl Change {
@@ -52,6 +57,7 @@ impl Change {
             | Change::Kill { .. }
             | Change::StopService { .. } => Scope::Session,
             Change::Tweak { tweak, .. } => crate::tweak_scope(*tweak),
+            Change::FullscreenOptimizationsOff { .. } => Scope::Persistent,
         }
     }
 
@@ -61,7 +67,9 @@ impl Change {
             Change::Priority { target, .. }
             | Change::Suspend { target }
             | Change::Kill { target } => Some(target),
-            Change::StopService { .. } | Change::Tweak { .. } => None,
+            Change::StopService { .. }
+            | Change::Tweak { .. }
+            | Change::FullscreenOptimizationsOff { .. } => None,
         }
     }
 }

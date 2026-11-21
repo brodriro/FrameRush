@@ -282,6 +282,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             target: g.target,
             priority: args.game.game_priority.into(),
             realtime_confirmed: args.game.confirm_realtime,
+            fullscreen_optimizations_off: false,
         }),
     };
     let report = run(Op::Apply(request))?;

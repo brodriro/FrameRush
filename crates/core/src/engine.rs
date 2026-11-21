@@ -13,17 +13,20 @@ use crate::journal::{Change, Entry, EntryStatus, Journal, JournalError, JournalS
 use crate::protected::is_protected;
 use crate::{Action, PlanItem, Scope, Subject};
 use framerush_platform::{Platform, PlatformError, Priority, Target, Tweak};
+use std::path::Path;
 
 /// Prioridad que se pone al bajar la de un proceso de fondo (propuesta de diseño, PLAN.md §6).
 pub const LOWERED_PRIORITY: Priority = Priority::BelowNormal;
 
-/// Prioridad que se le da al juego.
+/// Lo que se le hace al juego.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameBoost {
     pub target: Target,
     pub priority: Priority,
     /// Confirmación explícita para Tiempo real (It1.5).
     pub realtime_confirmed: bool,
+    /// `fullscreen-optimizations-off` para el exe del juego (opt-in, persistente, V10).
+    pub fullscreen_optimizations_off: bool,
 }
 
 /// Qué aplicar: las filas que el usuario dejó marcadas, los ajustes persistentes marcados y,
@@ -97,6 +100,9 @@ pub fn describe(change: &Change) -> String {
         Change::Kill { target } => format!("cerrar {}", proc(target)),
         Change::StopService { name } => format!("detener el servicio {name}"),
         Change::Tweak { tweak, .. } => format!("ajuste {}", tweak.id()),
+        Change::FullscreenOptimizationsOff { exe } => {
+            format!("sin optimizaciones de pantalla completa: {}", exe.display())
+        }
     }
 }
 
@@ -167,8 +173,40 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         }
         if let Some(g) = &request.game {
             self.set_priority(&mut journal, batch, &g.target, g.priority, &mut report)?;
+            if g.fullscreen_optimizations_off {
+                self.disable_fso(&mut journal, batch, &g.target.exe_path, &mut report)?;
+            }
         }
         Ok(report)
+    }
+
+    /// FSO del exe del juego. Si el exe ya tiene flags de compatibilidad no se tocan: no hay
+    /// una definición documentada de cómo combinarlos y sobrescribirlos los perdería.
+    fn disable_fso(
+        &self,
+        journal: &mut Journal,
+        batch: u64,
+        exe: &Path,
+        report: &mut Report,
+    ) -> Result<(), EngineError> {
+        let change = Change::FullscreenOptimizationsOff {
+            exe: exe.to_path_buf(),
+        };
+        if !already_applied(journal, &change) {
+            match self.platform.compat_flags(exe) {
+                Ok(None) => {}
+                Ok(Some(flags)) => {
+                    let why = format!("el exe ya tiene flags de compatibilidad (`{flags}`)");
+                    report.push(describe(&change), Outcome::Skipped(why));
+                    return Ok(());
+                }
+                Err(e) => {
+                    report.push(describe(&change), Outcome::Failed(e));
+                    return Ok(());
+                }
+            }
+        }
+        self.run(journal, batch, change, report)
     }
 
     /// Deshace toda la sesión. Lo que no se pudo deshacer queda en el journal.
@@ -285,6 +323,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::Kill { target } => self.platform.kill(target),
             Change::StopService { name } => self.platform.stop_service(name),
             Change::Tweak { tweak, .. } => self.platform.apply_tweak(*tweak),
+            Change::FullscreenOptimizationsOff { exe } => {
+                self.platform.disable_fullscreen_optimizations(exe)
+            }
         };
         journal.entries[index].status = match result {
             Ok(()) => EntryStatus::Done,
@@ -346,6 +387,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::Suspend { target } => self.platform.resume(target),
             Change::StopService { name } => self.platform.start_service(name),
             Change::Tweak { tweak, previous } => self.platform.restore_tweak(*tweak, previous),
+            Change::FullscreenOptimizationsOff { exe } => self.platform.clear_compat_flags(exe),
         };
         result.map_or_else(Outcome::Failed, |()| Outcome::Done)
     }
@@ -372,6 +414,10 @@ fn already_applied(journal: &Journal, change: &Change) -> bool {
             ) => a == b && x == y,
             (Change::Suspend { target: a }, Change::Suspend { target: b }) => a == b,
             (Change::StopService { name: a }, Change::StopService { name: b }) => a == b,
+            (
+                Change::FullscreenOptimizationsOff { exe: a },
+                Change::FullscreenOptimizationsOff { exe: b },
+            ) => a == b,
             _ => false,
         })
 }
@@ -451,6 +497,7 @@ mod tests {
                 target: target.clone(),
                 priority,
                 realtime_confirmed: confirmed,
+                fullscreen_optimizations_off: false,
             }),
         }
     }
