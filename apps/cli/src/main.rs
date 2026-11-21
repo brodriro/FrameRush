@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use framerush_core::{
     ApplyRequest, FileStore, GameBoost, JournalStore, Level, Outcome, Plan, PlanItem, PlanOptions,
-    Report, Snapshot, Subject, defaults, is_protected, plan,
+    Report, Scope, Snapshot, Subject, defaults, is_protected, plan, tweak_scope,
 };
 use framerush_device::DeviceProfile;
 use framerush_platform::{Os, Priority, ProcessInfo, Tweak, scan_processes};
@@ -396,12 +396,15 @@ fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak]) {
     );
     if !plan.tweaks.is_empty() {
         println!(
-            "
-Ajustes persistentes (solo los deshace `framerush revert`):"
+            "\nAjustes del sistema (sesión: vuelve al cerrar el juego; persistente: solo `revert`):"
         );
         for t in &plan.tweaks {
             let mark = if tweaks.contains(t) { "x" } else { " " };
-            println!("[{mark}] {}", t.id());
+            let scope = match tweak_scope(*t) {
+                Scope::Session => "sesión",
+                Scope::Persistent => "persistente",
+            };
+            println!("[{mark}] {:<28} {scope}", t.id());
         }
     }
 }
