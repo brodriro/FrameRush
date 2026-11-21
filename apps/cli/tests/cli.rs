@@ -84,3 +84,34 @@ fn revert_without_session_does_nothing() {
         assert!(stdout.contains("No había nada que hacer"), "{stdout}");
     }
 }
+
+#[test]
+fn apply_shows_the_game_without_touching_it() {
+    let dir = temp_dir("game");
+    let pid = std::process::id().to_string();
+    let (ok, stdout) = framerush_in(&dir, &["apply", "--game", &pid]);
+    assert!(ok);
+    assert!(
+        stdout.contains(&format!("(pid {pid}) → prioridad Alta")),
+        "{stdout}"
+    );
+    assert!(!dir.join("session.json").exists());
+}
+
+#[test]
+fn realtime_needs_a_second_confirmation() {
+    let dir = temp_dir("realtime");
+    let pid = std::process::id().to_string();
+    let (ok, _) = framerush_in(
+        &dir,
+        &["apply", "--game", &pid, "--game-priority", "realtime"],
+    );
+    assert!(!ok);
+}
+
+#[test]
+fn unknown_game_is_rejected() {
+    let dir = temp_dir("nogame");
+    let (ok, _) = framerush_in(&dir, &["plan", "--game", "no-existe-framerush.exe"]);
+    assert!(!ok);
+}

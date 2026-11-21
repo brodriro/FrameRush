@@ -4,15 +4,18 @@
 //! `apply` aplica el plan (solo con `--yes`), `undo` deshace el último apply y `revert` toda la
 //! sesión. Todo cambio pasa por el journal `%LOCALAPPDATA%/framerush/session.json`; la variable
 //! `FRAMERUSH_DATA_DIR` cambia esa carpeta (tests). `sensors` y `power` llegan en M2.
+//!
+//! El juego se indica con `--game <exe|pid>`: desde una terminal, la ventana en primer plano es
+//! la propia terminal. El reconocimiento automático por la biblioteca de Steam llega en M3.
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use framerush_core::{
-    ApplyRequest, FileStore, JournalStore, Level, Outcome, Plan, PlanItem, PlanOptions, Report,
-    Snapshot, Subject, defaults, plan,
+    ApplyRequest, FileStore, GameBoost, JournalStore, Level, Outcome, Plan, PlanItem, PlanOptions,
+    Report, Snapshot, Subject, defaults, is_protected, plan,
 };
 use framerush_device::DeviceProfile;
-use framerush_platform::{Os, scan_processes};
+use framerush_platform::{Os, Priority, ProcessInfo, scan_processes};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
@@ -36,29 +39,67 @@ enum Command {
         /// Muestra el plan como si hubiera elevación (quita los candados del dry-run).
         #[arg(long)]
         admin: bool,
+        #[command(flatten)]
+        game: GameArgs,
     },
     /// Aplica el plan de un nivel. Sin `--yes` solo lo muestra.
-    Apply {
-        /// normal, agresivo o extremo.
-        #[arg(long, default_value_t = Level::default())]
-        level: Level,
-        /// Trata la ejecución como elevada (quita los candados de las filas que piden admin).
-        #[arg(long)]
-        admin: bool,
-        /// Marca además estas reglas (ids separados por comas), como en el checklist.
-        #[arg(long, value_delimiter = ',')]
-        include: Vec<String>,
-        /// Desmarca estas reglas (ids separados por comas).
-        #[arg(long, value_delimiter = ',')]
-        exclude: Vec<String>,
-        /// Confirma que se apliquen los cambios.
-        #[arg(long)]
-        yes: bool,
-    },
+    Apply(ApplyArgs),
     /// Deshace el último `apply`.
     Undo,
     /// Deshace toda la sesión (Restaurar).
     Revert,
+}
+
+#[derive(Debug, Args)]
+struct ApplyArgs {
+    /// normal, agresivo o extremo.
+    #[arg(long, default_value_t = Level::default())]
+    level: Level,
+    /// Trata la ejecución como elevada (quita los candados de las filas que piden admin).
+    #[arg(long)]
+    admin: bool,
+    /// Marca además estas reglas (ids separados por comas), como en el checklist.
+    #[arg(long, value_delimiter = ',')]
+    include: Vec<String>,
+    /// Desmarca estas reglas (ids separados por comas).
+    #[arg(long, value_delimiter = ',')]
+    exclude: Vec<String>,
+    #[command(flatten)]
+    game: GameArgs,
+    /// Confirma que se apliquen los cambios.
+    #[arg(long)]
+    yes: bool,
+}
+
+#[derive(Debug, Args)]
+struct GameArgs {
+    /// Proceso del juego: nombre del ejecutable (cs2.exe) o PID. Queda fuera del plan.
+    #[arg(long)]
+    game: Option<String>,
+    /// Prioridad del juego (PLAN.md R3, P1).
+    #[arg(long, value_enum, default_value_t = GamePriority::Alta, requires = "game")]
+    game_priority: GamePriority,
+    /// Segunda confirmación para `--game-priority realtime` (nunca se persiste).
+    #[arg(long, requires = "game")]
+    confirm_realtime: bool,
+}
+
+/// Valores de `game-priority` (design/SETTINGS.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum GamePriority {
+    Normal,
+    Alta,
+    Realtime,
+}
+
+impl From<GamePriority> for Priority {
+    fn from(p: GamePriority) -> Self {
+        match p {
+            GamePriority::Normal => Priority::Normal,
+            GamePriority::Alta => Priority::High,
+            GamePriority::Realtime => Priority::Realtime,
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -67,14 +108,8 @@ fn main() -> Result<()> {
         .init();
     match Cli::parse().command {
         Command::Scan => scan(),
-        Command::Plan { level, admin } => show_plan(level, admin),
-        Command::Apply {
-            level,
-            admin,
-            include,
-            exclude,
-            yes,
-        } => apply(level, admin, &include, &exclude, yes),
+        Command::Plan { level, admin, game } => show_plan(level, admin, &game),
+        Command::Apply(args) => apply(&args),
         Command::Undo => undo(),
         Command::Revert => revert(),
     }
@@ -99,30 +134,86 @@ fn scan() -> Result<()> {
     Ok(())
 }
 
-fn build_plan(level: Level, admin: bool) -> Result<Plan> {
+/// Mismo criterio que la lista de protegidos: sin `.exe` y sin mayúsculas.
+fn exe_stem(name: &str) -> String {
+    let name = name.to_lowercase();
+    name.strip_suffix(".exe").unwrap_or(&name).to_owned()
+}
+
+/// Busca el juego por PID o por nombre. Varios procesos con el mismo nombre piden el PID.
+fn find_game(processes: &[ProcessInfo], query: &str) -> Result<ProcessInfo> {
+    let found: Vec<&ProcessInfo> = match query.parse::<u32>() {
+        Ok(pid) => processes.iter().filter(|p| p.target.pid == pid).collect(),
+        Err(_) => {
+            let want = exe_stem(query);
+            processes
+                .iter()
+                .filter(|p| exe_stem(&p.name) == want)
+                .collect()
+        }
+    };
+    let game = match found.as_slice() {
+        [] => bail!("no hay ningún proceso `{query}` en ejecución"),
+        [one] => *one,
+        many => {
+            let pids: Vec<String> = many.iter().map(|p| p.target.pid.to_string()).collect();
+            bail!(
+                "hay {} procesos `{query}` (PID {}): indica el PID con --game",
+                many.len(),
+                pids.join(", ")
+            )
+        }
+    };
+    if is_protected(&game.name) {
+        bail!(
+            "`{}` está en la lista de protegidos: no puede ser el juego",
+            game.name
+        );
+    }
+    Ok(game.clone())
+}
+
+fn build_plan(
+    level: Level,
+    admin: bool,
+    game: Option<&str>,
+) -> Result<(Plan, Option<ProcessInfo>)> {
     let Some(os) = Os::current() else {
         bail!("sistema operativo no admitido");
     };
     // La detección del equipo llega en M2; hasta entonces el perfil solo tiene el SO.
     let device = DeviceProfile::undetected(os);
     let rules = framerush_rules::embedded().context("las reglas embebidas no son válidas")?;
+    let processes = scan_processes().context("no se pudo listar los procesos")?;
+    let game = game.map(|q| find_game(&processes, q)).transpose()?;
     let snapshot = Snapshot {
-        processes: scan_processes().context("no se pudo listar los procesos")?,
+        processes,
         // Los servicios se consultan con el SCM / systemd en M5.
         services: vec![],
-        game: None,
+        game: game.as_ref().map(|g| g.target.clone()),
     };
     let options = PlanOptions {
         elevated: admin,
         keep_alive: defaults::keep_alive(&device),
     };
-    Ok(plan(level, &snapshot, &rules, &device, &options))
+    Ok((plan(level, &snapshot, &rules, &device, &options), game))
 }
 
-fn show_plan(level: Level, admin: bool) -> Result<()> {
+fn print_game(game: Option<&ProcessInfo>, args: &GameArgs) {
+    match game {
+        Some(g) => println!(
+            "Juego: {} (pid {}) → prioridad {:?}\n",
+            g.name, g.target.pid, args.game_priority
+        ),
+        None => println!("Juego: sin indicar (--game); su prioridad no se toca.\n"),
+    }
+}
+
+fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     notify_open_session();
-    let plan = build_plan(level, admin)?;
+    let (plan, game) = build_plan(level, admin, args.game.as_deref())?;
     println!("Plan para el nivel {level} (dry-run: no se toca nada)");
+    print_game(game.as_ref(), args);
     let checked: Vec<&PlanItem> = plan.checked().collect();
     print_plan(&plan, &checked);
     Ok(())
@@ -151,30 +242,32 @@ fn select<'a>(plan: &'a Plan, include: &[String], exclude: &[String]) -> Result<
         .collect())
 }
 
-fn apply(
-    level: Level,
-    admin: bool,
-    include: &[String],
-    exclude: &[String],
-    yes: bool,
-) -> Result<()> {
+fn apply(args: &ApplyArgs) -> Result<()> {
     notify_open_session();
-    let plan = build_plan(level, admin)?;
-    let checked = select(&plan, include, exclude)?;
-    if !yes {
+    let level = args.level;
+    let (plan, game) = build_plan(level, args.admin, args.game.game.as_deref())?;
+    let checked = select(&plan, &args.include, &args.exclude)?;
+    if args.game.game_priority == GamePriority::Realtime && !args.game.confirm_realtime {
+        bail!("Tiempo real puede congelar el equipo: confírmalo con --confirm-realtime");
+    }
+    if !args.yes {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
+        print_game(game.as_ref(), &args.game);
         print_plan(&plan, &checked);
         println!("\nRevisa las filas y repite con --yes para aplicarlas.");
         return Ok(());
     }
-    if checked.is_empty() {
-        println!("No hay filas marcadas: no se toca nada.");
+    if checked.is_empty() && game.is_none() {
+        println!("No hay filas marcadas ni juego: no se toca nada.");
         return Ok(());
     }
     let request = ApplyRequest {
         items: checked,
-        // La detección del juego en primer plano está pendiente (M1).
-        game: None,
+        game: game.map(|g| GameBoost {
+            target: g.target,
+            priority: args.game.game_priority.into(),
+            realtime_confirmed: args.game.confirm_realtime,
+        }),
     };
     let report = run(Op::Apply(request))?;
     print_report(&report);
@@ -314,4 +407,45 @@ fn print_report(report: &Report) {
         report.failed(),
         report.lines.len()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use framerush_platform::{StartTime, Target};
+
+    fn proc(pid: u32, name: &str) -> ProcessInfo {
+        ProcessInfo {
+            target: Target {
+                pid,
+                start_time: StartTime(1),
+                exe_path: PathBuf::from(name),
+            },
+            name: name.into(),
+            memory_bytes: 0,
+            cpu_percent: None,
+        }
+    }
+
+    #[test]
+    fn finds_the_game_by_name_or_pid() {
+        let ps = [proc(1, "Game.exe"), proc(2, "other.exe")];
+        assert_eq!(find_game(&ps, "game").unwrap().target.pid, 1);
+        assert_eq!(find_game(&ps, "GAME.EXE").unwrap().target.pid, 1);
+        assert_eq!(find_game(&ps, "2").unwrap().target.pid, 2);
+        assert!(find_game(&ps, "missing.exe").is_err());
+    }
+
+    #[test]
+    fn duplicated_names_ask_for_the_pid() {
+        let ps = [proc(1, "game.exe"), proc(2, "game.exe")];
+        let err = find_game(&ps, "game.exe").unwrap_err().to_string();
+        assert!(err.contains("PID 1, 2"), "{err}");
+    }
+
+    #[test]
+    fn a_protected_process_cannot_be_the_game() {
+        let ps = [proc(1, "dwm.exe")];
+        assert!(find_game(&ps, "dwm.exe").is_err());
+    }
 }
