@@ -9,7 +9,7 @@ use framerush_core::{
 };
 use framerush_device::{DeviceProfile, samples};
 use framerush_platform::mock::MockPlatform;
-use framerush_platform::{Os, Priority, ProcessControl, ServiceState};
+use framerush_platform::{Os, Priority, ProcessControl, ServiceState, Tweak};
 use std::path::PathBuf;
 
 fn rule(id: &str, name: &str, action: Action, min_level: Level, risk: Risk) -> Rule {
@@ -58,6 +58,7 @@ fn boost(m: &MockPlatform, priority: Priority, confirmed: bool) -> ApplyRequest<
     let game = m.spawn(9, "game.exe", "/game.exe", 1);
     ApplyRequest {
         items: vec![],
+        tweaks: vec![],
         game: Some(GameBoost {
             target: game,
             priority,
@@ -110,6 +111,66 @@ fn p2_anticheat_turns_off_game_tuning() {
     let guarded = plan_for(Level::Extremo, &snapshot(&m), &[], &PlanOptions::default());
     assert!(!guarded.game_tuning_allowed());
     assert_eq!(guarded.anticheats, ["BEService.exe"]);
+}
+
+/// P5 y §3: al salir del juego solo se revierte lo de sesión; lo persistente espera a
+/// Restaurar. Un valor que no existía se borra al restaurar.
+#[test]
+fn p5_persistent_changes_survive_the_session_revert() {
+    let m = MockPlatform::new(4);
+    let s = store("p5");
+    let engine = Engine::new(&m, &s);
+    let updater = m.spawn(1, "updater.exe", "/updater.exe", 1);
+    let rules = [rule(
+        "u",
+        "updater",
+        Action::Suspend,
+        Level::Normal,
+        Risk::Low,
+    )];
+    let p = plan_for(
+        Level::Normal,
+        &snapshot(&m),
+        &rules,
+        &PlanOptions::default(),
+    );
+    let loc = r"mock\game-dvr-off";
+    let request = ApplyRequest {
+        items: p.checked().collect(),
+        tweaks: vec![Tweak::GameDvrOff],
+        game: None,
+    };
+    engine.apply(&request).unwrap();
+    assert!(m.is_suspended(&updater).unwrap());
+    assert_eq!(m.value(loc), Some(1));
+
+    engine.revert_session().unwrap();
+    assert!(!m.is_suspended(&updater).unwrap());
+    assert_eq!(m.value(loc), Some(1), "lo persistente sigue aplicado");
+    assert!(engine.has_open_session().unwrap());
+
+    engine.revert_all().unwrap();
+    assert_eq!(m.value(loc), None, "no existía: Restaurar lo borra");
+    assert!(!engine.has_open_session().unwrap());
+}
+
+/// Backup único: reaplicar un ajuste no sobrescribe el valor original.
+#[test]
+fn reapplying_a_tweak_keeps_the_original_backup() {
+    let m = MockPlatform::new(4);
+    let s = store("backup");
+    let engine = Engine::new(&m, &s);
+    let loc = r"mock\windows-game-mode";
+    m.set_value(loc, 7);
+    let request = ApplyRequest {
+        tweaks: vec![Tweak::WindowsGameMode],
+        ..ApplyRequest::default()
+    };
+    engine.apply(&request).unwrap();
+    let again = engine.apply(&request).unwrap();
+    assert_eq!(again.done(), 0);
+    engine.revert_all().unwrap();
+    assert_eq!(m.value(loc), Some(7));
 }
 
 /// P7: `keep-alive-list` solo impide congelar; bajar la prioridad sigue permitido.

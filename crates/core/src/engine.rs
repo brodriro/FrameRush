@@ -12,7 +12,7 @@
 use crate::journal::{Change, Entry, EntryStatus, Journal, JournalError, JournalStore};
 use crate::protected::is_protected;
 use crate::{Action, PlanItem, Scope, Subject};
-use framerush_platform::{Platform, PlatformError, Priority, Target};
+use framerush_platform::{Platform, PlatformError, Priority, Target, Tweak};
 
 /// Prioridad que se pone al bajar la de un proceso de fondo (propuesta de diseño, PLAN.md §6).
 pub const LOWERED_PRIORITY: Priority = Priority::BelowNormal;
@@ -26,10 +26,12 @@ pub struct GameBoost {
     pub realtime_confirmed: bool,
 }
 
-/// Qué aplicar: las filas que el usuario dejó marcadas y, opcionalmente, la prioridad del juego.
+/// Qué aplicar: las filas que el usuario dejó marcadas, los ajustes persistentes marcados y,
+/// opcionalmente, la prioridad del juego.
 #[derive(Debug, Clone, Default)]
 pub struct ApplyRequest<'a> {
     pub items: Vec<&'a PlanItem>,
+    pub tweaks: Vec<Tweak>,
     pub game: Option<GameBoost>,
 }
 
@@ -94,6 +96,7 @@ pub fn describe(change: &Change) -> String {
         Change::Suspend { target } => format!("suspender {}", proc(target)),
         Change::Kill { target } => format!("cerrar {}", proc(target)),
         Change::StopService { name } => format!("detener el servicio {name}"),
+        Change::Tweak { tweak, .. } => format!("ajuste {}", tweak.id()),
     }
 }
 
@@ -159,6 +162,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 }
             }
         }
+        for tweak in &request.tweaks {
+            self.apply_tweak(&mut journal, batch, *tweak, &mut report)?;
+        }
         if let Some(g) = &request.game {
             self.set_priority(&mut journal, batch, &g.target, g.priority, &mut report)?;
         }
@@ -221,6 +227,34 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         self.run(journal, batch, change, report)
     }
 
+    /// Ajuste persistente con backup único: si ya está aplicado no se vuelve a leer el estado
+    /// (sería el que pusimos nosotros).
+    fn apply_tweak(
+        &self,
+        journal: &mut Journal,
+        batch: u64,
+        tweak: Tweak,
+        report: &mut Report,
+    ) -> Result<(), EngineError> {
+        let applied = journal.entries.iter().any(|e| {
+            e.status == EntryStatus::Done
+                && matches!(&e.change, Change::Tweak { tweak: t, .. } if *t == tweak)
+        });
+        if applied {
+            let what = format!("ajuste {}", tweak.id());
+            report.push(what, Outcome::Skipped("ya aplicado en esta sesión".into()));
+            return Ok(());
+        }
+        let previous = match self.platform.read_tweak(tweak) {
+            Ok(p) => p,
+            Err(e) => {
+                report.push(format!("leer el ajuste {}", tweak.id()), Outcome::Failed(e));
+                return Ok(());
+            }
+        };
+        self.run(journal, batch, Change::Tweak { tweak, previous }, report)
+    }
+
     /// Registra el cambio, lo ejecuta y anota el resultado.
     fn run(
         &self,
@@ -250,6 +284,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::Suspend { target } => self.platform.suspend(target),
             Change::Kill { target } => self.platform.kill(target),
             Change::StopService { name } => self.platform.stop_service(name),
+            Change::Tweak { tweak, .. } => self.platform.apply_tweak(*tweak),
         };
         journal.entries[index].status = match result {
             Ok(()) => EntryStatus::Done,
@@ -310,6 +345,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             } => self.platform.set_priority(target, *previous),
             Change::Suspend { target } => self.platform.resume(target),
             Change::StopService { name } => self.platform.start_service(name),
+            Change::Tweak { tweak, previous } => self.platform.restore_tweak(*tweak, previous),
         };
         result.map_or_else(Outcome::Failed, |()| Outcome::Done)
     }
@@ -402,6 +438,7 @@ mod tests {
     fn request(items: &[PlanItem]) -> ApplyRequest<'_> {
         ApplyRequest {
             items: items.iter().collect(),
+            tweaks: vec![],
             game: None,
         }
     }
@@ -409,6 +446,7 @@ mod tests {
     fn boost(target: &Target, priority: Priority, confirmed: bool) -> ApplyRequest<'static> {
         ApplyRequest {
             items: vec![],
+            tweaks: vec![],
             game: Some(GameBoost {
                 target: target.clone(),
                 priority,

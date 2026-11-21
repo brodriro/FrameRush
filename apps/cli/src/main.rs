@@ -263,6 +263,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     }
     let request = ApplyRequest {
         items: checked,
+        tweaks: vec![],
         game: game.map(|g| GameBoost {
             target: g.target,
             priority: args.game.game_priority.into(),

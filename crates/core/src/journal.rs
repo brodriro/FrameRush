@@ -5,7 +5,7 @@
 //! "Restaurar sesión anterior".
 
 use crate::Scope;
-use framerush_platform::{Priority, Target};
+use framerush_platform::{Priority, SavedValue, Target, Tweak};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -30,6 +30,12 @@ pub enum Change {
     StopService {
         name: String,
     },
+    /// Ajuste persistente. `previous` son los valores de antes (backup único: reaplicar no lo
+    /// sobrescribe).
+    Tweak {
+        tweak: Tweak,
+        previous: Vec<SavedValue>,
+    },
 }
 
 impl Change {
@@ -37,13 +43,15 @@ impl Change {
         !matches!(self, Change::Kill { .. })
     }
 
-    /// Prioridad (incluida la del juego), congelados, cierres y servicios: todo es de sesión.
+    /// Prioridad (incluida la del juego), congelados, cierres y servicios son de sesión; los
+    /// ajustes del sistema son persistentes.
     pub fn scope(&self) -> Scope {
         match self {
             Change::Priority { .. }
             | Change::Suspend { .. }
             | Change::Kill { .. }
             | Change::StopService { .. } => Scope::Session,
+            Change::Tweak { .. } => Scope::Persistent,
         }
     }
 
@@ -53,7 +61,7 @@ impl Change {
             Change::Priority { target, .. }
             | Change::Suspend { target }
             | Change::Kill { target } => Some(target),
-            Change::StopService { .. } => None,
+            Change::StopService { .. } | Change::Tweak { .. } => None,
         }
     }
 }
