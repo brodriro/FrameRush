@@ -227,6 +227,18 @@ fn optional_tweaks_need_include() {
 }
 
 #[test]
+fn gpu_alto_needs_a_game() {
+    let dir = temp_dir("gpu");
+    let (ok, _) = framerush_in(&dir, &["apply", "--gpu-alto"]);
+    assert!(!ok);
+    let pid = std::process::id().to_string();
+    let (ok, stdout) = framerush_in(&dir, &["apply", "--game", &pid, "--gpu-alto"]);
+    assert!(ok);
+    assert!(stdout.contains("[x] gpu-preference = alto"), "{stdout}");
+    assert!(!dir.join("session.json").exists());
+}
+
+#[test]
 fn fso_off_needs_a_game() {
     let dir = temp_dir("fso");
     let (ok, _) = framerush_in(&dir, &["apply", "--fso-off"]);

@@ -97,6 +97,10 @@ struct GameArgs {
     /// persistente). Puede empeorar juegos DX12 (PLAN.md V10).
     #[arg(long, requires = "game")]
     fso_off: bool,
+    /// `gpu-preference = alto`: el exe del juego usa la GPU de alto rendimiento (persistente).
+    /// Explícito hasta que la detección del equipo sepa si hay más de una GPU (M2, R8).
+    #[arg(long, requires = "game")]
+    gpu_alto: bool,
 }
 
 /// Valores de `game-priority` (design/SETTINGS.md).
@@ -257,6 +261,12 @@ fn print_game(game: Option<&ProcessInfo>, args: &GameArgs, persistent: Option<Ma
                     g.target.exe_path.display()
                 );
             }
+            if args.gpu_alto {
+                println!(
+                    "[x] gpu-preference = alto             persistente · {}",
+                    g.target.exe_path.display()
+                );
+            }
             match persistent {
                 Some(Mark::On) => println!("[x] {PERSISTENT_PRIORITY:<32} persistente"),
                 Some(Mark::Off) => println!("[ ] {PERSISTENT_PRIORITY:<32} persistente"),
@@ -376,6 +386,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             priority: args.game.game_priority.into(),
             realtime_confirmed: args.game.confirm_realtime,
             fullscreen_optimizations_off: args.game.fso_off,
+            high_performance_gpu: args.game.gpu_alto,
             persistent_priority: persistent == Some(Mark::On),
         }),
     };

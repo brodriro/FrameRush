@@ -64,6 +64,7 @@ fn boost(m: &MockPlatform, priority: Priority, confirmed: bool) -> ApplyRequest<
             priority,
             realtime_confirmed: confirmed,
             fullscreen_optimizations_off: false,
+            high_performance_gpu: false,
             persistent_priority: false,
         }),
     }
@@ -250,6 +251,38 @@ fn p1_persistent_priority_is_high_only_and_persistent() {
     engine.apply(&request).unwrap();
     assert_eq!(m.value(&loc), Some(2), "con Normal no se escribe");
     engine.revert_all().unwrap();
+}
+
+/// `gpu-preference = alto` es persistente y no pisa una preferencia que el usuario ya tenía.
+#[test]
+fn gpu_preference_is_persistent_and_respects_the_users() {
+    use framerush_platform::mock::MOCK_HIGH_PERFORMANCE_GPU;
+    let m = MockPlatform::new(4);
+    let s = store("gpu");
+    let engine = Engine::new(&m, &s);
+    let mut request = boost(&m, Priority::High, false);
+    let exe = request.game.as_ref().unwrap().target.exe_path.clone();
+    if let Some(g) = request.game.as_mut() {
+        g.high_performance_gpu = true;
+    }
+    engine.apply(&request).unwrap();
+    assert_eq!(
+        m.gpu_preference(&exe).unwrap().as_deref(),
+        Some(MOCK_HIGH_PERFORMANCE_GPU)
+    );
+    engine.revert_session().unwrap();
+    assert!(m.gpu_preference(&exe).unwrap().is_some(), "persistente");
+    engine.revert_all().unwrap();
+    assert_eq!(m.gpu_preference(&exe).unwrap(), None);
+
+    m.set_gpu_preference(&exe.to_string_lossy(), "GpuPreference=1;");
+    let report = engine.apply(&request).unwrap();
+    assert_eq!(report.done(), 1, "solo la prioridad: {report:?}");
+    engine.revert_all().unwrap();
+    assert_eq!(
+        m.gpu_preference(&exe).unwrap().as_deref(),
+        Some("GpuPreference=1;")
+    );
 }
 
 /// Backup único: reaplicar un ajuste no sobrescribe el valor original.

@@ -27,6 +27,8 @@ pub struct GameBoost {
     pub realtime_confirmed: bool,
     /// `fullscreen-optimizations-off` para el exe del juego (opt-in, persistente, V10).
     pub fullscreen_optimizations_off: bool,
+    /// `gpu-preference = alto` para el exe del juego (persistente, P13, V22).
+    pub high_performance_gpu: bool,
     /// `game-priority-persistent`: Alta para el exe en cada arranque (IFEO). Se ignora si
     /// `priority` es Normal (P1); ver [`crate::persistent_priority_default`].
     pub persistent_priority: bool,
@@ -109,6 +111,9 @@ pub fn describe(change: &Change) -> String {
         Change::PersistentPriority { exe, .. } => {
             format!("prioridad Alta persistente: {}", exe.display())
         }
+        Change::HighPerformanceGpu { exe } => {
+            format!("GPU de alto rendimiento: {}", exe.display())
+        }
     }
 }
 
@@ -179,8 +184,16 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         }
         if let Some(g) = &request.game {
             self.set_priority(&mut journal, batch, &g.target, g.priority, &mut report)?;
+            let exe = &g.target.exe_path;
             if g.fullscreen_optimizations_off {
-                self.disable_fso(&mut journal, batch, &g.target.exe_path, &mut report)?;
+                let change = Change::FullscreenOptimizationsOff { exe: exe.clone() };
+                let current = || self.platform.compat_flags(exe);
+                self.apply_if_unset(&mut journal, batch, change, current, &mut report)?;
+            }
+            if g.high_performance_gpu {
+                let change = Change::HighPerformanceGpu { exe: exe.clone() };
+                let current = || self.platform.gpu_preference(exe);
+                self.apply_if_unset(&mut journal, batch, change, current, &mut report)?;
             }
             if g.persistent_priority && g.priority != Priority::Normal {
                 self.persist_priority(&mut journal, batch, &g.target.exe_path, &mut report)?;
@@ -189,23 +202,21 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         Ok(report)
     }
 
-    /// FSO del exe del juego. Si el exe ya tiene flags de compatibilidad no se tocan: no hay
-    /// una definición documentada de cómo combinarlos y sobrescribirlos los perdería.
-    fn disable_fso(
+    /// Cambio de un valor por exe (FSO, GPU) que solo se hace si el exe no tiene ya uno: no hay
+    /// una definición documentada de cómo combinarlos y sobrescribirlo perdería el del usuario.
+    fn apply_if_unset(
         &self,
         journal: &mut Journal,
         batch: u64,
-        exe: &Path,
+        change: Change,
+        current: impl FnOnce() -> Result<Option<String>, PlatformError>,
         report: &mut Report,
     ) -> Result<(), EngineError> {
-        let change = Change::FullscreenOptimizationsOff {
-            exe: exe.to_path_buf(),
-        };
         if !already_applied(journal, &change) {
-            match self.platform.compat_flags(exe) {
+            match current() {
                 Ok(None) => {}
-                Ok(Some(flags)) => {
-                    let why = format!("el exe ya tiene flags de compatibilidad (`{flags}`)");
+                Ok(Some(value)) => {
+                    let why = format!("el exe ya tiene un valor propio (`{value}`)");
                     report.push(describe(&change), Outcome::Skipped(why));
                     return Ok(());
                 }
@@ -365,6 +376,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 self.platform.disable_fullscreen_optimizations(exe)
             }
             Change::PersistentPriority { exe, .. } => self.platform.set_persistent_priority(exe),
+            Change::HighPerformanceGpu { exe } => self.platform.prefer_high_performance_gpu(exe),
         };
         journal.entries[index].status = match result {
             Ok(()) => EntryStatus::Done,
@@ -430,6 +442,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::PersistentPriority { exe, previous } => {
                 self.platform.restore_persistent_priority(exe, previous)
             }
+            Change::HighPerformanceGpu { exe } => self.platform.clear_gpu_preference(exe),
         };
         result.map_or_else(Outcome::Failed, |()| Outcome::Done)
     }
@@ -464,6 +477,9 @@ fn already_applied(journal: &Journal, change: &Change) -> bool {
                 Change::PersistentPriority { exe: a, .. },
                 Change::PersistentPriority { exe: b, .. },
             ) => a == b,
+            (Change::HighPerformanceGpu { exe: a }, Change::HighPerformanceGpu { exe: b }) => {
+                a == b
+            }
             _ => false,
         })
 }
@@ -544,6 +560,7 @@ mod tests {
                 priority,
                 realtime_confirmed: confirmed,
                 fullscreen_optimizations_off: false,
+                high_performance_gpu: false,
                 persistent_priority: false,
             }),
         }

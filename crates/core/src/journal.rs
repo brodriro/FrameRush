@@ -41,6 +41,11 @@ pub enum Change {
     FullscreenOptimizationsOff {
         exe: PathBuf,
     },
+    /// `gpu-preference = alto` para el exe del juego. Como las FSO, solo se aplica si el exe no
+    /// tenía preferencia, así que deshacerlo es borrarla.
+    HighPerformanceGpu {
+        exe: PathBuf,
+    },
     /// `game-priority-persistent`: el exe arranca siempre en Alta. `previous`, como en `Tweak`.
     PersistentPriority {
         exe: PathBuf,
@@ -62,9 +67,9 @@ impl Change {
             | Change::Kill { .. }
             | Change::StopService { .. } => Scope::Session,
             Change::Tweak { tweak, .. } => crate::tweak_scope(*tweak),
-            Change::FullscreenOptimizationsOff { .. } | Change::PersistentPriority { .. } => {
-                Scope::Persistent
-            }
+            Change::FullscreenOptimizationsOff { .. }
+            | Change::HighPerformanceGpu { .. }
+            | Change::PersistentPriority { .. } => Scope::Persistent,
         }
     }
 
@@ -77,6 +82,7 @@ impl Change {
             Change::StopService { .. }
             | Change::Tweak { .. }
             | Change::FullscreenOptimizationsOff { .. }
+            | Change::HighPerformanceGpu { .. }
             | Change::PersistentPriority { .. } => None,
         }
     }
