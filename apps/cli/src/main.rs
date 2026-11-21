@@ -9,6 +9,11 @@
 //! cuando hace falta: `apply --admin` con ajustes que lo piden, o `undo`/`revert` de cambios
 //! hechos así. El helper termina al terminar la CLI.
 //!
+//! La salida es siempre UTF-8. PowerShell decodifica la salida capturada de un programa con
+//! `[Console]::OutputEncoding` (en muchos equipos la página OEM, p. ej. 850), así que para
+//! capturarla sin caracteres rotos hay que poner antes
+//! `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`.
+//!
 //! El juego se indica con `--game <exe|pid>`: desde una terminal, la ventana en primer plano es
 //! la propia terminal. El reconocimiento automático por la biblioteca de Steam llega en M3.
 
