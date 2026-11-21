@@ -476,11 +476,17 @@ mod tests {
     fn priority_round_trip() {
         let w = WindowsPlatform::new();
         let v = victim();
-        assert_eq!(w.priority(&v.target).unwrap(), Priority::Normal);
-        w.set_priority(&v.target, Priority::BelowNormal).unwrap();
-        assert_eq!(w.priority(&v.target).unwrap(), Priority::BelowNormal);
-        w.set_priority(&v.target, Priority::Normal).unwrap();
-        assert_eq!(w.priority(&v.target).unwrap(), Priority::Normal);
+        // El hijo hereda la clase del proceso del test, que en CI no tiene por qué ser Normal.
+        let original = w.priority(&v.target).unwrap();
+        let other = if original == Priority::Idle {
+            Priority::BelowNormal
+        } else {
+            Priority::Idle
+        };
+        w.set_priority(&v.target, other).unwrap();
+        assert_eq!(w.priority(&v.target).unwrap(), other);
+        w.set_priority(&v.target, original).unwrap();
+        assert_eq!(w.priority(&v.target).unwrap(), original);
     }
 
     #[test]
@@ -517,13 +523,14 @@ mod tests {
     fn a_changed_target_is_rejected() {
         let w = WindowsPlatform::new();
         let v = victim();
+        let original = w.priority(&v.target).unwrap();
         let mut stale = v.target.clone();
         stale.start_time.0 += 1;
         assert_eq!(
             w.set_priority(&stale, Priority::Idle),
             Err(PlatformError::TargetChanged { pid: stale.pid })
         );
-        assert_eq!(w.priority(&v.target).unwrap(), Priority::Normal);
+        assert_eq!(w.priority(&v.target).unwrap(), original);
     }
 
     /// No se puede forzar el primer plano desde un test; solo se comprueba que lo que devuelve
