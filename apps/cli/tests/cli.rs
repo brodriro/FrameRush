@@ -153,3 +153,18 @@ fn tweaks_are_listed_and_can_be_excluded() {
     assert!(stdout.contains("[x] windows-game-mode"), "{stdout}");
     assert!(!dir.join("session.json").exists());
 }
+
+#[test]
+fn fso_off_needs_a_game() {
+    let dir = temp_dir("fso");
+    let (ok, _) = framerush_in(&dir, &["apply", "--fso-off"]);
+    assert!(!ok);
+    let pid = std::process::id().to_string();
+    let (ok, stdout) = framerush_in(&dir, &["apply", "--game", &pid, "--fso-off"]);
+    assert!(ok);
+    assert!(
+        stdout.contains("[x] fullscreen-optimizations-off"),
+        "{stdout}"
+    );
+    assert!(!dir.join("session.json").exists());
+}

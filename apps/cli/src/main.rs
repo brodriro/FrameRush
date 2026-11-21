@@ -82,6 +82,10 @@ struct GameArgs {
     /// Segunda confirmación para `--game-priority realtime` (nunca se persiste).
     #[arg(long, requires = "game")]
     confirm_realtime: bool,
+    /// Desactiva las optimizaciones de pantalla completa solo para el exe del juego (opt-in,
+    /// persistente). Puede empeorar juegos DX12 (PLAN.md V10).
+    #[arg(long, requires = "game")]
+    fso_off: bool,
 }
 
 /// Valores de `game-priority` (design/SETTINGS.md).
@@ -202,10 +206,19 @@ fn build_plan(
 
 fn print_game(game: Option<&ProcessInfo>, args: &GameArgs) {
     match game {
-        Some(g) => println!(
-            "Juego: {} (pid {}) → prioridad {:?}\n",
-            g.name, g.target.pid, args.game_priority
-        ),
+        Some(g) => {
+            println!(
+                "Juego: {} (pid {}) → prioridad {:?}",
+                g.name, g.target.pid, args.game_priority
+            );
+            if args.fso_off {
+                println!(
+                    "[x] fullscreen-optimizations-off   persistente · {}",
+                    g.target.exe_path.display()
+                );
+            }
+            println!();
+        }
         None => println!("Juego: sin indicar (--game); su prioridad no se toca.\n"),
     }
 }
@@ -282,7 +295,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             target: g.target,
             priority: args.game.game_priority.into(),
             realtime_confirmed: args.game.confirm_realtime,
-            fullscreen_optimizations_off: false,
+            fullscreen_optimizations_off: args.game.fso_off,
         }),
     };
     let report = run(Op::Apply(request))?;
