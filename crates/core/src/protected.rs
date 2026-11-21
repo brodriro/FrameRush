@@ -81,7 +81,7 @@ const LIST: &[(Match, ProtectedReason)] = &[
 
 /// Normaliza un nombre o ruta de proceso: último componente (con `/` o `\`), minúsculas y sin
 /// `.exe`. Se separa a mano para que una ruta de Windows se lea igual en cualquier SO.
-fn normalize(name_or_path: &str) -> String {
+pub(crate) fn normalize(name_or_path: &str) -> String {
     let file = name_or_path
         .rsplit(['/', '\\'])
         .next()

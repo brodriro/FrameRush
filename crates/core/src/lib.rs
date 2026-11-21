@@ -4,6 +4,8 @@
 
 pub mod model;
 pub mod protected;
+pub mod rule;
 
 pub use model::{Action, Category, Level, ParseError, Risk};
 pub use protected::{ProtectedReason, is_protected, protected_reason};
+pub use rule::{OsNames, Rule};
