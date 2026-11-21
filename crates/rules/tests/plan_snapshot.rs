@@ -39,6 +39,7 @@ fn snapshot() -> Snapshot {
             ("Spooler".into(), ServiceState::Stopped),
         ],
         game,
+        tweaks: vec![],
     }
 }
 

@@ -15,7 +15,7 @@ use framerush_core::{
     Report, Snapshot, Subject, defaults, is_protected, plan,
 };
 use framerush_device::DeviceProfile;
-use framerush_platform::{Os, Priority, ProcessInfo, scan_processes};
+use framerush_platform::{Os, Priority, ProcessInfo, Tweak, scan_processes};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
@@ -191,6 +191,7 @@ fn build_plan(
         // Los servicios se consultan con el SCM / systemd en M5.
         services: vec![],
         game: game.as_ref().map(|g| g.target.clone()),
+        tweaks: native_tweaks(),
     };
     let options = PlanOptions {
         elevated: admin,
@@ -215,16 +216,22 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     println!("Plan para el nivel {level} (dry-run: no se toca nada)");
     print_game(game.as_ref(), args);
     let checked: Vec<&PlanItem> = plan.checked().collect();
-    print_plan(&plan, &checked);
+    print_plan(&plan, &checked, &plan.tweaks);
     Ok(())
 }
 
-/// Filas marcadas por el nivel, más `include` y menos `exclude`. Las filas con candado no se
-/// pueden marcar.
-fn select<'a>(plan: &'a Plan, include: &[String], exclude: &[String]) -> Result<Vec<&'a PlanItem>> {
+/// Filas y ajustes marcados por el nivel, más `include` y menos `exclude`. Las filas con candado
+/// no se pueden marcar.
+fn select<'a>(
+    plan: &'a Plan,
+    include: &[String],
+    exclude: &[String],
+) -> Result<(Vec<&'a PlanItem>, Vec<Tweak>)> {
     for id in include.iter().chain(exclude) {
-        if !plan.items.iter().any(|i| &i.rule_id == id) {
-            bail!("la regla `{id}` no está en el plan (¿no está en ejecución?)");
+        let known =
+            plan.items.iter().any(|i| &i.rule_id == id) || plan.tweaks.iter().any(|t| t.id() == id);
+        if !known {
+            bail!("`{id}` no está en el plan (¿no está en ejecución o no existe en este SO?)");
         }
     }
     if let Some(i) = plan
@@ -234,36 +241,43 @@ fn select<'a>(plan: &'a Plan, include: &[String], exclude: &[String]) -> Result<
     {
         bail!("la regla `{}` requiere admin: usa --admin", i.rule_id);
     }
-    Ok(plan
+    let items = plan
         .items
         .iter()
         .filter(|i| !i.locked && (i.default_checked || include.contains(&i.rule_id)))
         .filter(|i| !exclude.contains(&i.rule_id))
-        .collect())
+        .collect();
+    let tweaks = plan
+        .tweaks
+        .iter()
+        .copied()
+        .filter(|t| !exclude.iter().any(|id| id == t.id()))
+        .collect();
+    Ok((items, tweaks))
 }
 
 fn apply(args: &ApplyArgs) -> Result<()> {
     notify_open_session();
     let level = args.level;
     let (plan, game) = build_plan(level, args.admin, args.game.game.as_deref())?;
-    let checked = select(&plan, &args.include, &args.exclude)?;
+    let (checked, tweaks) = select(&plan, &args.include, &args.exclude)?;
     if args.game.game_priority == GamePriority::Realtime && !args.game.confirm_realtime {
         bail!("Tiempo real puede congelar el equipo: confírmalo con --confirm-realtime");
     }
     if !args.yes {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
         print_game(game.as_ref(), &args.game);
-        print_plan(&plan, &checked);
+        print_plan(&plan, &checked, &tweaks);
         println!("\nRevisa las filas y repite con --yes para aplicarlas.");
         return Ok(());
     }
-    if checked.is_empty() && game.is_none() {
-        println!("No hay filas marcadas ni juego: no se toca nada.");
+    if checked.is_empty() && tweaks.is_empty() && game.is_none() {
+        println!("No hay filas ni ajustes marcados ni juego: no se toca nada.");
         return Ok(());
     }
     let request = ApplyRequest {
         items: checked,
-        tweaks: vec![],
+        tweaks,
         game: game.map(|g| GameBoost {
             target: g.target,
             priority: args.game.game_priority.into(),
@@ -311,6 +325,18 @@ fn run(_op: Op<'_>) -> Result<Report> {
     bail!("apply, undo y revert solo están implementados en Windows por ahora")
 }
 
+/// Ajustes persistentes que admite la plataforma nativa.
+#[cfg(windows)]
+fn native_tweaks() -> Vec<Tweak> {
+    use framerush_platform::SystemTweaks;
+    framerush_platform::WindowsPlatform::new().supported_tweaks()
+}
+
+#[cfg(not(windows))]
+fn native_tweaks() -> Vec<Tweak> {
+    vec![]
+}
+
 /// Carpeta de datos: `FRAMERUSH_DATA_DIR` o `%LOCALAPPDATA%/framerush` (PLAN.md It1.1).
 fn data_dir() -> Result<PathBuf> {
     if let Some(dir) = std::env::var_os("FRAMERUSH_DATA_DIR") {
@@ -344,7 +370,7 @@ fn notify_open_session() {
     }
 }
 
-fn print_plan(plan: &Plan, checked: &[&PlanItem]) {
+fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak]) {
     if !plan.game_tuning_allowed() {
         println!(
             "Anticheat en ejecución: {}. Al juego solo se le toca la prioridad; \
@@ -368,6 +394,16 @@ fn print_plan(plan: &Plan, checked: &[&PlanItem]) {
         plan.items.len(),
         mib(memory)
     );
+    if !plan.tweaks.is_empty() {
+        println!(
+            "
+Ajustes persistentes (solo los deshace `framerush revert`):"
+        );
+        for t in &plan.tweaks {
+            let mark = if tweaks.contains(t) { "x" } else { " " };
+            println!("[{mark}] {}", t.id());
+        }
+    }
 }
 
 fn print_item(item: &PlanItem, checked: bool) {

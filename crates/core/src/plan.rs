@@ -7,7 +7,7 @@
 use crate::protected::{ProtectedReason, is_protected, normalize, protected_reason};
 use crate::{Action, Category, Level, Risk, Rule, Scope};
 use framerush_device::DeviceProfile;
-use framerush_platform::{ProcessInfo, ServiceState, Target};
+use framerush_platform::{ProcessInfo, ServiceState, Target, Tweak};
 
 /// Estado del equipo en el momento del `scan`.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -17,6 +17,8 @@ pub struct Snapshot {
     pub services: Vec<(String, ServiceState)>,
     /// Proceso del juego detectado; nunca entra en el plan.
     pub game: Option<Target>,
+    /// Ajustes persistentes que admite la plataforma en este equipo (P15).
+    pub tweaks: Vec<Tweak>,
 }
 
 /// Opciones que no dependen del nivel.
@@ -76,6 +78,8 @@ pub struct Plan {
     pub items: Vec<PlanItem>,
     /// Procesos de anticheat en ejecución (It1.3), sin repetir. Ver [`running_anticheats`].
     pub anticheats: Vec<String>,
+    /// Ajustes persistentes que el nivel trae marcados. Solo los revierte Restaurar.
+    pub tweaks: Vec<Tweak>,
 }
 
 impl Plan {
@@ -182,6 +186,20 @@ pub fn plan(
         level,
         items,
         anticheats: running_anticheats(&snapshot.processes),
+        tweaks: snapshot
+            .tweaks
+            .iter()
+            .copied()
+            .filter(|t| level.includes(tweak_min_level(*t)))
+            .collect(),
+    }
+}
+
+/// Nivel desde el que un ajuste viene marcado (design/SETTINGS.md: `game-dvr-off` y
+/// `windows-game-mode` están activos en todos los niveles).
+pub fn tweak_min_level(tweak: Tweak) -> Level {
+    match tweak {
+        Tweak::GameDvrOff | Tweak::WindowsGameMode => Level::Normal,
     }
 }
 
@@ -449,6 +467,29 @@ mod tests {
         let p = plan(Level::Normal, &guarded, &[], &device, &opts);
         assert_eq!(p.anticheats, ["BEService.exe", "EasyAntiCheat.exe"]);
         assert!(!p.game_tuning_allowed());
+    }
+
+    /// Solo aparecen los ajustes que la plataforma admite (P15).
+    #[test]
+    fn tweaks_come_from_the_platform() {
+        let device = samples::hybrid_laptop();
+        let none = plan(
+            Level::Extremo,
+            &Snapshot::default(),
+            &[],
+            &device,
+            &PlanOptions::default(),
+        );
+        assert!(none.tweaks.is_empty());
+
+        let snap = Snapshot {
+            tweaks: vec![Tweak::GameDvrOff],
+            ..Snapshot::default()
+        };
+        for level in Level::ALL {
+            let p = plan(level, &snap, &[], &device, &PlanOptions::default());
+            assert_eq!(p.tweaks, [Tweak::GameDvrOff], "{level}");
+        }
     }
 
     /// El token `teams` protege el proceso `ms-teams.exe` aunque el nombre no sea igual.

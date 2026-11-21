@@ -142,3 +142,14 @@ fn a_running_anticheat_is_reported() {
         "{stdout}"
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn tweaks_are_listed_and_can_be_excluded() {
+    let dir = temp_dir("tweaks");
+    let (ok, stdout) = framerush_in(&dir, &["apply", "--exclude", "game-dvr-off"]);
+    assert!(ok);
+    assert!(stdout.contains("[ ] game-dvr-off"), "{stdout}");
+    assert!(stdout.contains("[x] windows-game-mode"), "{stdout}");
+    assert!(!dir.join("session.json").exists());
+}
