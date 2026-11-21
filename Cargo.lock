@@ -168,6 +168,8 @@ name = "framerush-rules"
 version = "0.1.0"
 dependencies = [
  "framerush-core",
+ "framerush-device",
+ "framerush-platform",
  "serde",
  "thiserror",
  "toml",

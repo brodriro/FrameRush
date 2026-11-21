@@ -12,5 +12,9 @@ serde.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 
+[dev-dependencies]
+framerush-device = { workspace = true, features = ["samples"] }
+framerush-platform.workspace = true
+
 [lints]
 workspace = true
