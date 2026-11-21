@@ -74,6 +74,30 @@ pub struct DeviceProfile {
     pub virtualization: Vec<String>,
 }
 
+impl DeviceProfile {
+    /// Perfil sin detectar: solo el SO. Todo lo demás falta, así que los valores por defecto
+    /// salen como estimados y los ajustes que dependen del equipo no se muestran (P15).
+    pub fn undetected(os: Os) -> Self {
+        Self {
+            os,
+            os_build: None,
+            windows_11: None,
+            manufacturer: None,
+            cpu: None,
+            gpus: vec![],
+            displays: vec![],
+            battery: None,
+            power_plans: vec![],
+            active_power_plan: None,
+            installed_apps: vec![],
+            vbs_hvci_enabled: None,
+            hags_supported: None,
+            active_antivirus: None,
+            virtualization: vec![],
+        }
+    }
+}
+
 /// CPU y su topología.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Cpu {
