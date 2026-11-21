@@ -2,6 +2,7 @@
 //!
 //! No llama al SO: todo pasa por los traits de `framerush-platform`.
 
+pub mod defaults;
 pub mod model;
 pub mod plan;
 pub mod protected;
