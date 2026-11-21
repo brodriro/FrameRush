@@ -7,11 +7,13 @@ mod error;
 pub mod mock;
 mod os;
 mod process;
+mod scan;
 mod system;
 
 pub use error::{PlatformError, Result};
 pub use os::Os;
 pub use process::{Priority, ProcessControl, ProcessInfo, StartTime, Target};
+pub use scan::scan_processes;
 pub use system::{
     Capabilities, CapabilitySet, GameTuning, Platform, PowerControl, PowerPlan, ServiceControl,
     ServiceState,
