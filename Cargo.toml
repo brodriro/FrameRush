@@ -11,6 +11,9 @@ publish = false
 [workspace.dependencies]
 fpsboost-core = { path = "crates/core" }
 fpsboost-platform = { path = "crates/platform" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
