@@ -126,6 +126,7 @@ dependencies = [
 name = "framerush-core"
 version = "0.1.0"
 dependencies = [
+ "framerush-device",
  "framerush-platform",
  "serde",
  "serde_json",

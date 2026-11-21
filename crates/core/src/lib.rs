@@ -3,9 +3,11 @@
 //! No llama al SO: todo pasa por los traits de `framerush-platform`.
 
 pub mod model;
+pub mod plan;
 pub mod protected;
 pub mod rule;
 
 pub use model::{Action, Category, Level, ParseError, Risk};
+pub use plan::{Plan, PlanItem, PlanOptions, Snapshot, Subject, plan};
 pub use protected::{ProtectedReason, is_protected, protected_reason};
 pub use rule::{OsNames, Rule};
