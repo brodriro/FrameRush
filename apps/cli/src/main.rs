@@ -5,6 +5,10 @@
 //! sesión. Todo cambio pasa por el journal `%LOCALAPPDATA%/framerush/session.json`; la variable
 //! `FRAMERUSH_DATA_DIR` cambia esa carpeta (tests). `sensors` y `power` llegan en M2.
 //!
+//! Lo que pide admin lo hace `framerush-helper` (junto al ejecutable), que se abre con UAC solo
+//! cuando hace falta: `apply --admin` con ajustes que lo piden, o `undo`/`revert` de cambios
+//! hechos así. El helper termina al terminar la CLI.
+//!
 //! El juego se indica con `--game <exe|pid>`: desde una terminal, la ventana en primer plano es
 //! la propia terminal. El reconocimiento automático por la biblioteca de Steam llega en M3.
 
@@ -55,7 +59,8 @@ struct ApplyArgs {
     /// normal, agresivo o extremo.
     #[arg(long, default_value_t = Level::default())]
     level: Level,
-    /// Trata la ejecución como elevada (quita los candados de las filas que piden admin).
+    /// Quita los candados de lo que pide admin. Con `--yes`, si algo marcado lo pide, abre el
+    /// helper elevado (UAC).
     #[arg(long)]
     admin: bool,
     /// Marca además estas reglas (ids separados por comas), como en el checklist.
@@ -341,8 +346,32 @@ enum Op<'a> {
 
 #[cfg(windows)]
 fn run(op: Op<'_>) -> Result<Report> {
-    let platform = framerush_platform::WindowsPlatform::new();
+    use framerush_core::{Change, EntryStatus};
+    use framerush_platform::{Helper, SystemTweaks, WindowsPlatform};
+
     let store = store()?;
+    let unelevated = WindowsPlatform::new();
+    let admin = |t: Tweak| unelevated.tweak_requires_admin(t);
+    let needs_helper = match &op {
+        Op::Apply(request) => request.tweaks.iter().any(|t| admin(*t)),
+        Op::Undo | Op::Revert => {
+            let journal = store.load()?;
+            let last = journal.last_batch();
+            journal
+                .entries
+                .iter()
+                .filter(|e| e.status != EntryStatus::Failed)
+                .filter(|e| matches!(op, Op::Revert) || Some(e.batch) == last)
+                .any(|e| matches!(e.change, Change::Tweak { tweak, .. } if admin(tweak)))
+        }
+    };
+    let platform = if needs_helper {
+        println!("Hay cambios que piden admin: se abre el helper elevado (UAC).");
+        let helper = Helper::launch(&helper_exe()?).context("no se pudo abrir el helper")?;
+        WindowsPlatform::with_helper(helper)
+    } else {
+        unelevated
+    };
     let engine = framerush_core::Engine::new(&platform, &store);
     Ok(match op {
         Op::Apply(request) => engine.apply(&request).context("no se pudo aplicar")?,
@@ -354,6 +383,20 @@ fn run(op: Op<'_>) -> Result<Report> {
 #[cfg(not(windows))]
 fn run(_op: Op<'_>) -> Result<Report> {
     bail!("apply, undo y revert solo están implementados en Windows por ahora")
+}
+
+/// `framerush-helper.exe`, junto al ejecutable de la CLI.
+#[cfg(windows)]
+fn helper_exe() -> Result<PathBuf> {
+    let exe = std::env::current_exe().context("no se encontró el ejecutable de la CLI")?;
+    let helper = exe.with_file_name("framerush-helper.exe");
+    if !helper.is_file() {
+        bail!(
+            "falta {} (compílalo con `cargo build --workspace`)",
+            helper.display()
+        );
+    }
+    Ok(helper)
 }
 
 /// Ajustes que admite la plataforma nativa y, de ellos, los que piden admin.
