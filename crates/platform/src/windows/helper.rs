@@ -12,12 +12,12 @@
 //!   cerrarse el pipe o al terminar el proceso que lo lanzó.
 #![allow(unsafe_code)]
 
-use crate::{PlatformError, Result, SavedValue, SystemTweaks, Tweak};
+use crate::{GameTuning, PlatformError, Result, SavedValue, SystemTweaks, Tweak};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -54,6 +54,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
 enum Request {
     ApplyTweak(Tweak),
     RestoreTweak(Tweak, Vec<SavedValue>),
+    /// `game-priority-persistent` del exe.
+    SetPersistentPriority(PathBuf),
+    RestorePersistentPriority(PathBuf, Vec<SavedValue>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +119,21 @@ impl Helper {
 
     pub(super) fn restore_tweak(&self, tweak: Tweak, saved: &[SavedValue]) -> Result<()> {
         self.call(&Request::RestoreTweak(tweak, saved.to_vec()))
+    }
+
+    pub(super) fn set_persistent_priority(&self, exe: &Path) -> Result<()> {
+        self.call(&Request::SetPersistentPriority(exe.to_path_buf()))
+    }
+
+    pub(super) fn restore_persistent_priority(
+        &self,
+        exe: &Path,
+        saved: &[SavedValue],
+    ) -> Result<()> {
+        self.call(&Request::RestorePersistentPriority(
+            exe.to_path_buf(),
+            saved.to_vec(),
+        ))
     }
 
     fn call(&self, request: &Request) -> Result<()> {
@@ -367,7 +385,7 @@ fn exit_with(parent: u32) -> Result<()> {
 }
 
 /// Atiende peticiones hasta que el cliente cierre la conexión.
-fn serve<S: Read + Write, T: SystemTweaks>(conn: S, tweaks: &T) -> Result<()> {
+fn serve<S: Read + Write, T: SystemTweaks + GameTuning>(conn: S, platform: &T) -> Result<()> {
     let mut conn = BufReader::new(conn);
     let mut line = String::new();
     loop {
@@ -380,7 +398,7 @@ fn serve<S: Read + Write, T: SystemTweaks>(conn: S, tweaks: &T) -> Result<()> {
             return Ok(());
         }
         let response = match serde_json::from_str(&line) {
-            Ok(request) => handle(request, tweaks),
+            Ok(request) => handle(request, platform),
             Err(e) => Response::Failed(format!("petición no válida: {e}")),
         };
         let mut out = serde_json::to_string(&response)
@@ -392,17 +410,20 @@ fn serve<S: Read + Write, T: SystemTweaks>(conn: S, tweaks: &T) -> Result<()> {
     }
 }
 
-/// Solo atiende ajustes que piden admin: lo demás lo hace el cliente sin elevar.
-fn handle<T: SystemTweaks>(request: Request, tweaks: &T) -> Response {
-    let tweak = match &request {
-        Request::ApplyTweak(t) | Request::RestoreTweak(t, _) => *t,
-    };
-    if !tweaks.tweak_requires_admin(tweak) {
-        return Response::Failed(format!("`{}` no pide admin", tweak.id()));
+/// Solo atiende lo que pide admin: lo demás lo hace el cliente sin elevar.
+fn handle<T: SystemTweaks + GameTuning>(request: Request, platform: &T) -> Response {
+    if let Request::ApplyTweak(t) | Request::RestoreTweak(t, _) = &request
+        && !platform.tweak_requires_admin(*t)
+    {
+        return Response::Failed(format!("`{}` no pide admin", t.id()));
     }
     let result = match request {
-        Request::ApplyTweak(t) => tweaks.apply_tweak(t),
-        Request::RestoreTweak(t, saved) => tweaks.restore_tweak(t, &saved),
+        Request::ApplyTweak(t) => platform.apply_tweak(t),
+        Request::RestoreTweak(t, saved) => platform.restore_tweak(t, &saved),
+        Request::SetPersistentPriority(exe) => platform.set_persistent_priority(&exe),
+        Request::RestorePersistentPriority(exe, saved) => {
+            platform.restore_persistent_priority(&exe, &saved)
+        }
     };
     match result {
         Ok(()) => Response::Done,
@@ -451,6 +472,17 @@ mod tests {
             .restore_tweak(Tweak::GameDvrPolicyOff, &before)
             .unwrap();
         assert_eq!(mock.read_tweak(Tweak::GameDvrPolicyOff).unwrap(), before);
+
+        let exe = Path::new(r"C:\Games\game.exe");
+        client.set_persistent_priority(exe).unwrap();
+        let set = mock.read_persistent_priority(exe).unwrap();
+        assert_eq!(set[0].value, Some(crate::SavedData::Number(3)));
+        let none = vec![SavedValue {
+            location: set[0].location.clone(),
+            value: None,
+        }];
+        client.restore_persistent_priority(exe, &none).unwrap();
+        assert_eq!(mock.read_persistent_priority(exe).unwrap(), none);
 
         let user = mock.read_tweak(Tweak::GameDvrOff).unwrap();
         assert!(client.apply_tweak(Tweak::GameDvrOff).is_err());

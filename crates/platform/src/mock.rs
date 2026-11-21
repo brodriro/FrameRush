@@ -314,6 +314,34 @@ impl GameTuning for MockPlatform {
         self.lock().compat.remove(exe);
         Ok(())
     }
+
+    fn read_persistent_priority(&self, exe: &Path) -> Result<Vec<SavedValue>> {
+        let location = mock_priority_location(exe);
+        let value = self.lock().values.get(&location).copied();
+        Ok(vec![SavedValue {
+            location,
+            value: value.map(SavedData::Number),
+        }])
+    }
+
+    fn set_persistent_priority(&self, exe: &Path) -> Result<()> {
+        self.lock()
+            .values
+            .insert(mock_priority_location(exe), MOCK_HIGH_PRIORITY);
+        Ok(())
+    }
+
+    fn restore_persistent_priority(&self, _exe: &Path, saved: &[SavedValue]) -> Result<()> {
+        self.restore_values(saved)
+    }
+}
+
+/// Valor que pone el mock como prioridad persistente.
+pub const MOCK_HIGH_PRIORITY: u32 = 3;
+
+/// Dónde guarda el mock la prioridad persistente de un exe: `mock\ifeo\<ruta>`.
+pub fn mock_priority_location(exe: &Path) -> String {
+    format!(r"mock\ifeo\{}", exe.display())
 }
 
 /// Flag que pone el mock al desactivar las FSO.
@@ -355,6 +383,12 @@ impl SystemTweaks for MockPlatform {
     }
 
     fn restore_tweak(&self, _tweak: Tweak, saved: &[SavedValue]) -> Result<()> {
+        self.restore_values(saved)
+    }
+}
+
+impl MockPlatform {
+    fn restore_values(&self, saved: &[SavedValue]) -> Result<()> {
         let mut s = self.lock();
         for v in saved {
             match &v.value {

@@ -283,6 +283,62 @@ impl GameTuning for WindowsPlatform {
     fn clear_compat_flags(&self, exe: &Path) -> Result<()> {
         registry::delete_value(HKCU, COMPAT_LAYERS, &exe_value_name(exe)?)
     }
+
+    fn read_persistent_priority(&self, exe: &Path) -> Result<Vec<SavedValue>> {
+        let key = perf_options_key(exe)?;
+        Ok(vec![SavedValue {
+            location: priority_location(&key),
+            value: registry::read_dword(HKLM, &key, CPU_PRIORITY_CLASS)?.map(SavedData::Number),
+        }])
+    }
+
+    fn set_persistent_priority(&self, exe: &Path) -> Result<()> {
+        if let Some(h) = &self.helper {
+            return h.set_persistent_priority(exe);
+        }
+        let key = perf_options_key(exe)?;
+        registry::write_dword(HKLM, &key, CPU_PRIORITY_CLASS, IFEO_HIGH)
+    }
+
+    fn restore_persistent_priority(&self, exe: &Path, saved: &[SavedValue]) -> Result<()> {
+        if let Some(h) = &self.helper {
+            return h.restore_persistent_priority(exe, saved);
+        }
+        let key = perf_options_key(exe)?;
+        let location = priority_location(&key);
+        let Some(s) = saved.iter().find(|s| s.location == location) else {
+            return Err(PlatformError::Os(format!(
+                "el journal no tiene el valor previo de {location}"
+            )));
+        };
+        match &s.value {
+            Some(SavedData::Number(x)) => registry::write_dword(HKLM, &key, CPU_PRIORITY_CLASS, *x),
+            Some(SavedData::Text(t)) => registry::write_string(HKLM, &key, CPU_PRIORITY_CLASS, t),
+            None => registry::delete_value(HKLM, &key, CPU_PRIORITY_CLASS),
+        }
+    }
+}
+
+/// Opciones por imagen (IFEO): la clave es el nombre del exe, no su ruta.
+const IFEO: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
+const CPU_PRIORITY_CLASS: &str = "CpuPriorityClass";
+/// `CpuPriorityClass = 3` es Alta (PLAN.md V9). `IoPriority` no se escribe.
+const IFEO_HIGH: u32 = 3;
+
+/// `IFEO\<exe>\PerfOptions`. Solo nombres `*.exe`, para no escribir en otra clave.
+fn perf_options_key(exe: &Path) -> Result<String> {
+    let name = exe
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| n.to_ascii_lowercase().ends_with(".exe") && n.len() > 4)
+        .ok_or_else(|| {
+            PlatformError::NotFound(format!("exe del juego no válido: `{}`", exe.display()))
+        })?;
+    Ok(format!(r"{IFEO}\{name}\PerfOptions"))
+}
+
+fn priority_location(key: &str) -> String {
+    format!(r"{}\{key}\{CPU_PRIORITY_CLASS}", HKLM.prefix())
 }
 
 /// Flags de compatibilidad por exe del usuario (PLAN.md V10).
@@ -330,6 +386,7 @@ impl PowerControl for WindowsPlatform {
 }
 
 const HKCU: Hive = Hive::CurrentUser;
+const HKLM: Hive = Hive::LocalMachine;
 
 /// Dato que pone un ajuste en un valor.
 #[derive(Debug)]
@@ -714,6 +771,26 @@ mod tests {
                 Tweak::MmcssGames
             ]
         );
+    }
+
+    /// Solo lectura: la clave sale del nombre del exe, y lo que no es un `.exe` se rechaza.
+    #[test]
+    fn persistent_priority_is_keyed_by_exe_name() {
+        let w = WindowsPlatform::new();
+        let saved = w
+            .read_persistent_priority(Path::new(r"C:\Games\FrameRush-no-existe.exe"))
+            .unwrap();
+        assert_eq!(saved.len(), 1);
+        assert!(
+            saved[0].location.ends_with(
+                r"Image File Execution Options\FrameRush-no-existe.exe\PerfOptions\CpuPriorityClass"
+            ),
+            "{}",
+            saved[0].location
+        );
+        assert_eq!(saved[0].value, None);
+        assert!(w.read_persistent_priority(Path::new(r"C:\Games")).is_err());
+        assert!(w.set_persistent_priority(Path::new(".exe")).is_err());
     }
 
     /// Falla en el primer valor, antes de escribir nada.

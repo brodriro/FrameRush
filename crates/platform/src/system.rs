@@ -54,6 +54,13 @@ pub trait GameTuning {
     fn disable_fullscreen_optimizations(&self, exe: &Path) -> Result<()>;
     /// Borra los flags de compatibilidad del exe (revert).
     fn clear_compat_flags(&self, exe: &Path) -> Result<()>;
+    /// Estado actual de la prioridad persistente del exe (para el journal).
+    fn read_persistent_priority(&self, exe: &Path) -> Result<Vec<SavedValue>>;
+    /// `game-priority-persistent`: el SO arranca siempre ese exe en Alta (P1: solo Alta). Pide
+    /// admin.
+    fn set_persistent_priority(&self, exe: &Path) -> Result<()>;
+    /// Deja la prioridad persistente como en `saved`.
+    fn restore_persistent_priority(&self, exe: &Path, saved: &[SavedValue]) -> Result<()>;
 }
 
 /// Ajuste de sistema (PLAN.md It5.4). Qué valores toca cada uno lo decide la plataforma; su
