@@ -29,6 +29,7 @@ struct State {
     logical_cpus: usize,
     caps: CapabilitySet,
     next_start: u64,
+    foreground: Option<Target>,
 }
 
 /// Plataforma en memoria.
@@ -106,6 +107,11 @@ impl MockPlatform {
     }
 
     /// `true` si el proceso está congelado.
+    /// Pone `target` en primer plano (`None`: ninguna ventana).
+    pub fn set_foreground(&self, target: Option<Target>) {
+        self.lock().foreground = target;
+    }
+
     pub fn is_suspended(&self, target: &Target) -> Result<bool> {
         self.with_process(target, |p| Ok(p.suspended))
     }
@@ -187,6 +193,14 @@ impl ProcessControl for MockPlatform {
         self.with_process(target, |_| Ok(()))?;
         self.lock().processes.retain(|p| p.info.target != *target);
         Ok(())
+    }
+
+    /// Un proceso cerrado deja de estar en primer plano.
+    fn foreground(&self) -> Result<Option<Target>> {
+        let s = self.lock();
+        Ok(s.foreground
+            .clone()
+            .filter(|t| s.processes.iter().any(|p| p.info.target == *t)))
     }
 }
 
@@ -309,6 +323,17 @@ mod tests {
             Err(PlatformError::TargetChanged { pid: 42 })
         );
         assert_eq!(m.priority(&new).unwrap(), Priority::Normal);
+    }
+
+    #[test]
+    fn foreground_ends_with_the_process() {
+        let m = platform();
+        let t = m.spawn(7, "game.exe", "/game.exe", 1);
+        assert_eq!(m.foreground().unwrap(), None);
+        m.set_foreground(Some(t.clone()));
+        assert_eq!(m.foreground().unwrap(), Some(t.clone()));
+        m.kill(&t).unwrap();
+        assert_eq!(m.foreground().unwrap(), None);
     }
 
     #[test]

@@ -60,4 +60,6 @@ pub trait ProcessControl {
     fn resume(&self, target: &Target) -> Result<()>;
     /// Cierra el proceso. No es reversible.
     fn kill(&self, target: &Target) -> Result<()>;
+    /// Proceso dueño de la ventana en primer plano, o `None` si no hay ninguna.
+    fn foreground(&self) -> Result<Option<Target>>;
 }

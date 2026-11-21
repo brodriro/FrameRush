@@ -1,4 +1,5 @@
-//! Implementación de Windows (M1): prioridad, suspender/reanudar, cerrar y afinidad.
+//! Implementación de Windows (M1): prioridad, suspender/reanudar, cerrar, afinidad y proceso en
+//! primer plano.
 //!
 //! Servicios y planes de energía llegan en M5 y M2; hasta entonces devuelven `Unsupported` y
 //! `capabilities()` lo refleja.
@@ -10,7 +11,8 @@
 
 use crate::{
     Capabilities, CapabilitySet, GameTuning, PlatformError, PowerControl, PowerPlan, Priority,
-    ProcessControl, ProcessInfo, Result, ServiceControl, ServiceState, Target, scan_processes,
+    ProcessControl, ProcessInfo, Result, ServiceControl, ServiceState, StartTime, Target,
+    scan_processes,
 };
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::PathBuf;
@@ -23,6 +25,7 @@ use windows_sys::Win32::System::Threading::{
     PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, REALTIME_PRIORITY_CLASS, SetPriorityClass,
     SetProcessAffinityMask, TerminateProcess,
 };
+use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
 // API no documentada de ntdll (PLAN.md §6, V17). `raw-dylib` evita necesitar `ntdll.lib`.
 #[link(name = "ntdll", kind = "raw-dylib")]
@@ -132,17 +135,7 @@ impl ProcessControl for WindowsPlatform {
     }
 
     fn is_same_process(&self, target: &Target) -> Result<bool> {
-        let pid = sysinfo::Pid::from_u32(target.pid);
-        let mut sys = System::new();
-        sys.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&[pid]),
-            true,
-            ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
-        );
-        Ok(sys.process(pid).is_some_and(|p| {
-            p.start_time() == target.start_time.0
-                && p.exe().map(PathBuf::from).unwrap_or_default() == target.exe_path
-        }))
+        Ok(target_of(target.pid).is_some_and(|t| t == *target))
     }
 
     fn priority(&self, target: &Target) -> Result<Priority> {
@@ -187,6 +180,37 @@ impl ProcessControl for WindowsPlatform {
         }
         Ok(())
     }
+
+    fn foreground(&self) -> Result<Option<Target>> {
+        // SAFETY: GetForegroundWindow no toma argumentos; puede devolver null.
+        let hwnd = unsafe { GetForegroundWindow() };
+        if hwnd.is_null() {
+            return Ok(None);
+        }
+        let mut pid = 0u32;
+        // SAFETY: `hwnd` viene de GetForegroundWindow y `pid` es una variable local viva.
+        // Si la ventana ya no existe, devuelve 0 y `pid` queda en 0.
+        if unsafe { GetWindowThreadProcessId(hwnd, &mut pid) } == 0 || pid == 0 {
+            return Ok(None);
+        }
+        Ok(target_of(pid))
+    }
+}
+
+/// `Target` de un PID vivo, con la misma fuente que el scan.
+fn target_of(pid: u32) -> Option<Target> {
+    let spid = sysinfo::Pid::from_u32(pid);
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[spid]),
+        true,
+        ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
+    );
+    sys.process(spid).map(|p| Target {
+        pid,
+        start_time: StartTime(p.start_time()),
+        exe_path: p.exe().map(PathBuf::from).unwrap_or_default(),
+    })
 }
 
 impl GameTuning for WindowsPlatform {
@@ -350,6 +374,16 @@ mod tests {
             Err(PlatformError::TargetChanged { pid: stale.pid })
         );
         assert_eq!(w.priority(&v.target).unwrap(), Priority::Normal);
+    }
+
+    /// No se puede forzar el primer plano desde un test; solo se comprueba que lo que devuelve
+    /// es un proceso vivo y revalidable.
+    #[test]
+    fn foreground_is_a_live_process() {
+        let w = WindowsPlatform::new();
+        if let Some(t) = w.foreground().unwrap() {
+            assert!(w.is_same_process(&t).unwrap());
+        }
     }
 
     #[test]
