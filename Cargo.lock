@@ -134,6 +134,10 @@ dependencies = [
 [[package]]
 name = "fpsboost-device"
 version = "0.1.0"
+dependencies = [
+ "fpsboost-platform",
+ "serde",
+]
 
 [[package]]
 name = "fpsboost-games"
