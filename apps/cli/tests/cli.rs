@@ -154,6 +154,32 @@ fn tweaks_are_listed_and_can_be_excluded() {
     assert!(!dir.join("session.json").exists());
 }
 
+/// Sin `--admin`, la directiva de Game DVR sale con candado y no se puede marcar (P14).
+#[cfg(windows)]
+#[test]
+fn admin_tweaks_are_locked_without_admin() {
+    let dir = temp_dir("admin-tweaks");
+    let (ok, stdout) = framerush_in(&dir, &["plan", "--level", "agresivo"]);
+    assert!(ok);
+    assert!(
+        stdout.contains("[ ] game-dvr-off-policy") && stdout.contains("requiere admin"),
+        "{stdout}"
+    );
+    let (ok, stdout) = framerush_in(&dir, &["plan", "--level", "agresivo", "--admin"]);
+    assert!(ok);
+    assert!(stdout.contains("[x] game-dvr-off-policy"), "{stdout}");
+    let args = [
+        "apply",
+        "--level",
+        "agresivo",
+        "--include",
+        "game-dvr-off-policy",
+    ];
+    let (ok, _) = framerush_in(&dir, &args);
+    assert!(!ok);
+    assert!(!dir.join("session.json").exists());
+}
+
 #[test]
 fn fso_off_needs_a_game() {
     let dir = temp_dir("fso");

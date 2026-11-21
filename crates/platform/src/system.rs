@@ -63,6 +63,9 @@ pub trait GameTuning {
 pub enum Tweak {
     /// `game-dvr-off`: sin grabación en segundo plano.
     GameDvrOff,
+    /// `game-dvr-off-policy`: la parte de directiva de `game-dvr-off` (desde Agresivo). Es de
+    /// todo el equipo y pide admin.
+    GameDvrPolicyOff,
     /// `windows-game-mode`: Modo juego activado, sin el panel de inicio de la Game Bar.
     WindowsGameMode,
     /// `notifications-off`: sin notificaciones emergentes.
@@ -74,8 +77,9 @@ pub enum Tweak {
 }
 
 impl Tweak {
-    pub const ALL: [Tweak; 5] = [
+    pub const ALL: [Tweak; 6] = [
         Tweak::GameDvrOff,
+        Tweak::GameDvrPolicyOff,
         Tweak::WindowsGameMode,
         Tweak::NotificationsOff,
         Tweak::VisualEffectsPerformance,
@@ -86,6 +90,7 @@ impl Tweak {
     pub fn id(self) -> &'static str {
         match self {
             Tweak::GameDvrOff => "game-dvr-off",
+            Tweak::GameDvrPolicyOff => "game-dvr-off-policy",
             Tweak::WindowsGameMode => "windows-game-mode",
             Tweak::NotificationsOff => "notifications-off",
             Tweak::VisualEffectsPerformance => "visual-effects-performance",
@@ -107,6 +112,8 @@ pub struct SavedValue {
 pub trait SystemTweaks {
     /// Ajustes que existen en este SO.
     fn supported_tweaks(&self) -> Vec<Tweak>;
+    /// Aplicarlo o restaurarlo pide elevación (lo hace el helper). Leerlo, no.
+    fn tweak_requires_admin(&self, tweak: Tweak) -> bool;
     /// Estado actual de todos los valores que toca `tweak` (para el journal).
     fn read_tweak(&self, tweak: Tweak) -> Result<Vec<SavedValue>>;
     fn apply_tweak(&self, tweak: Tweak) -> Result<()>;

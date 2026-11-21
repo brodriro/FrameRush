@@ -19,6 +19,8 @@ pub struct Snapshot {
     pub game: Option<Target>,
     /// Ajustes persistentes que admite la plataforma en este equipo (P15).
     pub tweaks: Vec<Tweak>,
+    /// Los de `tweaks` que piden elevación para aplicarse.
+    pub admin_tweaks: Vec<Tweak>,
 }
 
 /// Opciones que no dependen del nivel.
@@ -78,8 +80,10 @@ pub struct Plan {
     pub items: Vec<PlanItem>,
     /// Procesos de anticheat en ejecución (It1.3), sin repetir. Ver [`running_anticheats`].
     pub anticheats: Vec<String>,
-    /// Ajustes persistentes que el nivel trae marcados. Solo los revierte Restaurar.
+    /// Ajustes que el nivel trae marcados. Su alcance lo da [`tweak_scope`].
     pub tweaks: Vec<Tweak>,
+    /// Ajustes del nivel que piden admin y no hay elevación: se muestran con candado (P14).
+    pub locked_tweaks: Vec<Tweak>,
 }
 
 impl Plan {
@@ -182,23 +186,26 @@ pub fn plan(
             })
         })
         .collect();
+    let (locked_tweaks, tweaks) = snapshot
+        .tweaks
+        .iter()
+        .copied()
+        .filter(|t| level.includes(tweak_min_level(*t)))
+        .partition(|t| !options.elevated && snapshot.admin_tweaks.contains(t));
     Plan {
         level,
         items,
         anticheats: running_anticheats(&snapshot.processes),
-        tweaks: snapshot
-            .tweaks
-            .iter()
-            .copied()
-            .filter(|t| level.includes(tweak_min_level(*t)))
-            .collect(),
+        tweaks,
+        locked_tweaks,
     }
 }
 
-/// Nivel desde el que un ajuste viene marcado (design/SETTINGS.md: todos los de nivel usuario
-/// están activos en todos los niveles).
+/// Nivel desde el que un ajuste viene marcado (design/SETTINGS.md: los de nivel usuario están
+/// activos en todos los niveles; la directiva de Game DVR, desde Agresivo).
 pub fn tweak_min_level(tweak: Tweak) -> Level {
     match tweak {
+        Tweak::GameDvrPolicyOff => Level::Agresivo,
         Tweak::GameDvrOff
         | Tweak::WindowsGameMode
         | Tweak::NotificationsOff
@@ -213,6 +220,7 @@ pub fn tweak_scope(tweak: Tweak) -> Scope {
     match tweak {
         Tweak::NotificationsOff => Scope::Session,
         Tweak::GameDvrOff
+        | Tweak::GameDvrPolicyOff
         | Tweak::WindowsGameMode
         | Tweak::VisualEffectsPerformance
         | Tweak::UwpBackgroundOff => Scope::Persistent,
@@ -506,6 +514,38 @@ mod tests {
             let p = plan(level, &snap, &[], &device, &PlanOptions::default());
             assert_eq!(p.tweaks, [Tweak::GameDvrOff], "{level}");
         }
+    }
+
+    /// Sin elevación, lo que pide admin sale con candado; nunca viene marcado (P14).
+    #[test]
+    fn admin_tweaks_are_locked_without_elevation() {
+        let device = samples::hybrid_laptop();
+        let snap = Snapshot {
+            tweaks: vec![Tweak::GameDvrOff, Tweak::GameDvrPolicyOff],
+            admin_tweaks: vec![Tweak::GameDvrPolicyOff],
+            ..Snapshot::default()
+        };
+        let normal = plan(Level::Normal, &snap, &[], &device, &PlanOptions::default());
+        assert_eq!(normal.tweaks, [Tweak::GameDvrOff]);
+        assert!(normal.locked_tweaks.is_empty());
+
+        let user = plan(
+            Level::Agresivo,
+            &snap,
+            &[],
+            &device,
+            &PlanOptions::default(),
+        );
+        assert_eq!(user.tweaks, [Tweak::GameDvrOff]);
+        assert_eq!(user.locked_tweaks, [Tweak::GameDvrPolicyOff]);
+
+        let elevated = PlanOptions {
+            elevated: true,
+            ..PlanOptions::default()
+        };
+        let admin = plan(Level::Agresivo, &snap, &[], &device, &elevated);
+        assert_eq!(admin.tweaks, [Tweak::GameDvrOff, Tweak::GameDvrPolicyOff]);
+        assert!(admin.locked_tweaks.is_empty());
     }
 
     /// El token `teams` protege el proceso `ms-teams.exe` aunque el nombre no sea igual.

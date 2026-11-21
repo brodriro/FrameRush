@@ -40,6 +40,7 @@ fn snapshot() -> Snapshot {
         ],
         game,
         tweaks: vec![],
+        admin_tweaks: vec![],
     }
 }
 

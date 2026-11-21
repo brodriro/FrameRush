@@ -329,6 +329,11 @@ impl SystemTweaks for MockPlatform {
         Tweak::ALL.to_vec()
     }
 
+    /// Como en Windows: solo la directiva de Game DVR.
+    fn tweak_requires_admin(&self, tweak: Tweak) -> bool {
+        tweak == Tweak::GameDvrPolicyOff
+    }
+
     fn read_tweak(&self, tweak: Tweak) -> Result<Vec<SavedValue>> {
         let location = mock_location(tweak);
         let value = self.lock().values.get(&location).copied();

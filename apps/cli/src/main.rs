@@ -190,12 +190,14 @@ fn build_plan(
     let rules = framerush_rules::embedded().context("las reglas embebidas no son válidas")?;
     let processes = scan_processes().context("no se pudo listar los procesos")?;
     let game = game.map(|q| find_game(&processes, q)).transpose()?;
+    let (tweaks, admin_tweaks) = native_tweaks();
     let snapshot = Snapshot {
         processes,
         // Los servicios se consultan con el SCM / systemd en M5.
         services: vec![],
         game: game.as_ref().map(|g| g.target.clone()),
-        tweaks: native_tweaks(),
+        tweaks,
+        admin_tweaks,
     };
     let options = PlanOptions {
         elevated: admin,
@@ -241,8 +243,12 @@ fn select<'a>(
     exclude: &[String],
 ) -> Result<(Vec<&'a PlanItem>, Vec<Tweak>)> {
     for id in include.iter().chain(exclude) {
-        let known =
-            plan.items.iter().any(|i| &i.rule_id == id) || plan.tweaks.iter().any(|t| t.id() == id);
+        let known = plan.items.iter().any(|i| &i.rule_id == id)
+            || plan
+                .tweaks
+                .iter()
+                .chain(&plan.locked_tweaks)
+                .any(|t| t.id() == id);
         if !known {
             bail!("`{id}` no está en el plan (¿no está en ejecución o no existe en este SO?)");
         }
@@ -253,6 +259,13 @@ fn select<'a>(
         .find(|i| i.locked && include.contains(&i.rule_id))
     {
         bail!("la regla `{}` requiere admin: usa --admin", i.rule_id);
+    }
+    if let Some(t) = plan
+        .locked_tweaks
+        .iter()
+        .find(|t| include.iter().any(|id| id == t.id()))
+    {
+        bail!("el ajuste `{}` requiere admin: usa --admin", t.id());
     }
     let items = plan
         .items
@@ -343,16 +356,23 @@ fn run(_op: Op<'_>) -> Result<Report> {
     bail!("apply, undo y revert solo están implementados en Windows por ahora")
 }
 
-/// Ajustes persistentes que admite la plataforma nativa.
+/// Ajustes que admite la plataforma nativa y, de ellos, los que piden admin.
 #[cfg(windows)]
-fn native_tweaks() -> Vec<Tweak> {
+fn native_tweaks() -> (Vec<Tweak>, Vec<Tweak>) {
     use framerush_platform::SystemTweaks;
-    framerush_platform::WindowsPlatform::new().supported_tweaks()
+    let w = framerush_platform::WindowsPlatform::new();
+    let all = w.supported_tweaks();
+    let admin = all
+        .iter()
+        .copied()
+        .filter(|t| w.tweak_requires_admin(*t))
+        .collect();
+    (all, admin)
 }
 
 #[cfg(not(windows))]
-fn native_tweaks() -> Vec<Tweak> {
-    vec![]
+fn native_tweaks() -> (Vec<Tweak>, Vec<Tweak>) {
+    (vec![], vec![])
 }
 
 /// Carpeta de datos: `FRAMERUSH_DATA_DIR` o `%LOCALAPPDATA%/framerush` (PLAN.md It1.1).
@@ -412,18 +432,24 @@ fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak]) {
         plan.items.len(),
         mib(memory)
     );
-    if !plan.tweaks.is_empty() {
+    if !plan.tweaks.is_empty() || !plan.locked_tweaks.is_empty() {
         println!(
             "\nAjustes del sistema (sesión: vuelve al cerrar el juego; persistente: solo `revert`):"
         );
         for t in &plan.tweaks {
             let mark = if tweaks.contains(t) { "x" } else { " " };
-            let scope = match tweak_scope(*t) {
-                Scope::Session => "sesión",
-                Scope::Persistent => "persistente",
-            };
-            println!("[{mark}] {:<28} {scope}", t.id());
+            println!("[{mark}] {:<28} {}", t.id(), scope_name(*t));
         }
+        for t in &plan.locked_tweaks {
+            println!("[ ] {:<28} {} · requiere admin", t.id(), scope_name(*t));
+        }
+    }
+}
+
+fn scope_name(tweak: Tweak) -> &'static str {
+    match tweak_scope(tweak) {
+        Scope::Session => "sesión",
+        Scope::Persistent => "persistente",
     }
 }
 

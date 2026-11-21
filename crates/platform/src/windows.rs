@@ -13,6 +13,8 @@
 
 mod registry;
 
+use registry::Hive;
+
 use crate::{
     Capabilities, CapabilitySet, GameTuning, PlatformError, PowerControl, PowerPlan, Priority,
     ProcessControl, ProcessInfo, Result, SavedValue, ServiceControl, ServiceState, StartTime,
@@ -249,15 +251,15 @@ impl GameTuning for WindowsPlatform {
     }
 
     fn compat_flags(&self, exe: &Path) -> Result<Option<String>> {
-        registry::read_string(COMPAT_LAYERS, &exe_value_name(exe)?)
+        registry::read_string(HKCU, COMPAT_LAYERS, &exe_value_name(exe)?)
     }
 
     fn disable_fullscreen_optimizations(&self, exe: &Path) -> Result<()> {
-        registry::write_string(COMPAT_LAYERS, &exe_value_name(exe)?, FSO_OFF_FLAG)
+        registry::write_string(HKCU, COMPAT_LAYERS, &exe_value_name(exe)?, FSO_OFF_FLAG)
     }
 
     fn clear_compat_flags(&self, exe: &Path) -> Result<()> {
-        registry::delete_value(COMPAT_LAYERS, &exe_value_name(exe)?)
+        registry::delete_value(HKCU, COMPAT_LAYERS, &exe_value_name(exe)?)
     }
 }
 
@@ -305,9 +307,12 @@ impl PowerControl for WindowsPlatform {
     }
 }
 
-/// Un valor DWORD de HKCU que pone un ajuste.
+const HKCU: Hive = Hive::CurrentUser;
+
+/// Un valor DWORD del registro que pone un ajuste.
 #[derive(Debug)]
 struct RegValue {
+    hive: Hive,
     path: &'static str,
     name: &'static str,
     value: u32,
@@ -315,13 +320,15 @@ struct RegValue {
 
 impl RegValue {
     fn location(&self) -> String {
-        format!(r"HKCU\{}\{}", self.path, self.name)
+        format!(r"{}\{}\{}", self.hive.prefix(), self.path, self.name)
     }
 }
 
 const GAME_CONFIG_STORE: &str = r"System\GameConfigStore";
 const GAME_DVR: &str = r"Software\Microsoft\Windows\CurrentVersion\GameDVR";
 const GAME_BAR: &str = r"Software\Microsoft\GameBar";
+/// Directiva de equipo de Game DVR (referencia CS2-FPS-Boost, `$RegAggressive`).
+const GAME_DVR_POLICY: &str = r"SOFTWARE\Policies\Microsoft\Windows\GameDVR";
 
 /// Valores de cada ajuste, de la referencia CS2-FPS-Boost (`$RegNormal`, probada en hardware
 /// real). De su bloque de Modo juego no se toma `UseNexusForGameBarEnabled`: cambia lo que hace
@@ -330,51 +337,66 @@ fn reg_values(tweak: Tweak) -> &'static [RegValue] {
     match tweak {
         Tweak::GameDvrOff => &[
             RegValue {
+                hive: HKCU,
                 path: GAME_CONFIG_STORE,
                 name: "GameDVR_Enabled",
                 value: 0,
             },
             RegValue {
+                hive: HKCU,
                 path: GAME_DVR,
                 name: "AppCaptureEnabled",
                 value: 0,
             },
         ],
+        Tweak::GameDvrPolicyOff => &[RegValue {
+            hive: Hive::LocalMachine,
+            path: GAME_DVR_POLICY,
+            name: "AllowGameDVR",
+            value: 0,
+        }],
         Tweak::WindowsGameMode => &[
             RegValue {
+                hive: HKCU,
                 path: GAME_BAR,
                 name: "AutoGameModeEnabled",
                 value: 1,
             },
             RegValue {
+                hive: HKCU,
                 path: GAME_BAR,
                 name: "AllowAutoGameMode",
                 value: 1,
             },
             RegValue {
+                hive: HKCU,
                 path: GAME_BAR,
                 name: "ShowStartupPanel",
                 value: 0,
             },
         ],
         Tweak::NotificationsOff => &[RegValue {
+            hive: HKCU,
             path: r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings",
             name: "NOC_GLOBAL_SETTING_TOAST_ENABLED",
             value: 0,
         }],
         Tweak::VisualEffectsPerformance => &[
             RegValue {
+                hive: HKCU,
                 path: r"Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects",
                 name: "VisualFXSetting",
                 value: 2,
             },
             RegValue {
+                hive: HKCU,
                 path: r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
                 name: "EnableTransparency",
                 value: 0,
             },
         ],
         Tweak::UwpBackgroundOff => &[RegValue {
+            hive: HKCU,
             path: r"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications",
             name: "GlobalUserDisabled",
             value: 1,
@@ -387,13 +409,20 @@ impl SystemTweaks for WindowsPlatform {
         Tweak::ALL.to_vec()
     }
 
+    /// Pide admin todo ajuste que escribe en HKLM.
+    fn tweak_requires_admin(&self, tweak: Tweak) -> bool {
+        reg_values(tweak)
+            .iter()
+            .any(|v| v.hive == Hive::LocalMachine)
+    }
+
     fn read_tweak(&self, tweak: Tweak) -> Result<Vec<SavedValue>> {
         reg_values(tweak)
             .iter()
             .map(|v| {
                 Ok(SavedValue {
                     location: v.location(),
-                    value: registry::read_dword(v.path, v.name)?,
+                    value: registry::read_dword(v.hive, v.path, v.name)?,
                 })
             })
             .collect()
@@ -402,7 +431,7 @@ impl SystemTweaks for WindowsPlatform {
     fn apply_tweak(&self, tweak: Tweak) -> Result<()> {
         reg_values(tweak)
             .iter()
-            .try_for_each(|v| registry::write_dword(v.path, v.name, v.value))
+            .try_for_each(|v| registry::write_dword(v.hive, v.path, v.name, v.value))
     }
 
     /// Restaura cada valor de la tabla con lo guardado; si no existía, lo borra.
@@ -415,8 +444,8 @@ impl SystemTweaks for WindowsPlatform {
                 )));
             };
             match s.value {
-                Some(x) => registry::write_dword(v.path, v.name, x)?,
-                None => registry::delete_value(v.path, v.name)?,
+                Some(x) => registry::write_dword(v.hive, v.path, v.name, x)?,
+                None => registry::delete_value(v.hive, v.path, v.name)?,
             }
         }
         Ok(())
@@ -563,6 +592,16 @@ mod tests {
         assert!(w.disable_fullscreen_optimizations(Path::new("")).is_err());
         let nowhere = Path::new(r"C:\FrameRush\no-existe\game.exe");
         assert_eq!(w.compat_flags(nowhere).unwrap(), None);
+    }
+
+    #[test]
+    fn only_the_policy_tweak_requires_admin() {
+        let w = WindowsPlatform::new();
+        let admin: Vec<Tweak> = Tweak::ALL
+            .into_iter()
+            .filter(|t| w.tweak_requires_admin(*t))
+            .collect();
+        assert_eq!(admin, [Tweak::GameDvrPolicyOff]);
     }
 
     /// Falla en el primer valor, antes de escribir nada.
