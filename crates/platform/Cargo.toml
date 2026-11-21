@@ -11,6 +11,9 @@ serde.workspace = true
 sysinfo.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Threading"] }
+
 [features]
 # MockPlatform en memoria para los tests de otros crates.
 mock = []

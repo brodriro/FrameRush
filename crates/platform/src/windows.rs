@@ -1,0 +1,368 @@
+//! Implementación de Windows (M1): prioridad, suspender/reanudar, cerrar y afinidad.
+//!
+//! Servicios y planes de energía llegan en M5 y M2; hasta entonces devuelven `Unsupported` y
+//! `capabilities()` lo refleja.
+//!
+//! Antes de cada operación se revalida el `Target` (PID, arranque y ruta) con `sysinfo`, la
+//! misma fuente del scan, para no tocar un PID reutilizado. Queda una ventana mínima entre la
+//! comprobación y la llamada al SO.
+#![allow(unsafe_code)]
+
+use crate::{
+    Capabilities, CapabilitySet, GameTuning, PlatformError, PowerControl, PowerPlan, Priority,
+    ProcessControl, ProcessInfo, Result, ServiceControl, ServiceState, Target, scan_processes,
+};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+use std::path::PathBuf;
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE};
+use windows_sys::Win32::System::Threading::{
+    ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetPriorityClass,
+    GetProcessAffinityMask, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
+    OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
+    PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, REALTIME_PRIORITY_CLASS, SetPriorityClass,
+    SetProcessAffinityMask, TerminateProcess,
+};
+
+// API no documentada de ntdll (PLAN.md §6, V17). `raw-dylib` evita necesitar `ntdll.lib`.
+#[link(name = "ntdll", kind = "raw-dylib")]
+unsafe extern "system" {
+    fn NtSuspendProcess(process: HANDLE) -> i32;
+    fn NtResumeProcess(process: HANDLE) -> i32;
+}
+
+/// Plataforma de Windows.
+#[derive(Debug, Default)]
+pub struct WindowsPlatform;
+
+impl WindowsPlatform {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Comprueba que el PID sigue siendo el proceso del `Target`.
+    fn revalidate(&self, target: &Target) -> Result<()> {
+        if self.is_same_process(target)? {
+            Ok(())
+        } else {
+            Err(PlatformError::TargetChanged { pid: target.pid })
+        }
+    }
+
+    /// Revalida y abre el proceso con los permisos pedidos.
+    fn open(&self, target: &Target, access: PROCESS_ACCESS_RIGHTS) -> Result<OwnedHandle> {
+        self.revalidate(target)?;
+        // SAFETY: OpenProcess no toma punteros; devuelve un handle nuevo o null.
+        let raw = unsafe { OpenProcess(access, 0, target.pid) };
+        if raw.is_null() {
+            return Err(last_error(target));
+        }
+        // SAFETY: `raw` es un handle válido que nos pertenece; OwnedHandle lo cierra al soltarlo.
+        Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
+    }
+
+    /// Nunca se congela ni se cierra el proceso que tiene que reanudar al resto (V17).
+    fn refuse_self(target: &Target) -> Result<()> {
+        if target.pid == std::process::id() {
+            Err(PlatformError::AccessDenied(
+                "FrameRush no actúa sobre su propio proceso".into(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn handle(h: &OwnedHandle) -> HANDLE {
+    h.as_raw_handle()
+}
+
+/// Error del último fallo de Win32.
+fn last_error(target: &Target) -> PlatformError {
+    let e = std::io::Error::last_os_error();
+    match e.raw_os_error().map(|c| c as u32) {
+        Some(ERROR_ACCESS_DENIED) => PlatformError::AccessDenied(format!(
+            "{} (pid {})",
+            target.exe_path.display(),
+            target.pid
+        )),
+        Some(ERROR_INVALID_PARAMETER) => PlatformError::NotFound(format!("pid {}", target.pid)),
+        _ => PlatformError::Os(e.to_string()),
+    }
+}
+
+fn nt_status(status: i32) -> Result<()> {
+    if status >= 0 {
+        Ok(())
+    } else {
+        Err(PlatformError::Os(format!(
+            "NTSTATUS {:#010x}",
+            status as u32
+        )))
+    }
+}
+
+fn to_class(p: Priority) -> u32 {
+    match p {
+        Priority::Idle => IDLE_PRIORITY_CLASS,
+        Priority::BelowNormal => BELOW_NORMAL_PRIORITY_CLASS,
+        Priority::Normal => NORMAL_PRIORITY_CLASS,
+        Priority::AboveNormal => ABOVE_NORMAL_PRIORITY_CLASS,
+        Priority::High => HIGH_PRIORITY_CLASS,
+        Priority::Realtime => REALTIME_PRIORITY_CLASS,
+    }
+}
+
+fn from_class(class: u32) -> Option<Priority> {
+    [
+        Priority::Idle,
+        Priority::BelowNormal,
+        Priority::Normal,
+        Priority::AboveNormal,
+        Priority::High,
+        Priority::Realtime,
+    ]
+    .into_iter()
+    .find(|p| to_class(*p) == class)
+}
+
+impl ProcessControl for WindowsPlatform {
+    fn processes(&self) -> Result<Vec<ProcessInfo>> {
+        scan_processes()
+    }
+
+    fn is_same_process(&self, target: &Target) -> Result<bool> {
+        let pid = sysinfo::Pid::from_u32(target.pid);
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            true,
+            ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
+        );
+        Ok(sys.process(pid).is_some_and(|p| {
+            p.start_time() == target.start_time.0
+                && p.exe().map(PathBuf::from).unwrap_or_default() == target.exe_path
+        }))
+    }
+
+    fn priority(&self, target: &Target) -> Result<Priority> {
+        let h = self.open(target, PROCESS_QUERY_LIMITED_INFORMATION)?;
+        // SAFETY: `h` es un handle abierto con permiso de consulta.
+        let class = unsafe { GetPriorityClass(handle(&h)) };
+        if class == 0 {
+            return Err(last_error(target));
+        }
+        from_class(class).ok_or_else(|| PlatformError::Os(format!("clase de prioridad {class:#x}")))
+    }
+
+    /// Sin el privilegio de aumentar la prioridad base, Windows convierte Tiempo real en Alta.
+    fn set_priority(&self, target: &Target, priority: Priority) -> Result<()> {
+        let h = self.open(target, PROCESS_SET_INFORMATION)?;
+        // SAFETY: `h` es un handle abierto con PROCESS_SET_INFORMATION.
+        if unsafe { SetPriorityClass(handle(&h), to_class(priority)) } == 0 {
+            return Err(last_error(target));
+        }
+        Ok(())
+    }
+
+    fn suspend(&self, target: &Target) -> Result<()> {
+        Self::refuse_self(target)?;
+        let h = self.open(target, PROCESS_SUSPEND_RESUME)?;
+        // SAFETY: `h` es un handle abierto con PROCESS_SUSPEND_RESUME.
+        nt_status(unsafe { NtSuspendProcess(handle(&h)) })
+    }
+
+    fn resume(&self, target: &Target) -> Result<()> {
+        let h = self.open(target, PROCESS_SUSPEND_RESUME)?;
+        // SAFETY: `h` es un handle abierto con PROCESS_SUSPEND_RESUME.
+        nt_status(unsafe { NtResumeProcess(handle(&h)) })
+    }
+
+    fn kill(&self, target: &Target) -> Result<()> {
+        Self::refuse_self(target)?;
+        let h = self.open(target, PROCESS_TERMINATE)?;
+        // SAFETY: `h` es un handle abierto con PROCESS_TERMINATE.
+        if unsafe { TerminateProcess(handle(&h), 1) } == 0 {
+            return Err(last_error(target));
+        }
+        Ok(())
+    }
+}
+
+impl GameTuning for WindowsPlatform {
+    /// Solo el grupo de procesadores del proceso (hasta 64 CPU lógicas).
+    fn affinity(&self, target: &Target) -> Result<Vec<usize>> {
+        let h = self.open(target, PROCESS_QUERY_LIMITED_INFORMATION)?;
+        let (mut process_mask, mut system_mask) = (0usize, 0usize);
+        // SAFETY: `h` es válido y los dos punteros apuntan a variables locales vivas.
+        if unsafe { GetProcessAffinityMask(handle(&h), &mut process_mask, &mut system_mask) } == 0 {
+            return Err(last_error(target));
+        }
+        Ok((0..usize::BITS as usize)
+            .filter(|i| process_mask & (1 << i) != 0)
+            .collect())
+    }
+
+    fn set_affinity(&self, target: &Target, cpus: &[usize]) -> Result<()> {
+        let bits = usize::BITS as usize;
+        if cpus.is_empty() || cpus.iter().any(|&c| c >= bits) {
+            return Err(PlatformError::Os(format!("afinidad inválida {cpus:?}")));
+        }
+        let mask = cpus.iter().fold(0usize, |m, &c| m | (1 << c));
+        let h = self.open(
+            target,
+            PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION,
+        )?;
+        // SAFETY: `h` es un handle abierto con PROCESS_SET_INFORMATION.
+        if unsafe { SetProcessAffinityMask(handle(&h), mask) } == 0 {
+            return Err(last_error(target));
+        }
+        Ok(())
+    }
+}
+
+impl ServiceControl for WindowsPlatform {
+    fn service_state(&self, _name: &str) -> Result<Option<ServiceState>> {
+        Err(PlatformError::Unsupported("servicios (M5)"))
+    }
+
+    fn stop_service(&self, _name: &str) -> Result<()> {
+        Err(PlatformError::Unsupported("servicios (M5)"))
+    }
+
+    fn start_service(&self, _name: &str) -> Result<()> {
+        Err(PlatformError::Unsupported("servicios (M5)"))
+    }
+}
+
+impl PowerControl for WindowsPlatform {
+    fn power_plans(&self) -> Result<Vec<PowerPlan>> {
+        Err(PlatformError::Unsupported("planes de energía (M2)"))
+    }
+
+    fn active_power_plan(&self) -> Result<PowerPlan> {
+        Err(PlatformError::Unsupported("planes de energía (M2)"))
+    }
+
+    fn set_active_power_plan(&self, _id: &str) -> Result<()> {
+        Err(PlatformError::Unsupported("planes de energía (M2)"))
+    }
+}
+
+impl Capabilities for WindowsPlatform {
+    fn capabilities(&self) -> CapabilitySet {
+        CapabilitySet {
+            set_priority: true,
+            suspend: true,
+            kill: true,
+            services: false,
+            power_plans: false,
+            affinity: true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Solo actúan sobre un proceso hijo lanzado por el propio test.
+
+    use super::*;
+    use std::process::{Child, Command, Stdio};
+
+    struct Victim {
+        child: Child,
+        target: Target,
+    }
+
+    impl Drop for Victim {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    /// `ping` a localhost durante un minuto: un proceso propio, inofensivo y siempre presente.
+    fn victim() -> Victim {
+        let child = Command::new("ping")
+            .args(["-n", "60", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("ping existe en Windows");
+        let pid = child.id();
+        let target = scan_processes()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.target.pid == pid)
+            .expect("el hijo aparece en el scan")
+            .target;
+        Victim { child, target }
+    }
+
+    #[test]
+    fn priority_round_trip() {
+        let w = WindowsPlatform::new();
+        let v = victim();
+        assert_eq!(w.priority(&v.target).unwrap(), Priority::Normal);
+        w.set_priority(&v.target, Priority::BelowNormal).unwrap();
+        assert_eq!(w.priority(&v.target).unwrap(), Priority::BelowNormal);
+        w.set_priority(&v.target, Priority::Normal).unwrap();
+        assert_eq!(w.priority(&v.target).unwrap(), Priority::Normal);
+    }
+
+    #[test]
+    fn suspend_and_resume_a_child() {
+        let w = WindowsPlatform::new();
+        let v = victim();
+        w.suspend(&v.target).unwrap();
+        w.resume(&v.target).unwrap();
+        assert!(w.is_same_process(&v.target).unwrap());
+    }
+
+    #[test]
+    fn affinity_round_trip() {
+        let w = WindowsPlatform::new();
+        let v = victim();
+        let original = w.affinity(&v.target).unwrap();
+        assert!(!original.is_empty());
+        w.set_affinity(&v.target, &original[..1]).unwrap();
+        assert_eq!(w.affinity(&v.target).unwrap(), original[..1]);
+        w.set_affinity(&v.target, &original).unwrap();
+        assert!(w.set_affinity(&v.target, &[]).is_err());
+    }
+
+    #[test]
+    fn kill_ends_the_child() {
+        let w = WindowsPlatform::new();
+        let mut v = victim();
+        w.kill(&v.target).unwrap();
+        v.child.wait().unwrap();
+        assert!(!w.is_same_process(&v.target).unwrap());
+    }
+
+    #[test]
+    fn a_changed_target_is_rejected() {
+        let w = WindowsPlatform::new();
+        let v = victim();
+        let mut stale = v.target.clone();
+        stale.start_time.0 += 1;
+        assert_eq!(
+            w.set_priority(&stale, Priority::Idle),
+            Err(PlatformError::TargetChanged { pid: stale.pid })
+        );
+        assert_eq!(w.priority(&v.target).unwrap(), Priority::Normal);
+    }
+
+    #[test]
+    fn never_suspends_itself() {
+        let w = WindowsPlatform::new();
+        let me = scan_processes()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.target.pid == std::process::id())
+            .unwrap();
+        assert!(matches!(
+            w.suspend(&me.target),
+            Err(PlatformError::AccessDenied(_))
+        ));
+    }
+}

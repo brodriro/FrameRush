@@ -9,6 +9,8 @@ mod os;
 mod process;
 mod scan;
 mod system;
+#[cfg(windows)]
+mod windows;
 
 pub use error::{PlatformError, Result};
 pub use os::Os;
@@ -18,3 +20,5 @@ pub use system::{
     Capabilities, CapabilitySet, GameTuning, Platform, PowerControl, PowerPlan, ServiceControl,
     ServiceState,
 };
+#[cfg(windows)]
+pub use windows::WindowsPlatform;
