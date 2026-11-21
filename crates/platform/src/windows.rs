@@ -1,6 +1,8 @@
 //! Implementación de Windows (M1): prioridad, suspender/reanudar, cerrar, afinidad y proceso en
 //! primer plano.
 //!
+//! Ajustes persistentes de HKCU (`SystemTweaks`, módulo `registry`).
+//!
 //! Servicios y planes de energía llegan en M5 y M2; hasta entonces devuelven `Unsupported` y
 //! `capabilities()` lo refleja.
 //!
@@ -9,10 +11,12 @@
 //! comprobación y la llamada al SO.
 #![allow(unsafe_code)]
 
+mod registry;
+
 use crate::{
     Capabilities, CapabilitySet, GameTuning, PlatformError, PowerControl, PowerPlan, Priority,
-    ProcessControl, ProcessInfo, Result, ServiceControl, ServiceState, StartTime, Target,
-    scan_processes,
+    ProcessControl, ProcessInfo, Result, SavedValue, ServiceControl, ServiceState, StartTime,
+    SystemTweaks, Target, Tweak, scan_processes,
 };
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::PathBuf;
@@ -273,6 +277,102 @@ impl PowerControl for WindowsPlatform {
     }
 }
 
+/// Un valor DWORD de HKCU que pone un ajuste.
+#[derive(Debug)]
+struct RegValue {
+    path: &'static str,
+    name: &'static str,
+    value: u32,
+}
+
+impl RegValue {
+    fn location(&self) -> String {
+        format!(r"HKCU\{}\{}", self.path, self.name)
+    }
+}
+
+const GAME_CONFIG_STORE: &str = r"System\GameConfigStore";
+const GAME_DVR: &str = r"Software\Microsoft\Windows\CurrentVersion\GameDVR";
+const GAME_BAR: &str = r"Software\Microsoft\GameBar";
+
+/// Valores de cada ajuste, de la referencia CS2-FPS-Boost (`$RegNormal`, probada en hardware
+/// real). De su bloque de Modo juego no se toma `UseNexusForGameBarEnabled`: cambia lo que hace
+/// el botón Xbox del mando y SETTINGS.md no lo incluye.
+fn reg_values(tweak: Tweak) -> &'static [RegValue] {
+    match tweak {
+        Tweak::GameDvrOff => &[
+            RegValue {
+                path: GAME_CONFIG_STORE,
+                name: "GameDVR_Enabled",
+                value: 0,
+            },
+            RegValue {
+                path: GAME_DVR,
+                name: "AppCaptureEnabled",
+                value: 0,
+            },
+        ],
+        Tweak::WindowsGameMode => &[
+            RegValue {
+                path: GAME_BAR,
+                name: "AutoGameModeEnabled",
+                value: 1,
+            },
+            RegValue {
+                path: GAME_BAR,
+                name: "AllowAutoGameMode",
+                value: 1,
+            },
+            RegValue {
+                path: GAME_BAR,
+                name: "ShowStartupPanel",
+                value: 0,
+            },
+        ],
+    }
+}
+
+impl SystemTweaks for WindowsPlatform {
+    fn supported_tweaks(&self) -> Vec<Tweak> {
+        Tweak::ALL.to_vec()
+    }
+
+    fn read_tweak(&self, tweak: Tweak) -> Result<Vec<SavedValue>> {
+        reg_values(tweak)
+            .iter()
+            .map(|v| {
+                Ok(SavedValue {
+                    location: v.location(),
+                    value: registry::read_dword(v.path, v.name)?,
+                })
+            })
+            .collect()
+    }
+
+    fn apply_tweak(&self, tweak: Tweak) -> Result<()> {
+        reg_values(tweak)
+            .iter()
+            .try_for_each(|v| registry::write_dword(v.path, v.name, v.value))
+    }
+
+    /// Restaura cada valor de la tabla con lo guardado; si no existía, lo borra.
+    fn restore_tweak(&self, tweak: Tweak, saved: &[SavedValue]) -> Result<()> {
+        for v in reg_values(tweak) {
+            let location = v.location();
+            let Some(s) = saved.iter().find(|s| s.location == location) else {
+                return Err(PlatformError::Os(format!(
+                    "el journal no tiene el valor previo de {location}"
+                )));
+            };
+            match s.value {
+                Some(x) => registry::write_dword(v.path, v.name, x)?,
+                None => registry::delete_value(v.path, v.name)?,
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Capabilities for WindowsPlatform {
     fn capabilities(&self) -> CapabilitySet {
         CapabilitySet {
@@ -384,6 +484,25 @@ mod tests {
         if let Some(t) = w.foreground().unwrap() {
             assert!(w.is_same_process(&t).unwrap());
         }
+    }
+
+    /// Solo lectura: no cambia los valores reales del usuario.
+    #[test]
+    fn read_tweak_reports_every_value_it_touches() {
+        let w = WindowsPlatform::new();
+        for t in w.supported_tweaks() {
+            let saved = w.read_tweak(t).unwrap();
+            let expected: Vec<String> = reg_values(t).iter().map(RegValue::location).collect();
+            let got: Vec<String> = saved.into_iter().map(|s| s.location).collect();
+            assert_eq!(got, expected, "{t:?}");
+        }
+    }
+
+    /// Falla en el primer valor, antes de escribir nada.
+    #[test]
+    fn restore_without_a_backup_is_refused() {
+        let w = WindowsPlatform::new();
+        assert!(w.restore_tweak(Tweak::GameDvrOff, &[]).is_err());
     }
 
     #[test]

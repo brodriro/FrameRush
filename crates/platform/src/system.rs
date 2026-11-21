@@ -48,6 +48,49 @@ pub trait GameTuning {
     fn set_affinity(&self, target: &Target, cpus: &[usize]) -> Result<()>;
 }
 
+/// Ajuste de sistema persistente (PLAN.md It5.4, alcance persistente). Qué valores toca cada uno
+/// lo decide la plataforma; el id es el de design/SETTINGS.md.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Tweak {
+    /// `game-dvr-off`: sin grabación en segundo plano.
+    GameDvrOff,
+    /// `windows-game-mode`: Modo juego activado, sin el panel de inicio de la Game Bar.
+    WindowsGameMode,
+}
+
+impl Tweak {
+    pub const ALL: [Tweak; 2] = [Tweak::GameDvrOff, Tweak::WindowsGameMode];
+
+    /// Id de design/SETTINGS.md.
+    pub fn id(self) -> &'static str {
+        match self {
+            Tweak::GameDvrOff => "game-dvr-off",
+            Tweak::WindowsGameMode => "windows-game-mode",
+        }
+    }
+}
+
+/// Valor que había antes de aplicar un ajuste. `value: None` es "no existía" y restaurar lo
+/// borra.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedValue {
+    /// Dónde vive el valor, legible por una persona (`HKCU\...\Nombre` en Windows).
+    pub location: String,
+    pub value: Option<u32>,
+}
+
+/// Ajustes persistentes: leer el estado previo, aplicarlo y restaurarlo.
+pub trait SystemTweaks {
+    /// Ajustes que existen en este SO.
+    fn supported_tweaks(&self) -> Vec<Tweak>;
+    /// Estado actual de todos los valores que toca `tweak` (para el journal).
+    fn read_tweak(&self, tweak: Tweak) -> Result<Vec<SavedValue>>;
+    fn apply_tweak(&self, tweak: Tweak) -> Result<()>;
+    /// Deja los valores como en `saved` (lo que devolvió `read_tweak` antes de aplicar).
+    fn restore_tweak(&self, tweak: Tweak, saved: &[SavedValue]) -> Result<()>;
+}
+
 /// Qué admite esta plataforma en este equipo. La UI oculta lo que no está (PLAN.md P15).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CapabilitySet {
@@ -66,11 +109,11 @@ pub trait Capabilities {
 
 /// Todo lo que `core` necesita del SO.
 pub trait Platform:
-    ProcessControl + ServiceControl + PowerControl + GameTuning + Capabilities
+    ProcessControl + ServiceControl + PowerControl + GameTuning + SystemTweaks + Capabilities
 {
 }
 
 impl<T> Platform for T where
-    T: ProcessControl + ServiceControl + PowerControl + GameTuning + Capabilities
+    T: ProcessControl + ServiceControl + PowerControl + GameTuning + SystemTweaks + Capabilities
 {
 }

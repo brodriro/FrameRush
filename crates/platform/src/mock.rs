@@ -6,7 +6,8 @@
 
 use crate::{
     Capabilities, CapabilitySet, GameTuning, PlatformError, PowerControl, PowerPlan, Priority,
-    ProcessControl, ProcessInfo, Result, ServiceControl, ServiceState, StartTime, Target,
+    ProcessControl, ProcessInfo, Result, SavedValue, ServiceControl, ServiceState, StartTime,
+    SystemTweaks, Target, Tweak,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -30,6 +31,8 @@ struct State {
     caps: CapabilitySet,
     next_start: u64,
     foreground: Option<Target>,
+    /// Valores de los ajustes persistentes, por ubicación.
+    values: BTreeMap<String, u32>,
 }
 
 /// Plataforma en memoria.
@@ -107,6 +110,16 @@ impl MockPlatform {
     }
 
     /// `true` si el proceso está congelado.
+    /// Valor de un ajuste en `location` (`None`: no existe).
+    pub fn value(&self, location: &str) -> Option<u32> {
+        self.lock().values.get(location).copied()
+    }
+
+    /// Pone un valor previo, como si el usuario lo tuviera ya.
+    pub fn set_value(&self, location: &str, value: u32) {
+        self.lock().values.insert(location.to_owned(), value);
+    }
+
     /// Pone `target` en primer plano (`None`: ninguna ventana).
     pub fn set_foreground(&self, target: Option<Target>) {
         self.lock().foreground = target;
@@ -280,6 +293,39 @@ impl GameTuning for MockPlatform {
     }
 }
 
+/// Valor que pone cada ajuste en el mock: uno por ajuste, en `mock\<id>`, a 1.
+fn mock_location(tweak: Tweak) -> String {
+    format!(r"mock\{}", tweak.id())
+}
+
+impl SystemTweaks for MockPlatform {
+    fn supported_tweaks(&self) -> Vec<Tweak> {
+        Tweak::ALL.to_vec()
+    }
+
+    fn read_tweak(&self, tweak: Tweak) -> Result<Vec<SavedValue>> {
+        let location = mock_location(tweak);
+        let value = self.lock().values.get(&location).copied();
+        Ok(vec![SavedValue { location, value }])
+    }
+
+    fn apply_tweak(&self, tweak: Tweak) -> Result<()> {
+        self.lock().values.insert(mock_location(tweak), 1);
+        Ok(())
+    }
+
+    fn restore_tweak(&self, _tweak: Tweak, saved: &[SavedValue]) -> Result<()> {
+        let mut s = self.lock();
+        for v in saved {
+            match v.value {
+                Some(x) => s.values.insert(v.location.clone(), x),
+                None => s.values.remove(&v.location),
+            };
+        }
+        Ok(())
+    }
+}
+
 impl Capabilities for MockPlatform {
     fn capabilities(&self) -> CapabilitySet {
         self.lock().caps
@@ -334,6 +380,23 @@ mod tests {
         assert_eq!(m.foreground().unwrap(), Some(t.clone()));
         m.kill(&t).unwrap();
         assert_eq!(m.foreground().unwrap(), None);
+    }
+
+    #[test]
+    fn tweaks_restore_the_saved_values() {
+        let m = platform();
+        let loc = r"mock\game-dvr-off";
+        let before = m.read_tweak(Tweak::GameDvrOff).unwrap();
+        m.apply_tweak(Tweak::GameDvrOff).unwrap();
+        assert_eq!(m.value(loc), Some(1));
+        m.restore_tweak(Tweak::GameDvrOff, &before).unwrap();
+        assert_eq!(m.value(loc), None);
+
+        m.set_value(loc, 5);
+        let before = m.read_tweak(Tweak::GameDvrOff).unwrap();
+        m.apply_tweak(Tweak::GameDvrOff).unwrap();
+        m.restore_tweak(Tweak::GameDvrOff, &before).unwrap();
+        assert_eq!(m.value(loc), Some(5));
     }
 
     #[test]

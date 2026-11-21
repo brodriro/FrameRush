@@ -17,8 +17,8 @@ pub use os::Os;
 pub use process::{Priority, ProcessControl, ProcessInfo, StartTime, Target};
 pub use scan::scan_processes;
 pub use system::{
-    Capabilities, CapabilitySet, GameTuning, Platform, PowerControl, PowerPlan, ServiceControl,
-    ServiceState,
+    Capabilities, CapabilitySet, GameTuning, Platform, PowerControl, PowerPlan, SavedValue,
+    ServiceControl, ServiceState, SystemTweaks, Tweak,
 };
 #[cfg(windows)]
 pub use windows::WindowsPlatform;
