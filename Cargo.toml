@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/cli", "apps/helper"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+publish = false
+
+[workspace.dependencies]
+fpsboost-core = { path = "crates/core" }
+fpsboost-platform = { path = "crates/platform" }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
