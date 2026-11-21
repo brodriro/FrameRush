@@ -16,7 +16,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use framerush_core::{
     ApplyRequest, FileStore, GameBoost, JournalStore, Level, Outcome, Plan, PlanItem, PlanOptions,
-    Report, Scope, Snapshot, Subject, defaults, is_protected, plan, tweak_scope,
+    Report, Scope, Snapshot, Subject, defaults, is_protected, persistent_priority_default, plan,
+    tweak_scope,
 };
 use framerush_device::DeviceProfile;
 use framerush_platform::{Os, Priority, ProcessInfo, Tweak, scan_processes};
@@ -211,7 +212,34 @@ fn build_plan(
     Ok((plan(level, &snapshot, &rules, &device, &options), game))
 }
 
-fn print_game(game: Option<&ProcessInfo>, args: &GameArgs) {
+/// Id de design/SETTINGS.md de la prioridad persistente del juego.
+const PERSISTENT_PRIORITY: &str = "game-priority-persistent";
+
+/// Cómo sale una opción en el checklist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    On,
+    Off,
+    /// Pide admin y no se pasó `--admin` (P14).
+    Locked,
+}
+
+/// `game-priority-persistent` para este juego, o `None` si no aplica (sin juego, por el nivel o
+/// por la prioridad, P1). `--exclude game-priority-persistent` lo desmarca.
+fn persistent_mark(level: Level, admin: bool, args: &GameArgs, exclude: &[String]) -> Option<Mark> {
+    if args.game.is_none() || !persistent_priority_default(level, args.game_priority.into()) {
+        return None;
+    }
+    Some(if !admin {
+        Mark::Locked
+    } else if exclude.iter().any(|id| id == PERSISTENT_PRIORITY) {
+        Mark::Off
+    } else {
+        Mark::On
+    })
+}
+
+fn print_game(game: Option<&ProcessInfo>, args: &GameArgs, persistent: Option<Mark>) {
     match game {
         Some(g) => {
             println!(
@@ -224,6 +252,14 @@ fn print_game(game: Option<&ProcessInfo>, args: &GameArgs) {
                     g.target.exe_path.display()
                 );
             }
+            match persistent {
+                Some(Mark::On) => println!("[x] {PERSISTENT_PRIORITY:<32} persistente"),
+                Some(Mark::Off) => println!("[ ] {PERSISTENT_PRIORITY:<32} persistente"),
+                Some(Mark::Locked) => {
+                    println!("[ ] {PERSISTENT_PRIORITY:<32} persistente · requiere admin")
+                }
+                None => {}
+            }
             println!();
         }
         None => println!("Juego: sin indicar (--game); su prioridad no se toca.\n"),
@@ -234,7 +270,11 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     notify_open_session();
     let (plan, game) = build_plan(level, admin, args.game.as_deref())?;
     println!("Plan para el nivel {level} (dry-run: no se toca nada)");
-    print_game(game.as_ref(), args);
+    print_game(
+        game.as_ref(),
+        args,
+        persistent_mark(level, admin, args, &[]),
+    );
     let checked: Vec<&PlanItem> = plan.checked().collect();
     print_plan(&plan, &checked, &plan.tweaks);
     Ok(())
@@ -294,13 +334,27 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     notify_open_session();
     let level = args.level;
     let (plan, game) = build_plan(level, args.admin, args.game.game.as_deref())?;
-    let (checked, tweaks) = select(&plan, &args.include, &args.exclude)?;
+    let persistent = persistent_mark(level, args.admin, &args.game, &args.exclude);
+    if args.include.iter().any(|id| id == PERSISTENT_PRIORITY) {
+        match persistent {
+            None => bail!("`{PERSISTENT_PRIORITY}` necesita --game y el nivel agresivo o extremo"),
+            Some(Mark::Locked) => bail!("`{PERSISTENT_PRIORITY}` requiere admin: usa --admin"),
+            Some(_) => {}
+        }
+    }
+    let others = |ids: &[String]| -> Vec<String> {
+        ids.iter()
+            .filter(|id| *id != PERSISTENT_PRIORITY)
+            .cloned()
+            .collect()
+    };
+    let (checked, tweaks) = select(&plan, &others(&args.include), &others(&args.exclude))?;
     if args.game.game_priority == GamePriority::Realtime && !args.game.confirm_realtime {
         bail!("Tiempo real puede congelar el equipo: confírmalo con --confirm-realtime");
     }
     if !args.yes {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
-        print_game(game.as_ref(), &args.game);
+        print_game(game.as_ref(), &args.game, persistent);
         print_plan(&plan, &checked, &tweaks);
         println!("\nRevisa las filas y repite con --yes para aplicarlas.");
         return Ok(());
@@ -317,6 +371,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             priority: args.game.game_priority.into(),
             realtime_confirmed: args.game.confirm_realtime,
             fullscreen_optimizations_off: args.game.fso_off,
+            persistent_priority: persistent == Some(Mark::On),
         }),
     };
     let report = run(Op::Apply(request))?;
@@ -356,7 +411,10 @@ fn run(op: Op<'_>) -> Result<Report> {
     let unelevated = WindowsPlatform::new();
     let admin = |t: Tweak| unelevated.tweak_requires_admin(t);
     let needs_helper = match &op {
-        Op::Apply(request) => request.tweaks.iter().any(|t| admin(*t)),
+        Op::Apply(request) => {
+            request.tweaks.iter().any(|t| admin(*t))
+                || request.game.as_ref().is_some_and(|g| g.persistent_priority)
+        }
         Op::Undo | Op::Revert => {
             let journal = store.load()?;
             let last = journal.last_batch();
@@ -365,7 +423,11 @@ fn run(op: Op<'_>) -> Result<Report> {
                 .iter()
                 .filter(|e| e.status != EntryStatus::Failed)
                 .filter(|e| matches!(op, Op::Revert) || Some(e.batch) == last)
-                .any(|e| matches!(e.change, Change::Tweak { tweak, .. } if admin(tweak)))
+                .any(|e| match e.change {
+                    Change::Tweak { tweak, .. } => admin(tweak),
+                    Change::PersistentPriority { .. } => true,
+                    _ => false,
+                })
         }
     };
     let platform = if needs_helper {

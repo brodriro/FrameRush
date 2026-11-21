@@ -7,7 +7,7 @@
 use crate::protected::{ProtectedReason, is_protected, normalize, protected_reason};
 use crate::{Action, Category, Level, Risk, Rule, Scope};
 use framerush_device::DeviceProfile;
-use framerush_platform::{ProcessInfo, ServiceState, Target, Tweak};
+use framerush_platform::{Priority, ProcessInfo, ServiceState, Target, Tweak};
 
 /// Estado del equipo en el momento del `scan`.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -243,6 +243,12 @@ pub fn tweak_scope(tweak: Tweak) -> Scope {
         | Tweak::PowerThrottlingOff
         | Tweak::MmcssGames => Scope::Persistent,
     }
+}
+
+/// `game-priority-persistent` viene activo desde Agresivo, salvo si la prioridad del juego es
+/// Normal (P1). Pide admin.
+pub fn persistent_priority_default(level: Level, priority: Priority) -> bool {
+    level.includes(Level::Agresivo) && priority != Priority::Normal
 }
 
 /// Opt-in en todos los niveles (design/SETTINGS.md): `mmcss-games`, cuyo efecto es casi nulo

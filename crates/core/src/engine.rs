@@ -27,6 +27,9 @@ pub struct GameBoost {
     pub realtime_confirmed: bool,
     /// `fullscreen-optimizations-off` para el exe del juego (opt-in, persistente, V10).
     pub fullscreen_optimizations_off: bool,
+    /// `game-priority-persistent`: Alta para el exe en cada arranque (IFEO). Se ignora si
+    /// `priority` es Normal (P1); ver [`crate::persistent_priority_default`].
+    pub persistent_priority: bool,
 }
 
 /// Qué aplicar: las filas que el usuario dejó marcadas, los ajustes persistentes marcados y,
@@ -103,6 +106,9 @@ pub fn describe(change: &Change) -> String {
         Change::FullscreenOptimizationsOff { exe } => {
             format!("sin optimizaciones de pantalla completa: {}", exe.display())
         }
+        Change::PersistentPriority { exe, .. } => {
+            format!("prioridad Alta persistente: {}", exe.display())
+        }
     }
 }
 
@@ -176,6 +182,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             if g.fullscreen_optimizations_off {
                 self.disable_fso(&mut journal, batch, &g.target.exe_path, &mut report)?;
             }
+            if g.persistent_priority && g.priority != Priority::Normal {
+                self.persist_priority(&mut journal, batch, &g.target.exe_path, &mut report)?;
+            }
         }
         Ok(report)
     }
@@ -199,6 +208,35 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                     let why = format!("el exe ya tiene flags de compatibilidad (`{flags}`)");
                     report.push(describe(&change), Outcome::Skipped(why));
                     return Ok(());
+                }
+                Err(e) => {
+                    report.push(describe(&change), Outcome::Failed(e));
+                    return Ok(());
+                }
+            }
+        }
+        self.run(journal, batch, change, report)
+    }
+
+    /// IFEO del exe del juego, con backup único: si ya está en el journal, no se vuelve a leer.
+    fn persist_priority(
+        &self,
+        journal: &mut Journal,
+        batch: u64,
+        exe: &Path,
+        report: &mut Report,
+    ) -> Result<(), EngineError> {
+        let mut change = Change::PersistentPriority {
+            exe: exe.to_path_buf(),
+            previous: vec![],
+        };
+        if !already_applied(journal, &change) {
+            match self.platform.read_persistent_priority(exe) {
+                Ok(previous) => {
+                    change = Change::PersistentPriority {
+                        exe: exe.to_path_buf(),
+                        previous,
+                    };
                 }
                 Err(e) => {
                     report.push(describe(&change), Outcome::Failed(e));
@@ -326,6 +364,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::FullscreenOptimizationsOff { exe } => {
                 self.platform.disable_fullscreen_optimizations(exe)
             }
+            Change::PersistentPriority { exe, .. } => self.platform.set_persistent_priority(exe),
         };
         journal.entries[index].status = match result {
             Ok(()) => EntryStatus::Done,
@@ -388,6 +427,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::StopService { name } => self.platform.start_service(name),
             Change::Tweak { tweak, previous } => self.platform.restore_tweak(*tweak, previous),
             Change::FullscreenOptimizationsOff { exe } => self.platform.clear_compat_flags(exe),
+            Change::PersistentPriority { exe, previous } => {
+                self.platform.restore_persistent_priority(exe, previous)
+            }
         };
         result.map_or_else(Outcome::Failed, |()| Outcome::Done)
     }
@@ -417,6 +459,10 @@ fn already_applied(journal: &Journal, change: &Change) -> bool {
             (
                 Change::FullscreenOptimizationsOff { exe: a },
                 Change::FullscreenOptimizationsOff { exe: b },
+            ) => a == b,
+            (
+                Change::PersistentPriority { exe: a, .. },
+                Change::PersistentPriority { exe: b, .. },
             ) => a == b,
             _ => false,
         })
@@ -498,6 +544,7 @@ mod tests {
                 priority,
                 realtime_confirmed: confirmed,
                 fullscreen_optimizations_off: false,
+                persistent_priority: false,
             }),
         }
     }

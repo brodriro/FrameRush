@@ -180,6 +180,37 @@ fn admin_tweaks_are_locked_without_admin() {
     assert!(!dir.join("session.json").exists());
 }
 
+/// P1: la prioridad persistente sale desde Agresivo, con candado sin `--admin`, nunca con
+/// prioridad Normal y se desmarca con `--exclude`.
+#[cfg(windows)]
+#[test]
+fn persistent_priority_follows_level_admin_and_priority() {
+    let dir = temp_dir("persistent-priority");
+    let pid = std::process::id().to_string();
+    let game = ["--game", pid.as_str()];
+    let run = |extra: &[&str]| {
+        let args = [&["plan"][..], &game, extra].concat();
+        let (ok, stdout) = framerush_in(&dir, &args);
+        assert!(ok, "{stdout}");
+        stdout
+    };
+    assert!(!run(&["--level", "normal", "--admin"]).contains("game-priority-persistent"));
+    let locked = run(&["--level", "agresivo"]);
+    assert!(locked.contains("[ ] game-priority-persistent"), "{locked}");
+    assert!(locked.contains("requiere admin"), "{locked}");
+    let on = run(&["--level", "agresivo", "--admin"]);
+    assert!(on.contains("[x] game-priority-persistent"), "{on}");
+    let normal = run(&["--level", "extremo", "--admin", "--game-priority", "normal"]);
+    assert!(!normal.contains("game-priority-persistent"), "{normal}");
+
+    let args = ["apply", "--level", "agresivo", "--admin", "--game", &pid];
+    let args = [&args[..], &["--exclude", "game-priority-persistent"]].concat();
+    let (ok, stdout) = framerush_in(&dir, &args);
+    assert!(ok, "{stdout}");
+    assert!(stdout.contains("[ ] game-priority-persistent"), "{stdout}");
+    assert!(!dir.join("session.json").exists());
+}
+
 /// `mmcss-games` es opt-in: sale desmarcado y `--include` lo marca.
 #[cfg(windows)]
 #[test]

@@ -1,11 +1,11 @@
 //! Tabla de precedencia P1–P15 (PLAN.md §3): un test por regla que ya tiene código.
 //!
-//! Las reglas que dependen de piezas que aún no existen (IFEO, planes de energía, Turbo,
+//! Las reglas que dependen de piezas que aún no existen (planes de energía, Turbo,
 //! `steamwebhelper`, VBS, GPU) se prueban en su hito; tareas.md las lista.
 
 use framerush_core::{
     Action, ApplyRequest, Category, Engine, EngineError, FileStore, GameBoost, JournalStore, Level,
-    OsNames, Plan, PlanOptions, Risk, Rule, Scope, Snapshot, plan,
+    OsNames, Plan, PlanOptions, Risk, Rule, Scope, Snapshot, persistent_priority_default, plan,
 };
 use framerush_device::{DeviceProfile, samples};
 use framerush_platform::mock::MockPlatform;
@@ -64,6 +64,7 @@ fn boost(m: &MockPlatform, priority: Priority, confirmed: bool) -> ApplyRequest<
             priority,
             realtime_confirmed: confirmed,
             fullscreen_optimizations_off: false,
+            persistent_priority: false,
         }),
     }
 }
@@ -206,6 +207,49 @@ fn fso_off_is_persistent_and_respects_existing_flags() {
         m.compat_flags(&exe).unwrap().as_deref(),
         Some("~ RUNASADMIN")
     );
+}
+
+/// P1: la prioridad persistente (IFEO) solo pone Alta, viene desde Agresivo, no se aplica con
+/// Normal, sobrevive al cierre del juego y Restaurar deja el valor de antes.
+#[test]
+fn p1_persistent_priority_is_high_only_and_persistent() {
+    use framerush_platform::mock::{MOCK_HIGH_PRIORITY, mock_priority_location};
+    assert!(!persistent_priority_default(Level::Normal, Priority::High));
+    assert!(persistent_priority_default(Level::Agresivo, Priority::High));
+    assert!(persistent_priority_default(
+        Level::Extremo,
+        Priority::Realtime
+    ));
+    assert!(!persistent_priority_default(
+        Level::Extremo,
+        Priority::Normal
+    ));
+
+    let m = MockPlatform::new(4);
+    let s = store("p1-ifeo");
+    let engine = Engine::new(&m, &s);
+    let mut request = boost(&m, Priority::High, false);
+    let exe = request.game.as_ref().unwrap().target.exe_path.clone();
+    let loc = mock_priority_location(&exe);
+    if let Some(g) = request.game.as_mut() {
+        g.persistent_priority = true;
+    }
+    m.set_value(&loc, 2);
+    engine.apply(&request).unwrap();
+    assert_eq!(m.value(&loc), Some(MOCK_HIGH_PRIORITY));
+    engine.apply(&request).unwrap();
+    engine.revert_session().unwrap();
+    assert_eq!(m.value(&loc), Some(MOCK_HIGH_PRIORITY), "persistente");
+    engine.revert_all().unwrap();
+    assert_eq!(m.value(&loc), Some(2), "backup único: el valor de antes");
+
+    if let Some(g) = request.game.as_mut() {
+        g.priority = Priority::Normal;
+    }
+    m.set_value(&loc, 2);
+    engine.apply(&request).unwrap();
+    assert_eq!(m.value(&loc), Some(2), "con Normal no se escribe");
+    engine.revert_all().unwrap();
 }
 
 /// Backup único: reaplicar un ajuste no sobrescribe el valor original.

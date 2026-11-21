@@ -41,6 +41,11 @@ pub enum Change {
     FullscreenOptimizationsOff {
         exe: PathBuf,
     },
+    /// `game-priority-persistent`: el exe arranca siempre en Alta. `previous`, como en `Tweak`.
+    PersistentPriority {
+        exe: PathBuf,
+        previous: Vec<SavedValue>,
+    },
 }
 
 impl Change {
@@ -57,7 +62,9 @@ impl Change {
             | Change::Kill { .. }
             | Change::StopService { .. } => Scope::Session,
             Change::Tweak { tweak, .. } => crate::tweak_scope(*tweak),
-            Change::FullscreenOptimizationsOff { .. } => Scope::Persistent,
+            Change::FullscreenOptimizationsOff { .. } | Change::PersistentPriority { .. } => {
+                Scope::Persistent
+            }
         }
     }
 
@@ -69,7 +76,8 @@ impl Change {
             | Change::Kill { target } => Some(target),
             Change::StopService { .. }
             | Change::Tweak { .. }
-            | Change::FullscreenOptimizationsOff { .. } => None,
+            | Change::FullscreenOptimizationsOff { .. }
+            | Change::PersistentPriority { .. } => None,
         }
     }
 }
