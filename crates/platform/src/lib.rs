@@ -21,4 +21,4 @@ pub use system::{
     ServiceControl, ServiceState, SystemTweaks, Tweak,
 };
 #[cfg(windows)]
-pub use windows::WindowsPlatform;
+pub use windows::{Helper, WindowsPlatform, serve_helper};

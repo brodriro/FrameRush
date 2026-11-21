@@ -1,7 +1,8 @@
 //! Implementación de Windows (M1): prioridad, suspender/reanudar, cerrar, afinidad y proceso en
 //! primer plano.
 //!
-//! Ajustes persistentes de HKCU (`SystemTweaks`, módulo `registry`).
+//! Ajustes de sistema en el registro (`SystemTweaks`, módulo `registry`). Los que piden admin
+//! pasan por el helper elevado si hay uno (módulo `helper`).
 //!
 //! Servicios y planes de energía llegan en M5 y M2; hasta entonces devuelven `Unsupported` y
 //! `capabilities()` lo refleja.
@@ -11,7 +12,10 @@
 //! comprobación y la llamada al SO.
 #![allow(unsafe_code)]
 
+mod helper;
 mod registry;
+
+pub use helper::{Helper, serve_helper};
 
 use registry::Hive;
 
@@ -42,11 +46,29 @@ unsafe extern "system" {
 
 /// Plataforma de Windows.
 #[derive(Debug, Default)]
-pub struct WindowsPlatform;
+pub struct WindowsPlatform {
+    /// Helper elevado para los ajustes que piden admin. Sin él se intentan en este proceso,
+    /// que falla con `AccessDenied` si no está elevado.
+    helper: Option<Helper>,
+}
 
 impl WindowsPlatform {
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Plataforma que delega en `helper` los ajustes que piden admin.
+    pub fn with_helper(helper: Helper) -> Self {
+        Self {
+            helper: Some(helper),
+        }
+    }
+
+    /// Helper que debe aplicar `tweak`, si lo pide admin y hay uno.
+    fn helper_for(&self, tweak: Tweak) -> Option<&Helper> {
+        self.helper
+            .as_ref()
+            .filter(|_| self.tweak_requires_admin(tweak))
     }
 
     /// Comprueba que el PID sigue siendo el proceso del `Target`.
@@ -429,6 +451,9 @@ impl SystemTweaks for WindowsPlatform {
     }
 
     fn apply_tweak(&self, tweak: Tweak) -> Result<()> {
+        if let Some(h) = self.helper_for(tweak) {
+            return h.apply_tweak(tweak);
+        }
         reg_values(tweak)
             .iter()
             .try_for_each(|v| registry::write_dword(v.hive, v.path, v.name, v.value))
@@ -436,6 +461,9 @@ impl SystemTweaks for WindowsPlatform {
 
     /// Restaura cada valor de la tabla con lo guardado; si no existía, lo borra.
     fn restore_tweak(&self, tweak: Tweak, saved: &[SavedValue]) -> Result<()> {
+        if let Some(h) = self.helper_for(tweak) {
+            return h.restore_tweak(tweak, saved);
+        }
         for v in reg_values(tweak) {
             let location = v.location();
             let Some(s) = saved.iter().find(|s| s.location == location) else {
