@@ -3,12 +3,17 @@
 //! No llama al SO: todo pasa por los traits de `framerush-platform`.
 
 pub mod defaults;
+mod engine;
 mod journal;
 mod model;
 mod plan;
 mod protected;
 mod rule;
 
+pub use engine::{
+    ApplyRequest, Engine, EngineError, GameBoost, LOWERED_PRIORITY, Outcome, Report, ReportLine,
+    describe,
+};
 pub use journal::{Change, Entry, EntryStatus, FileStore, Journal, JournalError, JournalStore};
 pub use model::{Action, Category, Level, ParseError, Risk};
 pub use plan::{Plan, PlanItem, PlanOptions, Snapshot, Subject, plan};
