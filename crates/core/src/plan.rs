@@ -82,6 +82,8 @@ pub struct Plan {
     pub anticheats: Vec<String>,
     /// Ajustes que el nivel trae marcados. Su alcance lo da [`tweak_scope`].
     pub tweaks: Vec<Tweak>,
+    /// Ajustes opt-in del nivel ([`tweak_optional`]): se muestran desmarcados.
+    pub optional_tweaks: Vec<Tweak>,
     /// Ajustes del nivel que piden admin y no hay elevación: se muestran con candado (P14).
     pub locked_tweaks: Vec<Tweak>,
 }
@@ -186,17 +188,27 @@ pub fn plan(
             })
         })
         .collect();
-    let (locked_tweaks, tweaks) = snapshot
+    let (mut tweaks, mut optional_tweaks, mut locked_tweaks) = (vec![], vec![], vec![]);
+    for t in snapshot
         .tweaks
         .iter()
         .copied()
         .filter(|t| level.includes(tweak_min_level(*t)))
-        .partition(|t| !options.elevated && snapshot.admin_tweaks.contains(t));
+    {
+        if !options.elevated && snapshot.admin_tweaks.contains(&t) {
+            locked_tweaks.push(t);
+        } else if tweak_optional(t) {
+            optional_tweaks.push(t);
+        } else {
+            tweaks.push(t);
+        }
+    }
     Plan {
         level,
         items,
         anticheats: running_anticheats(&snapshot.processes),
         tweaks,
+        optional_tweaks,
         locked_tweaks,
     }
 }
@@ -205,9 +217,10 @@ pub fn plan(
 /// activos en todos los niveles; los de todo el equipo, desde Agresivo).
 pub fn tweak_min_level(tweak: Tweak) -> Level {
     match tweak {
-        Tweak::GameDvrPolicyOff | Tweak::SchedulerForegroundBoost | Tweak::PowerThrottlingOff => {
-            Level::Agresivo
-        }
+        Tweak::GameDvrPolicyOff
+        | Tweak::SchedulerForegroundBoost
+        | Tweak::PowerThrottlingOff
+        | Tweak::MmcssGames => Level::Agresivo,
         Tweak::GameDvrOff
         | Tweak::WindowsGameMode
         | Tweak::NotificationsOff
@@ -227,8 +240,15 @@ pub fn tweak_scope(tweak: Tweak) -> Scope {
         | Tweak::VisualEffectsPerformance
         | Tweak::UwpBackgroundOff
         | Tweak::SchedulerForegroundBoost
-        | Tweak::PowerThrottlingOff => Scope::Persistent,
+        | Tweak::PowerThrottlingOff
+        | Tweak::MmcssGames => Scope::Persistent,
     }
+}
+
+/// Opt-in en todos los niveles (design/SETTINGS.md): `mmcss-games`, cuyo efecto es casi nulo
+/// (PLAN.md V11).
+pub fn tweak_optional(tweak: Tweak) -> bool {
+    tweak == Tweak::MmcssGames
 }
 
 #[cfg(test)]
@@ -550,6 +570,32 @@ mod tests {
         let admin = plan(Level::Agresivo, &snap, &[], &device, &elevated);
         assert_eq!(admin.tweaks, [Tweak::GameDvrOff, Tweak::GameDvrPolicyOff]);
         assert!(admin.locked_tweaks.is_empty());
+    }
+
+    /// Un opt-in nunca viene marcado; con candado si pide admin y no hay elevación.
+    #[test]
+    fn optional_tweaks_come_unchecked() {
+        let device = samples::hybrid_laptop();
+        let snap = Snapshot {
+            tweaks: vec![Tweak::MmcssGames],
+            admin_tweaks: vec![Tweak::MmcssGames],
+            ..Snapshot::default()
+        };
+        let elevated = PlanOptions {
+            elevated: true,
+            ..PlanOptions::default()
+        };
+        assert!(
+            plan(Level::Normal, &snap, &[], &device, &elevated)
+                .optional_tweaks
+                .is_empty()
+        );
+        let p = plan(Level::Extremo, &snap, &[], &device, &elevated);
+        assert!(p.tweaks.is_empty());
+        assert_eq!(p.optional_tweaks, [Tweak::MmcssGames]);
+        let locked = plan(Level::Extremo, &snap, &[], &device, &PlanOptions::default());
+        assert_eq!(locked.locked_tweaks, [Tweak::MmcssGames]);
+        assert!(locked.optional_tweaks.is_empty());
     }
 
     /// El token `teams` protege el proceso `ms-teams.exe` aunque el nombre no sea igual.

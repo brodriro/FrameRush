@@ -223,6 +223,17 @@ mod tests {
         }
     }
 
+    /// Un journal con solo números (anterior a los valores de texto) se sigue leyendo.
+    #[test]
+    fn saved_values_read_numbers_and_text() {
+        use framerush_platform::SavedData;
+        let json = r#"[{"location":"a","value":7},{"location":"b","value":"High"},{"location":"c","value":null}]"#;
+        let saved: Vec<SavedValue> = serde_json::from_str(json).unwrap();
+        assert_eq!(saved[0].value, Some(SavedData::Number(7)));
+        assert_eq!(saved[1].value, Some(SavedData::Text("High".into())));
+        assert_eq!(saved[2].value, None);
+    }
+
     #[test]
     fn file_store_round_trips_and_clears() {
         let dir = std::env::temp_dir().join(format!("framerush-journal-{}", std::process::id()));

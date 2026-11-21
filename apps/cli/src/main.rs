@@ -252,6 +252,7 @@ fn select<'a>(
             || plan
                 .tweaks
                 .iter()
+                .chain(&plan.optional_tweaks)
                 .chain(&plan.locked_tweaks)
                 .any(|t| t.id() == id);
         if !known {
@@ -278,9 +279,11 @@ fn select<'a>(
         .filter(|i| !i.locked && (i.default_checked || include.contains(&i.rule_id)))
         .filter(|i| !exclude.contains(&i.rule_id))
         .collect();
+    let wanted = |t: &Tweak| include.iter().any(|id| id == t.id());
     let tweaks = plan
         .tweaks
         .iter()
+        .chain(plan.optional_tweaks.iter().filter(|t| wanted(t)))
         .copied()
         .filter(|t| !exclude.iter().any(|id| id == t.id()))
         .collect();
@@ -475,11 +478,12 @@ fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak]) {
         plan.items.len(),
         mib(memory)
     );
-    if !plan.tweaks.is_empty() || !plan.locked_tweaks.is_empty() {
+    if !(plan.tweaks.is_empty() && plan.optional_tweaks.is_empty() && plan.locked_tweaks.is_empty())
+    {
         println!(
             "\nAjustes del sistema (sesión: vuelve al cerrar el juego; persistente: solo `revert`):"
         );
-        for t in &plan.tweaks {
+        for t in plan.tweaks.iter().chain(&plan.optional_tweaks) {
             let mark = if tweaks.contains(t) { "x" } else { " " };
             println!("[{mark}] {:<28} {}", t.id(), scope_name(*t));
         }

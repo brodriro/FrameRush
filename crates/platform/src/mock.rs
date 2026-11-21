@@ -6,8 +6,8 @@
 
 use crate::{
     Capabilities, CapabilitySet, GameTuning, PlatformError, PowerControl, PowerPlan, Priority,
-    ProcessControl, ProcessInfo, Result, SavedValue, ServiceControl, ServiceState, StartTime,
-    SystemTweaks, Target, Tweak,
+    ProcessControl, ProcessInfo, Result, SavedData, SavedValue, ServiceControl, ServiceState,
+    StartTime, SystemTweaks, Target, Tweak,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -333,14 +333,20 @@ impl SystemTweaks for MockPlatform {
     fn tweak_requires_admin(&self, tweak: Tweak) -> bool {
         matches!(
             tweak,
-            Tweak::GameDvrPolicyOff | Tweak::SchedulerForegroundBoost | Tweak::PowerThrottlingOff
+            Tweak::GameDvrPolicyOff
+                | Tweak::SchedulerForegroundBoost
+                | Tweak::PowerThrottlingOff
+                | Tweak::MmcssGames
         )
     }
 
     fn read_tweak(&self, tweak: Tweak) -> Result<Vec<SavedValue>> {
         let location = mock_location(tweak);
         let value = self.lock().values.get(&location).copied();
-        Ok(vec![SavedValue { location, value }])
+        Ok(vec![SavedValue {
+            location,
+            value: value.map(SavedData::Number),
+        }])
     }
 
     fn apply_tweak(&self, tweak: Tweak) -> Result<()> {
@@ -351,9 +357,12 @@ impl SystemTweaks for MockPlatform {
     fn restore_tweak(&self, _tweak: Tweak, saved: &[SavedValue]) -> Result<()> {
         let mut s = self.lock();
         for v in saved {
-            match v.value {
-                Some(x) => s.values.insert(v.location.clone(), x),
+            match &v.value {
+                Some(SavedData::Number(x)) => s.values.insert(v.location.clone(), *x),
                 None => s.values.remove(&v.location),
+                Some(SavedData::Text(_)) => {
+                    return Err(PlatformError::Os("el mock solo guarda números".into()));
+                }
             };
         }
         Ok(())

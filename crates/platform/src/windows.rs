@@ -21,8 +21,8 @@ use registry::Hive;
 
 use crate::{
     Capabilities, CapabilitySet, GameTuning, PlatformError, PowerControl, PowerPlan, Priority,
-    ProcessControl, ProcessInfo, Result, SavedValue, ServiceControl, ServiceState, StartTime,
-    SystemTweaks, Target, Tweak, scan_processes,
+    ProcessControl, ProcessInfo, Result, SavedData, SavedValue, ServiceControl, ServiceState,
+    StartTime, SystemTweaks, Target, Tweak, scan_processes,
 };
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
@@ -331,16 +331,49 @@ impl PowerControl for WindowsPlatform {
 
 const HKCU: Hive = Hive::CurrentUser;
 
-/// Un valor DWORD del registro que pone un ajuste.
+/// Dato que pone un ajuste en un valor.
+#[derive(Debug)]
+enum RegData {
+    Dword(u32),
+    Sz(&'static str),
+}
+
+use RegData::{Dword, Sz};
+
+/// Un valor del registro que pone un ajuste.
 #[derive(Debug)]
 struct RegValue {
     hive: Hive,
     path: &'static str,
     name: &'static str,
-    value: u32,
+    value: RegData,
 }
 
 impl RegValue {
+    /// Lo que hay ahora, leído con el tipo que pone el ajuste.
+    fn read(&self) -> Result<Option<SavedData>> {
+        Ok(match self.value {
+            Dword(_) => {
+                registry::read_dword(self.hive, self.path, self.name)?.map(SavedData::Number)
+            }
+            Sz(_) => registry::read_string(self.hive, self.path, self.name)?.map(SavedData::Text),
+        })
+    }
+
+    fn write(&self, data: &SavedData) -> Result<()> {
+        match data {
+            SavedData::Number(x) => registry::write_dword(self.hive, self.path, self.name, *x),
+            SavedData::Text(s) => registry::write_string(self.hive, self.path, self.name, s),
+        }
+    }
+
+    fn apply(&self) -> Result<()> {
+        match self.value {
+            Dword(x) => registry::write_dword(self.hive, self.path, self.name, x),
+            Sz(s) => registry::write_string(self.hive, self.path, self.name, s),
+        }
+    }
+
     fn location(&self) -> String {
         format!(r"{}\{}\{}", self.hive.prefix(), self.path, self.name)
     }
@@ -349,6 +382,9 @@ impl RegValue {
 const GAME_CONFIG_STORE: &str = r"System\GameConfigStore";
 const GAME_DVR: &str = r"Software\Microsoft\Windows\CurrentVersion\GameDVR";
 const GAME_BAR: &str = r"Software\Microsoft\GameBar";
+/// Tarea `Games` de MMCSS (PLAN.md V11).
+const MMCSS_GAMES: &str =
+    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games";
 /// Directiva de equipo de Game DVR (referencia CS2-FPS-Boost, `$RegAggressive`).
 const GAME_DVR_POLICY: &str = r"SOFTWARE\Policies\Microsoft\Windows\GameDVR";
 
@@ -362,59 +398,59 @@ fn reg_values(tweak: Tweak) -> &'static [RegValue] {
                 hive: HKCU,
                 path: GAME_CONFIG_STORE,
                 name: "GameDVR_Enabled",
-                value: 0,
+                value: Dword(0),
             },
             RegValue {
                 hive: HKCU,
                 path: GAME_DVR,
                 name: "AppCaptureEnabled",
-                value: 0,
+                value: Dword(0),
             },
         ],
         Tweak::GameDvrPolicyOff => &[RegValue {
             hive: Hive::LocalMachine,
             path: GAME_DVR_POLICY,
             name: "AllowGameDVR",
-            value: 0,
+            value: Dword(0),
         }],
         Tweak::WindowsGameMode => &[
             RegValue {
                 hive: HKCU,
                 path: GAME_BAR,
                 name: "AutoGameModeEnabled",
-                value: 1,
+                value: Dword(1),
             },
             RegValue {
                 hive: HKCU,
                 path: GAME_BAR,
                 name: "AllowAutoGameMode",
-                value: 1,
+                value: Dword(1),
             },
             RegValue {
                 hive: HKCU,
                 path: GAME_BAR,
                 name: "ShowStartupPanel",
-                value: 0,
+                value: Dword(0),
             },
         ],
         Tweak::NotificationsOff => &[RegValue {
             hive: HKCU,
             path: r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings",
             name: "NOC_GLOBAL_SETTING_TOAST_ENABLED",
-            value: 0,
+            value: Dword(0),
         }],
         Tweak::VisualEffectsPerformance => &[
             RegValue {
                 hive: HKCU,
                 path: r"Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects",
                 name: "VisualFXSetting",
-                value: 2,
+                value: Dword(2),
             },
             RegValue {
                 hive: HKCU,
                 path: r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
                 name: "EnableTransparency",
-                value: 0,
+                value: Dword(0),
             },
         ],
         // PLAN.md V8: 0x26, quantum corto y variable con más peso para el primer plano.
@@ -422,20 +458,48 @@ fn reg_values(tweak: Tweak) -> &'static [RegValue] {
             hive: Hive::LocalMachine,
             path: r"SYSTEM\CurrentControlSet\Control\PriorityControl",
             name: "Win32PrioritySeparation",
-            value: 38,
+            value: Dword(38),
         }],
         // Directiva "Turn off Power Throttling" (ADMX_Power Policy CSP).
         Tweak::PowerThrottlingOff => &[RegValue {
             hive: Hive::LocalMachine,
             path: r"SYSTEM\CurrentControlSet\Control\Power\PowerThrottling",
             name: "PowerThrottlingOff",
-            value: 1,
+            value: Dword(1),
         }],
+        // Valores de la referencia (`$RegAggressive`); los nombres son los de la documentación
+        // de MMCSS.
+        Tweak::MmcssGames => &[
+            RegValue {
+                hive: Hive::LocalMachine,
+                path: MMCSS_GAMES,
+                name: "GPU Priority",
+                value: Dword(8),
+            },
+            RegValue {
+                hive: Hive::LocalMachine,
+                path: MMCSS_GAMES,
+                name: "Priority",
+                value: Dword(6),
+            },
+            RegValue {
+                hive: Hive::LocalMachine,
+                path: MMCSS_GAMES,
+                name: "Scheduling Category",
+                value: Sz("High"),
+            },
+            RegValue {
+                hive: Hive::LocalMachine,
+                path: MMCSS_GAMES,
+                name: "SFIO Priority",
+                value: Sz("High"),
+            },
+        ],
         Tweak::UwpBackgroundOff => &[RegValue {
             hive: HKCU,
             path: r"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications",
             name: "GlobalUserDisabled",
-            value: 1,
+            value: Dword(1),
         }],
     }
 }
@@ -458,7 +522,7 @@ impl SystemTweaks for WindowsPlatform {
             .map(|v| {
                 Ok(SavedValue {
                     location: v.location(),
-                    value: registry::read_dword(v.hive, v.path, v.name)?,
+                    value: v.read()?,
                 })
             })
             .collect()
@@ -468,9 +532,7 @@ impl SystemTweaks for WindowsPlatform {
         if let Some(h) = self.helper_for(tweak) {
             return h.apply_tweak(tweak);
         }
-        reg_values(tweak)
-            .iter()
-            .try_for_each(|v| registry::write_dword(v.hive, v.path, v.name, v.value))
+        reg_values(tweak).iter().try_for_each(RegValue::apply)
     }
 
     /// Restaura cada valor de la tabla con lo guardado; si no existía, lo borra.
@@ -485,8 +547,8 @@ impl SystemTweaks for WindowsPlatform {
                     "el journal no tiene el valor previo de {location}"
                 )));
             };
-            match s.value {
-                Some(x) => registry::write_dword(v.hive, v.path, v.name, x)?,
+            match &s.value {
+                Some(data) => v.write(data)?,
                 None => registry::delete_value(v.hive, v.path, v.name)?,
             }
         }
@@ -648,7 +710,8 @@ mod tests {
             [
                 Tweak::GameDvrPolicyOff,
                 Tweak::SchedulerForegroundBoost,
-                Tweak::PowerThrottlingOff
+                Tweak::PowerThrottlingOff,
+                Tweak::MmcssGames
             ]
         );
     }

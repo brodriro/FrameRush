@@ -78,10 +78,12 @@ pub enum Tweak {
     SchedulerForegroundBoost,
     /// `power-throttling-off`: Windows no limita la frecuencia de los procesos en segundo plano.
     PowerThrottlingOff,
+    /// `mmcss-games`: reparto de MMCSS para la tarea `Games`. Es opt-in: su efecto es casi nulo.
+    MmcssGames,
 }
 
 impl Tweak {
-    pub const ALL: [Tweak; 8] = [
+    pub const ALL: [Tweak; 9] = [
         Tweak::GameDvrOff,
         Tweak::GameDvrPolicyOff,
         Tweak::WindowsGameMode,
@@ -90,6 +92,7 @@ impl Tweak {
         Tweak::UwpBackgroundOff,
         Tweak::SchedulerForegroundBoost,
         Tweak::PowerThrottlingOff,
+        Tweak::MmcssGames,
     ];
 
     /// Id de design/SETTINGS.md.
@@ -103,8 +106,18 @@ impl Tweak {
             Tweak::UwpBackgroundOff => "uwp-background-off",
             Tweak::SchedulerForegroundBoost => "scheduler-foreground-boost",
             Tweak::PowerThrottlingOff => "power-throttling-off",
+            Tweak::MmcssGames => "mmcss-games",
         }
     }
+}
+
+/// Dato de un valor guardado: número (DWORD) o texto (REG_SZ). En el journal es un número o
+/// una cadena JSON, así que los journals con solo números siguen leyéndose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SavedData {
+    Number(u32),
+    Text(String),
 }
 
 /// Valor que había antes de aplicar un ajuste. `value: None` es "no existía" y restaurar lo
@@ -113,7 +126,7 @@ impl Tweak {
 pub struct SavedValue {
     /// Dónde vive el valor, legible por una persona (`HKCU\...\Nombre` en Windows).
     pub location: String,
-    pub value: Option<u32>,
+    pub value: Option<SavedData>,
 }
 
 /// Ajustes persistentes: leer el estado previo, aplicarlo y restaurarlo.

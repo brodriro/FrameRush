@@ -180,6 +180,21 @@ fn admin_tweaks_are_locked_without_admin() {
     assert!(!dir.join("session.json").exists());
 }
 
+/// `mmcss-games` es opt-in: sale desmarcado y `--include` lo marca.
+#[cfg(windows)]
+#[test]
+fn optional_tweaks_need_include() {
+    let dir = temp_dir("optional-tweaks");
+    let base = ["apply", "--level", "agresivo", "--admin"];
+    let (ok, stdout) = framerush_in(&dir, &base);
+    assert!(ok);
+    assert!(stdout.contains("[ ] mmcss-games"), "{stdout}");
+    let (ok, stdout) = framerush_in(&dir, &[&base[..], &["--include", "mmcss-games"]].concat());
+    assert!(ok);
+    assert!(stdout.contains("[x] mmcss-games"), "{stdout}");
+    assert!(!dir.join("session.json").exists());
+}
+
 #[test]
 fn fso_off_needs_a_game() {
     let dir = temp_dir("fso");
