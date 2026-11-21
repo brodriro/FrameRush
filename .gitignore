@@ -1,0 +1,28 @@
+# Documentación de trabajo (no versionada)
+CLAUDE.md
+PLAN.md
+tareas.md
+design/
+docs/
+.claude/
+
+# Rust
+/target/
+**/*.rs.bk
+
+# Tauri / frontend
+apps/gui/node_modules/
+apps/gui/dist/
+apps/gui/src-tauri/target/
+apps/gui/src-tauri/gen/
+
+# Sesiones/logs locales
+session.json
+*.log
+
+# SO / editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
