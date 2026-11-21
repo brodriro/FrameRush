@@ -316,6 +316,10 @@ fn revert() -> Result<()> {
 
 /// Operación del motor sobre la plataforma nativa.
 #[derive(Debug)]
+#[cfg_attr(
+    not(windows),
+    expect(dead_code, reason = "fuera de Windows `run` todavía no ejecuta nada")
+)]
 enum Op<'a> {
     Apply(ApplyRequest<'a>),
     Undo,
