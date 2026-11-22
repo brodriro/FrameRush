@@ -186,9 +186,19 @@ pub struct SensorInfo {
     pub elevated: bool,
 }
 
-/// Lee el equipo y arma el snapshot. Tarda (WMI, NVML, escaneo de procesos): se llama fuera
-/// del hilo de la UI.
-pub fn build(sensors: SensorInfo) -> Result<View> {
+/// Lo que hace falta para planificar en este equipo, leído en el momento.
+pub(crate) struct Inputs {
+    pub os: Os,
+    pub device: DeviceProfile,
+    pub rules: Vec<framerush_core::Rule>,
+    pub processes: Vec<ProcessInfo>,
+    pub snapshot: Snapshot,
+    pub tweaks: Tweaks,
+    pub caps: framerush_platform::CapabilitySet,
+}
+
+/// Equipo, reglas, procesos y ajustes de ahora mismo. Tarda: fuera del hilo de la UI.
+pub(crate) fn inputs() -> Result<Inputs> {
     let Some(os) = Os::current() else {
         bail!("sistema operativo no admitido");
     };
@@ -209,6 +219,29 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
             vec![]
         },
     };
+    Ok(Inputs {
+        os,
+        device,
+        rules,
+        processes,
+        snapshot,
+        tweaks,
+        caps,
+    })
+}
+
+/// Lee el equipo y arma el snapshot. Tarda (WMI, NVML, escaneo de procesos): se llama fuera
+/// del hilo de la UI.
+pub fn build(sensors: SensorInfo) -> Result<View> {
+    let Inputs {
+        os,
+        device,
+        rules,
+        processes,
+        snapshot,
+        tweaks,
+        caps,
+    } = inputs()?;
     let options = PlanOptions {
         elevated: false,
         keep_alive: defaults::keep_alive(&device).value,
@@ -449,7 +482,7 @@ fn protected(processes: &[ProcessInfo]) -> Vec<Protected> {
 }
 
 /// Carpeta de datos, la misma que la CLI: `FRAMERUSH_DATA_DIR` o `%LOCALAPPDATA%/framerush`.
-fn data_dir() -> Option<PathBuf> {
+pub(crate) fn data_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("FRAMERUSH_DATA_DIR") {
         return Some(PathBuf::from(dir));
     }

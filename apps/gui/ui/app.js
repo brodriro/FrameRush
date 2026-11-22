@@ -306,8 +306,48 @@
 
   const levelToggles = () => $$('.tg[data-setting]').filter(x => x.checked && !x.disabled && shown(x) && x.closest('[data-min]'));
 
-  /* Aplicar aún no pasa por la app: la simulación cuenta lo marcado y el resto lo dice. */
-  function apply(force) {
+  /* Informe de apply/undo/revert: hechos, fallidos y lo que no se pudo (sin inventar nada). */
+  function report(verb, r) {
+    const fails = r.lines.filter(l => l.outcome === 'failed');
+    let msg = `${verb}: ${r.done} hecho(s)${r.failed ? ` · ${r.failed} fallido(s)` : ''}.`;
+    if (fails.length) msg += ` Primer fallo: ${fails[0].what} (${fails[0].detail}).`;
+    if (r.needsAdmin.length) msg += ` Piden admin (pulsa «${ELEVATE_LABEL[D.os].replace(/^\S+ /, '')}»): ${r.needsAdmin.join(', ')}.`;
+    if (r.notWired.length) msg += ` Aún no conectado, no se aplicó: ${r.notWired.join(', ')}.`;
+    if (!r.lines.length && !r.notWired.length && !r.needsAdmin.length) msg = `${verb}: no había nada que hacer.`;
+    toast(msg);
+  }
+
+  async function run(verb, op) {
+    DS('apply').forEach(b => { b.disabled = true; });
+    try {
+      const r = await op();
+      report(verb, r);
+      return r;
+    } catch (err) {
+      toast(`${verb}: ${err && err.message ? err.message : err}`);
+      return null;
+    } finally {
+      DS('apply').forEach(b => { b.disabled = false; });
+    }
+  }
+
+  async function undo() {
+    const r = await run('Deshacer', api.undo);
+    if (!r) return;
+    S.hist.pop();
+    if (!r.sessionOpen) { S.hist = []; D.pendingSession = null; }
+    sess();
+  }
+
+  async function revert() {
+    const r = await run('Restaurar', api.revert);
+    if (!r) return;
+    if (!r.sessionOpen) { S.hist = []; D.pendingSession = null; DS('restore-after-crash').forEach(x => { x.hidden = true; }); }
+    sess();
+  }
+
+  /* El backend vuelve a planificar con el equipo de ahora y aplica solo lo marcado. */
+  async function apply(force) {
     const n = S.chk.filter(Boolean).length + S.stc.filter(Boolean).length + levelToggles().length;
     if (first('dry-run')?.checked) { toast(`Simulación: se aplicarían ${n} cambios. No se ha modificado nada.`); return; }
     if (!force && active('vbs-hvci-off')) { /* SETTINGS §4.8 */
@@ -315,7 +355,13 @@
       toast('Confirma el aviso de compatibilidad para aplicar.');
       return;
     }
-    toast(`Aplicar ${NOT_WIRED} Mientras tanto: framerush apply --level ${['', 'normal', 'agresivo', 'extremo'][S.level]}`);
+    const r = await run('Aplicar', () => api.apply({
+      level: S.level,
+      rows: D.processes.filter((p, i) => S.chk[i]).map(p => p.id),
+      settings: levelToggles().map(x => x.dataset.setting),
+      powerPlan: S.plan ?? null,
+    }));
+    if (r && r.done) { S.hist.push(r.done); sess(); }
   }
 
   function launchGame() {
@@ -425,7 +471,7 @@
     const cr = t.closest('[data-crash]');
     if (cr) {
       DS('restore-after-crash').forEach(x => { x.hidden = true; });
-      toast(cr.dataset.crash === 'restore' ? `Restaurar ${NOT_WIRED} Mientras tanto: framerush revert` : 'Aviso descartado. El journal se conserva hasta el próximo Restaurar.');
+      if (cr.dataset.crash === 'restore') revert(); else toast('Aviso descartado. El journal se conserva hasta el próximo Restaurar.');
       return;
     }
     const wb = t.closest('[data-win]');
@@ -434,8 +480,8 @@
     const el = t.closest('button[data-setting]'); if (!el) return;
     const id = el.dataset.setting;
     if (id === 'apply') apply();
-    if (id === 'undo-last') toast(`Deshacer ${NOT_WIRED} Mientras tanto: framerush undo`);
-    if (id === 'restore') toast(`Restaurar ${NOT_WIRED} Mientras tanto: framerush revert`);
+    if (id === 'undo-last') undo();
+    if (id === 'restore') revert();
     if (id === 'launch-game') launchGame();
     if (id === 'status-view') { const v = $('#stv'); v.hidden = !v.hidden; if (!v.hidden) v.textContent = statusText(); }
     if (id === 'realtime-confirm') {

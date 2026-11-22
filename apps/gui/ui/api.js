@@ -34,6 +34,14 @@
       return () => {};
     },
 
+    /*
+     * apply({ level, rows, settings, powerPlan }), undo() y revert(): informe
+     * { lines: [{ what, outcome: done|skipped|failed, detail }], done, failed, notWired, needsAdmin, sessionOpen }.
+     */
+    apply(selection) { return T.core.invoke('apply', { selection }); },
+    undo() { return T.core.invoke('undo'); },
+    revert() { return T.core.invoke('revert'); },
+
     /* Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él. */
     elevate() {
       if (!inTauri) return Promise.reject(new Error('Solo dentro de la app.'));

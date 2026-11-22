@@ -5,13 +5,18 @@
 //! - evento `sensors` a 1 Hz con las lecturas de los sensores (`null` = "No disponible").
 //! - `elevate`: abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él, para
 //!   las fuentes que solo se leen con admin (el EC de Acer).
+//! - `apply`, `undo` y `revert`: lo marcado en la UI, con `core::Engine` y el journal de la CLI.
+//!   Con el helper abierto, lo que pide admin pasa por él.
 //!
-//! Aplicar, deshacer y restaurar aún no están conectados: la UI lo dice en vez de simularlo.
+//! El juego, Turbo, los perfiles y el diagnóstico aún no están conectados: la UI lo dice.
 
 // Sin consola en las compilaciones de release de Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod actions;
 mod snapshot;
+
+use actions::Elevated;
 
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
@@ -24,14 +29,8 @@ struct SensorState {
     /// Se sustituye al elevar; al soltarlo se para el hilo.
     _poller: framerush_sensors::Poller,
     /// Helper elevado: vive lo que la app aunque ninguna fuente lo use.
-    _helper: Option<Elevated>,
+    helper: Option<Elevated>,
 }
-
-/// Lo que mantiene abierto el helper elevado.
-#[cfg(windows)]
-type Elevated = framerush_platform::Helper;
-#[cfg(not(windows))]
-type Elevated = ();
 
 /// Empieza a leer `sources` y a emitir el evento `sensors`.
 fn start(
@@ -55,7 +54,7 @@ fn start(
             elevated: helper.is_some(),
         },
         _poller: poller,
-        _helper: helper,
+        helper,
     }
 }
 
@@ -72,6 +71,47 @@ async fn snapshot(sensors: tauri::State<'_, Sensors>) -> Result<snapshot::View, 
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| format!("{e:#}"))
+}
+
+/// Helper elevado abierto, si lo hay (se comparte: un solo UAC).
+fn helper(sensors: &Sensors) -> Result<Option<Elevated>, String> {
+    Ok(sensors
+        .0
+        .lock()
+        .map_err(|_| "estado de los sensores roto".to_owned())?
+        .helper
+        .clone())
+}
+
+/// Corre `op` fuera del hilo de la UI (escanea procesos y toca el sistema).
+async fn blocking<T: Send + 'static>(
+    op: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(op)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn apply(
+    selection: actions::Selection,
+    sensors: tauri::State<'_, Sensors>,
+) -> Result<actions::Outcomes, String> {
+    let helper = helper(&sensors)?;
+    blocking(move || actions::apply(&selection, helper)).await
+}
+
+#[tauri::command]
+async fn undo(sensors: tauri::State<'_, Sensors>) -> Result<actions::Outcomes, String> {
+    let helper = helper(&sensors)?;
+    blocking(move || actions::undo(helper)).await
+}
+
+#[tauri::command]
+async fn revert(sensors: tauri::State<'_, Sensors>) -> Result<actions::Outcomes, String> {
+    let helper = helper(&sensors)?;
+    blocking(move || actions::revert(helper)).await
 }
 
 /// Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él.
@@ -115,7 +155,9 @@ fn elevated_sources() -> anyhow::Result<(framerush_sensors::Sources, Elevated)> 
 
 fn main() -> anyhow::Result<()> {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![snapshot, elevate])
+        .invoke_handler(tauri::generate_handler![
+            snapshot, elevate, apply, undo, revert
+        ])
         .setup(|app| {
             let state = start(app.handle(), framerush_sensors::detect(), None);
             app.manage(Sensors(Mutex::new(state)));
