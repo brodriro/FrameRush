@@ -517,13 +517,13 @@ fn native_caps() -> (Tweaks, Tweaks, framerush_platform::CapabilitySet) {
     (vec![], vec![], framerush_platform::CapabilitySet::default())
 }
 
-#[cfg(test)]
+/// Solo en Windows: es la única plataforma con detección nativa por ahora.
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 
     /// El snapshot sale entero de este equipo: mismo SO, mismas GPU que la detección y ningún
     /// juego ni dato de muestra.
-    #[cfg(windows)]
     #[test]
     fn this_machine_builds_a_snapshot() {
         let view = build(framerush_sensors::detect().checked).unwrap();
