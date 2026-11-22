@@ -257,13 +257,23 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             self.apply_tweak(&mut journal, batch, *tweak, &mut report)?;
         }
         if let Some(g) = &request.game {
-            for target in &g.targets {
+            // Un protegido (p. ej. el anticheat en la carpeta del juego) nunca se toca.
+            let targets = g
+                .targets
+                .iter()
+                .filter(|t| !is_protected(&t.exe_path.to_string_lossy()));
+            for target in targets {
                 self.set_priority(&mut journal, batch, target, g.priority, &mut report)?;
                 if let Some(cpus) = &g.affinity {
                     self.set_affinity(&mut journal, batch, target, cpus, &mut report)?;
                 }
             }
-            let mut exes: Vec<&Path> = g.targets.iter().map(|t| t.exe_path.as_path()).collect();
+            let mut exes: Vec<&Path> = g
+                .targets
+                .iter()
+                .map(|t| t.exe_path.as_path())
+                .filter(|exe| !is_protected(&exe.to_string_lossy()))
+                .collect();
             exes.sort();
             exes.dedup();
             for exe in exes {
@@ -1074,19 +1084,25 @@ mod tests {
         );
     }
 
-    /// Todos los procesos del juego suben de prioridad; los ajustes por exe van una vez por exe
-    /// distinto.
+    /// Todos los procesos del juego suben de prioridad salvo los protegidos (su anticheat); los
+    /// ajustes por exe van una vez por exe distinto.
     #[test]
     fn every_game_process_is_boosted_and_each_exe_once() {
         let m = MockPlatform::new(4);
         let main = m.spawn(9, "game.exe", "/game/game.exe", 1);
         let second = m.spawn(10, "game.exe", "/game/game.exe", 1);
         let helper = m.spawn(11, "helper.exe", "/game/helper.exe", 1);
+        let anticheat = m.spawn(12, "EasyAntiCheat.exe", "/game/EasyAntiCheat.exe", 1);
         let store = MemoryStore::default();
         let engine = Engine::new(&m, &store);
         let mut req = boost(&main, Priority::High, false);
         if let Some(g) = req.game.as_mut() {
-            g.targets = vec![main.clone(), second.clone(), helper.clone()];
+            g.targets = vec![
+                main.clone(),
+                second.clone(),
+                helper.clone(),
+                anticheat.clone(),
+            ];
             g.fullscreen_optimizations_off = true;
         }
         let report = engine.apply(&req).unwrap();
@@ -1094,6 +1110,11 @@ mod tests {
         for t in [&main, &second, &helper] {
             assert_eq!(m.priority(t).unwrap(), Priority::High);
         }
+        assert_eq!(
+            m.priority(&anticheat).unwrap(),
+            Priority::Normal,
+            "protegido"
+        );
         let fso = store
             .load()
             .unwrap()
