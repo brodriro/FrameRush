@@ -7,6 +7,8 @@
 //!   las fuentes que solo se leen con admin (el EC de Acer).
 //! - `apply`, `undo` y `revert`: lo marcado en la UI, con `core::Engine` y el journal de la CLI.
 //!   Con el helper abierto, lo que pide admin pasa por él.
+//! - Watchdog (It1.4, P5): tras `apply`, con `auto-revert-on-exit`, vigila el juego y al cerrarse
+//!   revierte lo de sesión y emite `game-exited` con el informe.
 //!
 //! El juego, Turbo, los perfiles y el diagnóstico aún no están conectados: la UI lo dice.
 
@@ -19,6 +21,9 @@ mod snapshot;
 use actions::Elevated;
 
 use std::sync::Mutex;
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::thread::JoinHandle;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Fuentes de sensores abiertas y el hilo que las lee.
@@ -58,6 +63,89 @@ fn start(
     }
 }
 
+/// Cada cuánto mira el watchdog si el juego sigue en marcha.
+const WATCH_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Watchdog en marcha, si lo hay. Soltarlo lo para.
+struct Watchdog(Mutex<Option<GameWatch>>);
+
+struct GameWatch {
+    stop: Option<Sender<()>>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Drop for GameWatch {
+    fn drop(&mut self) {
+        // Soltar el emisor despierta al hilo (Disconnected).
+        self.stop.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Informe del evento `game-exited`.
+#[derive(Clone, serde::Serialize)]
+struct GameExited {
+    outcomes: Option<actions::Outcomes>,
+    error: Option<String>,
+}
+
+/// Vigila `game` y, cuando ya no queda ningún proceso suyo, revierte lo de sesión. El hilo no
+/// toca el estado de la app: termina solo y el `GameWatch` se suelta en el siguiente `apply` o
+/// `revert`.
+fn watch(
+    app: AppHandle,
+    game: Vec<framerush_platform::Target>,
+    helper: Option<Elevated>,
+) -> GameWatch {
+    let (stop, stopped) = mpsc::channel::<()>();
+    let thread = std::thread::spawn(move || {
+        loop {
+            match stopped.recv_timeout(WATCH_INTERVAL) {
+                Err(RecvTimeoutError::Timeout) => {}
+                Ok(()) | Err(RecvTimeoutError::Disconnected) => return,
+            }
+            // Un escaneo fallido no es un juego cerrado: se vuelve a mirar.
+            let Ok(processes) = framerush_platform::scan_processes() else {
+                continue;
+            };
+            if framerush_core::game_running(&game, &processes) {
+                continue;
+            }
+            let payload = match actions::revert_session(helper) {
+                Ok(outcomes) => GameExited {
+                    outcomes: Some(outcomes),
+                    error: None,
+                },
+                Err(e) => GameExited {
+                    outcomes: None,
+                    error: Some(format!("{e:#}")),
+                },
+            };
+            // Sin ventana que escuche (al cerrar) no hay nada que hacer con el error.
+            let _ = app.emit("game-exited", payload);
+            return;
+        }
+    });
+    GameWatch {
+        stop: Some(stop),
+        thread: Some(thread),
+    }
+}
+
+/// Para el watchdog, si lo hay.
+fn stop_watch(watchdog: &Watchdog) -> Result<(), String> {
+    let old = watchdog
+        .0
+        .lock()
+        .map_err(|_| "estado del watchdog roto".to_owned())?
+        .take();
+    // Se suelta fuera del cerrojo: esperar al hilo con él tomado no hace falta.
+    drop(old);
+    Ok(())
+}
+
 /// Lee el equipo fuera del hilo de la UI: WMI, NVML y el escaneo de procesos tardan.
 #[tauri::command]
 async fn snapshot(sensors: tauri::State<'_, Sensors>) -> Result<snapshot::View, String> {
@@ -95,11 +183,25 @@ async fn blocking<T: Send + 'static>(
 
 #[tauri::command]
 async fn apply(
+    app: AppHandle,
     selection: actions::Selection,
     sensors: tauri::State<'_, Sensors>,
+    watchdog: tauri::State<'_, Watchdog>,
 ) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
-    blocking(move || actions::apply(&selection, helper)).await
+    let for_apply = helper.clone();
+    let mut out = blocking(move || actions::apply(&selection, for_apply)).await?;
+    let game = out.take_watch();
+    stop_watch(&watchdog)?;
+    if !game.is_empty() {
+        let w = watch(app, game, helper);
+        *watchdog
+            .0
+            .lock()
+            .map_err(|_| "estado del watchdog roto".to_owned())? = Some(w);
+        out.set_watching(true);
+    }
+    Ok(out)
 }
 
 #[tauri::command]
@@ -108,8 +210,13 @@ async fn undo(sensors: tauri::State<'_, Sensors>) -> Result<actions::Outcomes, S
     blocking(move || actions::undo(helper)).await
 }
 
+/// Restaurar: deshace toda la sesión y para el watchdog (ya no queda nada que revertir).
 #[tauri::command]
-async fn revert(sensors: tauri::State<'_, Sensors>) -> Result<actions::Outcomes, String> {
+async fn revert(
+    sensors: tauri::State<'_, Sensors>,
+    watchdog: tauri::State<'_, Watchdog>,
+) -> Result<actions::Outcomes, String> {
+    stop_watch(&watchdog)?;
     let helper = helper(&sensors)?;
     blocking(move || actions::revert(helper)).await
 }
@@ -161,6 +268,7 @@ fn main() -> anyhow::Result<()> {
         .setup(|app| {
             let state = start(app.handle(), framerush_sensors::detect(), None);
             app.manage(Sensors(Mutex::new(state)));
+            app.manage(Watchdog(Mutex::new(None)));
             Ok(())
         })
         .run(tauri::generate_context!())?;

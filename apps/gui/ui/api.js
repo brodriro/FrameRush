@@ -35,10 +35,21 @@
     },
 
     /*
-     * apply({ level, rows, settings, powerPlan }), undo() y revert(): informe
-     * { lines: [{ what, outcome: done|skipped|failed, detail }], done, failed, notWired, needsAdmin, sessionOpen }.
+     * apply({ level, rows, settings, powerPlan, game, autoRevert }), undo() y revert(): informe
+     * { lines: [{ what, outcome: done|skipped|failed, detail }], done, failed, notWired, needsAdmin, notes,
+     *   sessionOpen, watching }. watching: el watchdog vigila el juego (solo en apply).
      */
     apply(selection) { return T.core.invoke('apply', { selection }); },
+
+    /*
+     * Evento `game-exited` del watchdog: el juego se cerró y se revirtió lo de sesión.
+     * { outcomes: informe como el de revert() | null, error: texto | null }.
+     */
+    onGameExited(cb) {
+      let stop = () => {};
+      T.event.listen('game-exited', e => cb(e.payload)).then(un => { stop = un; });
+      return () => stop();
+    },
     undo() { return T.core.invoke('undo'); },
     revert() { return T.core.invoke('revert'); },
 

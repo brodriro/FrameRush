@@ -11,7 +11,7 @@ use framerush_core::{
     ApplyRequest, FileStore, GameBoost, Level, Outcome, PlanOptions, RefreshRate, Report, defaults,
     persistent_priority_default, plan,
 };
-use framerush_platform::Priority;
+use framerush_platform::{Priority, Target};
 use serde::{Deserialize, Serialize};
 
 /// Ids de design/SETTINGS.md que no son reglas ni ajustes de `Tweak`/`MemoryOp`.
@@ -36,6 +36,8 @@ pub struct Selection {
     power_plan: Option<usize>,
     /// El juego elegido en `game-target` y su panel; `null` sin juegos.
     game: Option<GameSelection>,
+    /// `auto-revert-on-exit`: al cerrarse el juego, el watchdog revierte lo de sesión (P5).
+    auto_revert: bool,
 }
 
 /// Panel del juego (R3).
@@ -71,7 +73,7 @@ impl From<GamePriority> for Priority {
 }
 
 /// Resultado para la UI: una línea por acción.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Outcomes {
     lines: Vec<Line>,
@@ -85,9 +87,25 @@ pub struct Outcomes {
     notes: Vec<String>,
     /// Queda una sesión que deshacer.
     session_open: bool,
+    /// El watchdog vigila el juego para revertir lo de sesión cuando se cierre.
+    watching: bool,
+    /// Procesos del juego que vigilar (solo para el backend).
+    #[serde(skip)]
+    watch: Vec<Target>,
 }
 
-#[derive(Debug, Serialize)]
+impl Outcomes {
+    /// Procesos que el watchdog debe vigilar; vacío si no hay que vigilar nada.
+    pub fn take_watch(&mut self) -> Vec<Target> {
+        std::mem::take(&mut self.watch)
+    }
+
+    pub fn set_watching(&mut self, watching: bool) {
+        self.watching = watching;
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct Line {
     what: String,
     /// `done`, `skipped` o `failed`.
@@ -259,7 +277,19 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         refresh_rates,
     };
     let report = run(helper, Op::Apply(Box::new(request)))?;
-    outcomes(report, not_wired, needs_admin, notes)
+    let mut out = outcomes(report, not_wired, needs_admin, notes)?;
+    // Solo hay algo que revertir al cerrar el juego si quedó una sesión abierta.
+    if selection.auto_revert && out.session_open {
+        out.watch = game_targets;
+    }
+    Ok(out)
+}
+
+/// Watchdog: el juego se cerró y se deshace lo de sesión (lo persistente queda hasta
+/// Restaurar, P5).
+pub fn revert_session(helper: Option<Elevated>) -> Result<Outcomes> {
+    let report = run(helper, Op::RevertSession)?;
+    outcomes(report, vec![], vec![], vec![])
 }
 
 /// Deshace el último `apply`.
@@ -306,6 +336,8 @@ fn outcomes(
         needs_admin,
         notes,
         session_open,
+        watching: false,
+        watch: vec![],
     })
 }
 
@@ -324,6 +356,7 @@ enum Op<'a> {
     Apply(Box<ApplyRequest<'a>>),
     Undo,
     Revert,
+    RevertSession,
 }
 
 #[cfg(windows)]
@@ -338,6 +371,9 @@ fn run(helper: Option<Elevated>, op: Op<'_>) -> Result<Report> {
         Op::Apply(request) => engine.apply(&request).context("no se pudo aplicar")?,
         Op::Undo => engine.undo_last().context("no se pudo deshacer")?,
         Op::Revert => engine.revert_all().context("no se pudo restaurar")?,
+        Op::RevertSession => engine
+            .revert_session()
+            .context("no se pudo revertir la sesión")?,
     })
 }
 
@@ -356,13 +392,15 @@ mod tests {
         let s: Selection = serde_json::from_str(
             r#"{"level":2,"rows":["sync-onedrive"],"settings":["game-dvr-off"],"powerPlan":null,
                 "game":{"appid":70,"priority":"realtime","realtimeConfirmed":true,
-                        "affinity":[2,3],"highPerformanceGpu":false}}"#,
+                        "affinity":[2,3],"highPerformanceGpu":false},
+                "autoRevert":true}"#,
         )
         .unwrap();
         assert_eq!(level(s.level).unwrap(), Level::Agresivo);
         assert_eq!(s.rows, ["sync-onedrive"]);
         assert_eq!(s.settings, ["game-dvr-off"]);
         assert_eq!(s.power_plan, None);
+        assert!(s.auto_revert);
         let g = s.game.unwrap();
         assert_eq!(
             (g.appid, Priority::from(g.priority)),

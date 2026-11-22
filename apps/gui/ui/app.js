@@ -56,7 +56,7 @@
   /* ---------- Estado ---------- */
   let D = null;           /* snapshot del backend */
   let stopStreams = [];
-  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], rt: false, alerted: false, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '' };
+  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, rt: false, alerted: false, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '' };
 
   const game = () => D.games[S.game] || { ...NO_GAME, exe: D.gamesNote || '' };
   /* Anticheat del juego o, sin adaptador, los que están en ejecución (cuentan para cualquier juego, It1.3). */
@@ -294,11 +294,11 @@
   }
 
   function sess() {
-    const on = S.hist.length > 0, ar = first('auto-revert-on-exit');
+    const on = S.hist.length > 0;
     DS('session-status').forEach(e => {
       e.classList.toggle('on', on);
       const t = e.querySelector('.sessT');
-      if (t) t.textContent = on ? `Sesión activa · ${S.hist.reduce((a, b) => a + b, 0)} cambios · ${S.hist.length} aplicación(es)${ar && ar.checked ? ' · se revierte al cerrar el juego' : ''}` : 'Sin sesión · nada modificado';
+      if (t) t.textContent = on ? `Sesión activa · ${S.hist.reduce((a, b) => a + b, 0)} cambios · ${S.hist.length} aplicación(es)${S.watching ? ' · se revierte al cerrar el juego' : ''}` : 'Sin sesión · nada modificado';
     });
     DS('restore').forEach(b => { b.disabled = !on && !D.pendingSession; });
     DS('undo-last').forEach(b => { b.disabled = !on; });
@@ -343,6 +343,7 @@
   async function revert() {
     const r = await run('Restaurar', api.revert);
     if (!r) return;
+    S.watching = false;
     if (!r.sessionOpen) { S.hist = []; D.pendingSession = null; DS('restore-after-crash').forEach(x => { x.hidden = true; }); }
     sess();
   }
@@ -362,8 +363,11 @@
       settings: levelToggles().map(x => x.dataset.setting),
       powerPlan: S.plan ?? null,
       game: gameSelection(),
+      autoRevert: !!first('auto-revert-on-exit')?.checked,
     }));
-    if (r && r.done) { S.hist.push(r.done); sess(); }
+    if (r) S.watching = !!r.watching;
+    if (r && r.done) S.hist.push(r.done);
+    sess();
   }
 
   /* Panel del juego (R3): lo que el backend necesita para el GameBoost. FSO e IFEO van en settings. */
@@ -381,6 +385,17 @@
       affinity: affOn ? cores : null,
       highPerformanceGpu: !!(gpu && !gpu.disabled && shown(gpu) && gpu.value === 'alto'),
     };
+  }
+
+  /* Watchdog (It1.4, P5): el juego se cerró y el backend revirtió lo de sesión. */
+  function onGameExited(e) {
+    S.watching = false;
+    if (e.error) toast(`Juego cerrado, pero no se pudo revertir: ${e.error}`);
+    else {
+      report('Juego cerrado, revertido lo de sesión', e.outcomes);
+      if (!e.outcomes.sessionOpen) { S.hist = []; D.pendingSession = null; }
+    }
+    sess();
   }
 
   function launchGame() {
@@ -585,7 +600,7 @@
     DS('compat-warning').forEach(e => { e.hidden = true; }); rebootBanner();
     elevateButton();
     setLevel(DEFAULT_LEVEL); sess(); renderPerf();
-    stopStreams.push(api.onSensors(onSensors), api.onFps(onFps));
+    stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited));
   }
 
   DS('hardware-profile').forEach(e => { e.textContent = 'Leyendo el equipo…'; });
