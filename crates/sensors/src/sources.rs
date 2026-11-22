@@ -24,6 +24,8 @@ impl std::fmt::Debug for Sources {
 /// Abre las fuentes del equipo. Las que no están (sin GPU NVIDIA, por ejemplo) se saltan.
 pub fn detect() -> Sources {
     let mut providers: Vec<Box<dyn SensorProvider>> = vec![];
+    // En macOS no hay más fuentes que añadir después de NVML.
+    #[cfg_attr(target_os = "macos", allow(unused_mut))]
     let mut checked = vec!["NVML"];
     if let Ok(gpus) = NvidiaGpus::open() {
         providers.push(Box::new(gpus));
