@@ -51,6 +51,13 @@
       return () => stop();
     },
     undo() { return T.core.invoke('undo'); },
+
+    /*
+     * Perfiles por juego (It3.2): { [appid]: { name, data } }. data es el estado de la UI
+     * (profileState en app.js); el backend lo guarda tal cual en profiles.json.
+     */
+    profiles() { return T.core.invoke('profiles'); },
+    saveProfile(appid, name, data) { return T.core.invoke('save_profile', { appid, profile: { name, data } }); },
     revert() { return T.core.invoke('revert'); },
 
     /* Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él. */

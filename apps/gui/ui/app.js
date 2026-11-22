@@ -56,7 +56,7 @@
   /* ---------- Estado ---------- */
   let D = null;           /* snapshot del backend */
   let stopStreams = [];
-  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, rt: false, alerted: false, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '' };
+  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, profiles: {}, base: null, rt: false, alerted: false, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '' };
 
   const game = () => D.games[S.game] || { ...NO_GAME, exe: D.gamesNote || '' };
   /* Anticheat del juego o, sin adaptador, los que están en ejecución (cuentan para cualquier juego, It1.3). */
@@ -402,6 +402,92 @@
     toast(`Jugar ahora (Turbo) ${NOT_WIRED}`);
   }
 
+  /* ---------- Perfiles por juego (It3.2) ---------- */
+  /* No van en el perfil: la clave (juego), el propio perfil, ajustes de la app y lo que se guarda aparte. */
+  const PROFILE_SKIP = new Set(['profile', 'profile-auto-apply', 'game-target', 'language', 'perf-metric', 'power-plan', 'game-priority']);
+
+  /* Todo lo elegible de la UI salvo lo de solo lectura (SETTINGS.md, profile-save). */
+  function profileState() {
+    const settings = {};
+    $$('input[data-setting], select[data-setting]').forEach(x => {
+      const id = x.dataset.setting;
+      if (PROFILE_SKIP.has(id) || id in settings) return;
+      settings[id] = x.type === 'checkbox' ? x.checked : x.value;
+    });
+    const pw = D.device.power;
+    return {
+      level: S.level,
+      rows: Object.fromEntries(D.processes.map((p, i) => [p.id, !!S.chk[i]])),
+      steam: Object.fromEntries(D.steamRecs.map((s, i) => [s.name, !!S.stc[i]])),
+      settings,
+      /* El plan por nombre: los índices cambian si se crean o borran planes (R8). */
+      powerPlan: pw && S.plan != null ? pw.plans[S.plan] : null,
+      /* Tiempo real nunca se guarda (invariante): queda en Alta. */
+      priority: S.rt ? 'alta' : priorityValue() || 'alta',
+      affinityCores: $$('[data-setting="cpu-affinity-cores"] input:checked').map(x => +x.id.replace('core', '')),
+    };
+  }
+
+  /* Carga un perfil sobre los valores del nivel; lo que este equipo no tiene ahora se queda como está. */
+  function loadProfile(p) {
+    setLevel(LV_NAME[p.level] ? p.level : DEFAULT_LEVEL);
+    D.processes.forEach((r, i) => { if (r.id in (p.rows || {}) && !locked(r)) S.chk[i] = !!p.rows[r.id]; });
+    D.steamRecs.forEach((s, i) => { if (s.name in (p.steam || {})) S.stc[i] = !!p.steam[s.name]; });
+    for (const [id, v] of Object.entries(p.settings || {})) {
+      if (PROFILE_SKIP.has(id)) continue;
+      DS(id).forEach(x => {
+        if (x.disabled) return; /* nivel insuficiente, anticheat o sin backend */
+        if (x.type === 'checkbox') x.checked = !!v;
+        else if (x.tagName !== 'SELECT' || [...x.options].some(o => o.value === v)) { x.value = v; x.dataset.touched = 1; }
+      });
+    }
+    const pw = D.device.power, plan = pw && p.powerPlan != null ? pw.plans.indexOf(p.powerPlan) : -1;
+    if (plan >= 0) S.plan = plan;
+    S.rt = false; $('#rtBox').hidden = true;
+    $$('[data-setting="game-priority"] button').forEach(x => x.classList.toggle('on', x.dataset.v === (p.priority || 'alta')));
+    if (p.affinityCores) {
+      const on = new Set(p.affinityCores);
+      $$('[data-setting="cpu-affinity-cores"] input').forEach(x => { x.checked = on.has(+x.id.replace('core', '')); });
+    }
+    /* Las mismas reglas que al tocar a mano: P10 y P1. */
+    if (antiCheat()) setCheck('vbs-hvci-off', false);
+    if (priorityValue() === 'normal') setCheck('game-priority-persistent', false);
+    setText('[data-setting="apply"] .lbl', first('dry-run')?.checked ? 'Simular optimización' : 'Aplicar optimización');
+    syncAffinityCores(); renderPower(); render(); sess();
+  }
+
+  function fillProfiles(selected) {
+    DS('profile').forEach(s => {
+      s.innerHTML = '<option value="global">Global</option>' +
+        Object.entries(S.profiles).map(([id, p]) => `<option value="${esc(id)}">${esc(p.name)}</option>`).join('') +
+        (D.games.length ? '<option value="nuevo">Nuevo: guardar el juego elegido…</option>' : '');
+      s.value = selected in S.profiles ? String(selected) : 'global';
+    });
+  }
+
+  /* El perfil del juego elegido, o Global (los valores del nivel por defecto, como al abrir). */
+  function useProfile(appid, quiet) {
+    const p = S.profiles[appid];
+    loadProfile(p ? p.data : S.base);
+    fillProfiles(p ? appid : 'global');
+    if (!quiet) toast(p ? `Perfil de «${p.name}» cargado.` : 'Perfil Global: valores por defecto del nivel.');
+  }
+
+  async function saveProfile() {
+    const g = D.games[S.game];
+    if (!g) { toast('Elige un juego de Steam para guardar su perfil.'); return; }
+    const data = profileState();
+    try {
+      await api.saveProfile(g.appid, g.name, data);
+      S.profiles[g.appid] = { name: g.name, data };
+      fillProfiles(g.appid);
+      toast(`Perfil de «${g.name}» guardado: se carga al elegir el juego. Auto-aplicar al lanzarlo ${NOT_WIRED}`);
+    } catch (err) {
+      toast(`No se pudo guardar el perfil: ${err && err.message ? err.message : err}`);
+      fillProfiles(g.appid);
+    }
+  }
+
   /* ---------- Segmentados ---------- */
   function onSeg(id, b) {
     if (id === 'power-plan') { S.plan = +b.dataset.i; renderPower(); }
@@ -524,7 +610,7 @@
       $('#rtBox').hidden = true; $('#rtAck').checked = false; toast('Prioridad Tiempo real confirmada (doble confirmación).');
     }
     if (id === 'run-as-admin') elevate();
-    if (id === 'profile-save') toast(`Guardar perfiles ${NOT_WIRED}`);
+    if (id === 'profile-save') saveProfile();
     if (id === 'export-diagnostics') toast(`Exportar el diagnóstico ${NOT_WIRED}`);
     if (id === 'always-on-top') { const on = el.getAttribute('aria-pressed') !== 'true'; el.setAttribute('aria-pressed', on); el.classList.toggle('on', on); api.win('always-on-top', on); }
   });
@@ -537,14 +623,29 @@
     const t = e.target, id = t.dataset.setting;
     if (t.dataset.i != null) { S.chk[+t.dataset.i] = t.checked; t.closest('.prow')?.classList.toggle('off', !t.checked); summary(); return; }
     if (t.dataset.s != null) { S.stc[+t.dataset.s] = t.checked; render(); return; }
-    if (id === 'game-target') { S.game = +t.value; setLevel(S.level); toast(`Juego: ${game().name}`); }
+    if (id === 'game-target') {
+      S.game = +t.value;
+      const g = game();
+      /* Sin perfil propio, un perfil de otro juego no se queda puesto: vuelve a Global. */
+      if (g.appid in S.profiles || first('profile')?.value !== 'global') useProfile(g.appid, true); else setLevel(S.level);
+      toast(`Juego: ${g.name}${g.appid in S.profiles ? ' · perfil cargado' : ''}`);
+    }
     if (id === 'cpu-affinity') syncAffinityCores();
     if (id === 'custom-power-plan') renderPower();
     if (id === 'game-priority-persistent' && t.checked && priorityValue() === 'normal') { t.checked = false; toast('IFEO solo persiste «Alta»: elige Alta primero.'); }
     if (id === 'vbs-hvci-off' && t.checked) toast('VBS/HVCI off: al aplicar se pedirá confirmación de compatibilidad.');
     if (id === 'fps-cap' && +t.value > 0) toast(`Tope de FPS ${t.value}: se escribe fps_max en framerush.cfg.`);
     if (id === 'resolution-override' && t.value === 'custom') toast('Resolución personalizada: control pendiente de definir.');
-    if (id === 'profile') toast(`Perfil «${t.selectedOptions[0].text}» cargado.`);
+    if (id === 'profile') {
+      if (t.value === 'nuevo') saveProfile();
+      else if (t.value === 'global') useProfile(null);
+      else {
+        /* El perfil va con su juego: si está instalado, se elige también en game-target. */
+        const i = D.games.findIndex(g => String(g.appid) === t.value);
+        if (i >= 0) { S.game = i; DS('game-target').forEach(s => { s.value = String(i); }); caps(); }
+        useProfile(+t.value);
+      }
+    }
     if (id === 'language') toast(t.value === 'en' ? 'Language: English (vista previa; i18n pendiente)' : 'Idioma: español');
     if (id === 'dry-run') setText('[data-setting="apply"] .lbl', t.checked ? 'Simular optimización' : 'Aplicar optimización');
     if (id === 'auto-revert-on-exit') sess();
@@ -579,7 +680,7 @@
       $('.scroll').innerHTML = `<p class="note" role="alert">${esc(err && err.message ? err.message : err)}</p>`;
       return;
     }
-    /* Juegos de Steam del equipo; adaptadores, recomendaciones y perfiles llegan en M4. */
+    /* Juegos de Steam del equipo; adaptadores y recomendaciones llegan en M4. */
     D.steamRecs = D.steamRecs || [];
     Object.assign(S, { admin: D.elevated, game: Math.max(0, D.games.findIndex(g => g.running)), hist: [], rt: false, alerted: false, rb: [], turbo: false, fps: [], lastSensors: null, fanIds: '', chk: [], stc: D.steamRecs.map(s => !!s.checked) });
     $$('[data-touched]').forEach(x => { delete x.dataset.touched; });
@@ -593,13 +694,17 @@
     });
     DS('launch-game').forEach(b => { b.disabled = !D.games.length; b.title = D.games.length ? '' : D.gamesNote || ''; });
     $('#steamList').closest('details').hidden = !D.steamRecs.length;
-    DS('profile').forEach(s => { s.innerHTML = '<option value="global">Global</option>'; });
     DS('restore-after-crash').forEach(e => { e.hidden = !D.pendingSession; });
     setText('.crashN', D.pendingSession ? D.pendingSession.changes : '');
     setText('.rtApi', RT_API[D.os] || '');
     DS('compat-warning').forEach(e => { e.hidden = true; }); rebootBanner();
     elevateButton();
     setLevel(DEFAULT_LEVEL); sess(); renderPerf();
+    /* Global = lo de arriba; el perfil del juego en marcha, si lo hay, se carga encima. */
+    S.base = profileState();
+    try { S.profiles = await api.profiles(); } catch (err) { S.profiles = {}; toast(`No se pudieron leer los perfiles: ${err && err.message ? err.message : err}`); }
+    const g = D.games[S.game];
+    if (g && g.appid in S.profiles) useProfile(g.appid); else fillProfiles('global');
     stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited));
   }
 
