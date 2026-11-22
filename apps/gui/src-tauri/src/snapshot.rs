@@ -54,6 +54,8 @@ struct Device {
     cpu: Option<CpuView>,
     gpus: Vec<GpuView>,
     manufacturer: Option<String>,
+    /// `null` si el SO no dice si es un portátil.
+    laptop: Option<bool>,
     displays: Vec<DisplayView>,
     /// `null` sin batería o si no se pudo leer.
     battery: Option<BatteryView>,
@@ -290,6 +292,7 @@ fn device_view(d: &DeviceProfile, gpu_pref: Option<&str>) -> Device {
             })
             .collect(),
         manufacturer: d.manufacturer.clone(),
+        laptop: d.laptop,
         displays: d
             .displays
             .iter()

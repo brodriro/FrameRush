@@ -382,12 +382,18 @@
     });
     $$('.fanCount').forEach(e => {
       const ok = fans.filter(x => x.value != null).length;
-      e.innerHTML = fans.length ? `${ok}<span class="na"> / ${fans.length}</span>` : '<span class="na">No disponible</span>';
+      e.innerHTML = fans.length ? `${ok}<span class="na"> / ${fans.length}</span>`
+        : `<span class="na">No disponible${D.device.laptop ? ' · portátil' : ''}</span>`;
     });
     const src = [...new Set(list.map(s => s.source))];
+    /* Sin ventiladores se dice por qué: en un portátil (PCSystemType = Mobile) ninguna fuente los expone. */
+    const where = src.length ? src.join(', ') : 'ninguna fuente disponible';
+    const noFans = fans.length ? ''
+      : D.device.laptop ? ` Es un portátil (según Windows) y sus ventiladores no aparecen en las fuentes que lee FrameRush (${where}).`
+        : ` No se encontró ningún ventilador en las fuentes que lee FrameRush (${where}).`;
     DS('sensor-backend-notice').forEach(e => {
-      e.textContent = src.length ? `Fuentes detectadas: ${src.join(', ')}.${pick('cpu') ? '' : ' La temperatura de la CPU no tiene fuente en este equipo todavía.'}`
-        : 'No se encontró ningún sensor de CPU, GPU ni ventiladores en este equipo.';
+      e.textContent = src.length ? `Fuentes detectadas: ${src.join(', ')}.${pick('cpu') ? '' : ' La temperatura de la CPU no tiene fuente en este equipo todavía.'}${noFans}`
+        : 'No se encontró ningún sensor de CPU, GPU ni ventiladores en este equipo.' + (D.device.laptop ? ' Es un portátil (según Windows).' : '');
     });
   }
 
