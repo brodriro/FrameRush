@@ -16,8 +16,11 @@ fn is_windows_11(build: &str) -> Option<bool> {
     Some(number >= WINDOWS_11_FIRST_BUILD)
 }
 
-/// Perfil del equipo con lo que la plataforma sabe leer. Todavía no rellena HAGS, antivirus ni
-/// virtualización.
+/// Apps que usan el hipervisor (V6) y no son un componente del SO, con el nombre con el que se
+/// instalan ("Docker Desktop" en Apps & features según la guía de desinstalación de Docker).
+const HYPERVISOR_APPS: [&str; 1] = ["Docker Desktop"];
+
+/// Perfil del equipo con lo que la plataforma sabe leer. Todavía no rellena el antivirus.
 pub fn detect<P: PowerControl + DisplayControl + Inventory>(platform: &P, os: Os) -> DeviceProfile {
     let mut device = DeviceProfile::undetected(os);
     device.os_build = platform.os_build().ok().flatten();
@@ -27,6 +30,14 @@ pub fn detect<P: PowerControl + DisplayControl + Inventory>(platform: &P, os: Os
     device.manufacturer = platform.manufacturer().ok().flatten();
     device.vbs_hvci_enabled = platform.vbs_running().ok().flatten();
     device.installed_apps = platform.installed_apps().unwrap_or_default();
+    device.hags_supported = platform.hags_supported().ok().flatten();
+    device.virtualization = platform.hypervisor_features().unwrap_or_default();
+    device.virtualization.extend(
+        HYPERVISOR_APPS
+            .iter()
+            .filter(|app| device.installed_apps.iter().any(|a| a.starts_with(*app)))
+            .map(|app| (*app).to_owned()),
+    );
     device.cpu = platform.cpu().ok().flatten();
     device.gpus = platform.gpus().unwrap_or_default();
     device.battery = platform.battery().ok().flatten();
@@ -91,6 +102,17 @@ mod tests {
         assert_eq!(d.manufacturer.as_deref(), Some("Acme"));
         assert_eq!(d.vbs_hvci_enabled, Some(true));
         assert_eq!(d.installed_apps, ["Discord", "Steam"]);
+
+        assert_eq!(d.virtualization, Vec::<String>::new());
+
+        m.set_gpu_and_hypervisor(Some(true), &["VirtualMachinePlatform"]);
+        m.set_system(None, None, None, &["Docker Desktop", "Steam"]);
+        let d = detect(&m, Os::Windows);
+        assert_eq!(d.hags_supported, Some(true));
+        assert_eq!(
+            d.virtualization,
+            ["VirtualMachinePlatform", "Docker Desktop"]
+        );
 
         // Windows 11 solo tiene sentido en Windows.
         assert_eq!(detect(&m, Os::Linux).windows_11, None);
