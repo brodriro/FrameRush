@@ -18,12 +18,14 @@ mod effects;
 mod helper;
 mod integrity;
 mod inventory;
+mod nvapi;
 mod power;
 mod registry;
 mod wmi;
 
 pub use helper::{Helper, serve_helper};
 pub(crate) use integrity::integrity_level;
+pub use nvapi::Nvapi;
 
 use registry::Hive;
 

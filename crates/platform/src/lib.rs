@@ -22,4 +22,4 @@ pub use system::{
     SavedData, SavedValue, ServiceControl, ServiceState, SystemTweaks, Tweak,
 };
 #[cfg(windows)]
-pub use windows::{Helper, WindowsPlatform, serve_helper};
+pub use windows::{Helper, Nvapi, WindowsPlatform, serve_helper};
