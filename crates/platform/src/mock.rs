@@ -5,9 +5,9 @@
 //! Los valores de los tests los pone cada test; aquí no hay datos de ningún equipo.
 
 use crate::{
-    Capabilities, CapabilitySet, GameTuning, PlatformError, PowerControl, PowerPlan, Priority,
-    ProcessControl, ProcessInfo, Result, SavedData, SavedValue, ServiceControl, ServiceState,
-    StartTime, SystemTweaks, Target, Tweak,
+    Capabilities, CapabilitySet, GameTuning, MemoryControl, PlatformError, PowerControl, PowerPlan,
+    Priority, ProcessControl, ProcessInfo, Result, SavedData, SavedValue, ServiceControl,
+    ServiceState, StartTime, SystemTweaks, Target, Tweak,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -19,6 +19,8 @@ struct MockProcess {
     priority: Priority,
     suspended: bool,
     affinity: Vec<usize>,
+    /// Veces que se le ha recortado el working set.
+    trims: u32,
 }
 
 #[derive(Debug, Default)]
@@ -30,6 +32,8 @@ struct State {
     logical_cpus: usize,
     caps: CapabilitySet,
     next_start: u64,
+    /// Veces que se ha purgado la lista standby.
+    standby_purges: u32,
     foreground: Option<Target>,
     /// Valores de los ajustes persistentes, por ubicación.
     values: BTreeMap<String, u32>,
@@ -55,6 +59,7 @@ impl MockPlatform {
             services: true,
             power_plans: true,
             affinity: true,
+            memory: true,
         };
         Self {
             state: Mutex::new(State {
@@ -92,6 +97,7 @@ impl MockPlatform {
             priority: Priority::Normal,
             suspended: false,
             affinity,
+            trims: 0,
         });
         target
     }
@@ -425,6 +431,34 @@ impl MockPlatform {
                 }
             };
         }
+        Ok(())
+    }
+}
+
+impl MockPlatform {
+    /// Veces que se ha recortado el working set de `target`.
+    pub fn trims(&self, target: &Target) -> Result<u32> {
+        self.with_process(target, |p| Ok(p.trims))
+    }
+
+    /// Veces que se ha purgado la lista standby.
+    pub fn standby_purges(&self) -> u32 {
+        self.lock().standby_purges
+    }
+}
+
+impl MemoryControl for MockPlatform {
+    fn trim_working_set(&self, target: &Target) -> Result<()> {
+        self.require(|c| c.memory, "recortar el working set")?;
+        self.with_process(target, |p| {
+            p.trims += 1;
+            Ok(())
+        })
+    }
+
+    fn purge_standby_list(&self) -> Result<()> {
+        self.require(|c| c.memory, "purgar la lista standby")?;
+        self.lock().standby_purges += 1;
         Ok(())
     }
 }

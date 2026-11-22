@@ -20,35 +20,48 @@ pub use helper::{Helper, serve_helper};
 use registry::Hive;
 
 use crate::{
-    Capabilities, CapabilitySet, GameTuning, PlatformError, PowerControl, PowerPlan, Priority,
-    ProcessControl, ProcessInfo, Result, SavedData, SavedValue, ServiceControl, ServiceState,
-    StartTime, SystemTweaks, Target, Tweak, scan_processes,
+    Capabilities, CapabilitySet, GameTuning, MemoryControl, PlatformError, PowerControl, PowerPlan,
+    Priority, ProcessControl, ProcessInfo, Result, SavedData, SavedValue, ServiceControl,
+    ServiceState, StartTime, SystemTweaks, Target, Tweak, scan_processes,
 };
+use std::ffi::c_void;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use windows_sys::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, ERROR_NOT_ALL_ASSIGNED, GetLastError, HANDLE,
+    INVALID_HANDLE_VALUE, LUID, STATUS_PRIVILEGE_NOT_HELD,
+};
+use windows_sys::Win32::Security::{
+    AdjustTokenPrivileges, LUID_AND_ATTRIBUTES, LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED,
+    SE_PROF_SINGLE_PROCESS_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
 };
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
+use windows_sys::Win32::System::ProcessStatus::EmptyWorkingSet;
 use windows_sys::Win32::System::Threading::{
-    ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetPriorityClass,
+    ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass,
     GetProcessAffinityMask, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
-    OpenProcess, OpenThread, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_LIMITED_INFORMATION,
-    PROCESS_SET_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, REALTIME_PRIORITY_CLASS,
-    ResumeThread, SetPriorityClass, SetProcessAffinityMask, SuspendThread, THREAD_SUSPEND_RESUME,
+    OpenProcess, OpenProcessToken, OpenThread, PROCESS_ACCESS_RIGHTS,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_QUOTA,
+    PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, REALTIME_PRIORITY_CLASS, ResumeThread,
+    SetPriorityClass, SetProcessAffinityMask, SuspendThread, THREAD_SUSPEND_RESUME,
     TerminateProcess,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
-// API no documentada de ntdll (PLAN.md §6, V17). `raw-dylib` evita necesitar `ntdll.lib`.
+// API no documentada de ntdll (PLAN.md §6, V4 y V17). `raw-dylib` evita necesitar `ntdll.lib`.
 #[link(name = "ntdll", kind = "raw-dylib")]
 unsafe extern "system" {
     fn NtSuspendProcess(process: HANDLE) -> i32;
     fn NtResumeProcess(process: HANDLE) -> i32;
+    fn NtSetSystemInformation(class: i32, info: *mut c_void, len: u32) -> i32;
 }
+
+/// `SystemMemoryListInformation` (0x50) y su orden `MemoryPurgeStandbyList` (4), PLAN.md V4.
+const SYSTEM_MEMORY_LIST_INFORMATION: i32 = 0x50;
+const MEMORY_PURGE_STANDBY_LIST: i32 = 4;
 
 /// Plataforma de Windows.
 #[derive(Debug, Default)]
@@ -705,6 +718,98 @@ impl SystemTweaks for WindowsPlatform {
     }
 }
 
+impl MemoryControl for WindowsPlatform {
+    /// `EmptyWorkingSet`. Los procesos de otros usuarios y del sistema necesitan el helper.
+    fn trim_working_set(&self, target: &Target) -> Result<()> {
+        if let Some(helper) = &self.helper {
+            return helper.trim_working_set(target);
+        }
+        let h = self.open(
+            target,
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_QUOTA,
+        )?;
+        // SAFETY: `h` es un handle abierto con los permisos que pide EmptyWorkingSet.
+        if unsafe { EmptyWorkingSet(handle(&h)) } == 0 {
+            return Err(last_error(target));
+        }
+        Ok(())
+    }
+
+    /// `NtSetSystemInformation` con `SeProfileSingleProcessPrivilege`, que solo tiene un
+    /// administrador (V4).
+    fn purge_standby_list(&self) -> Result<()> {
+        if let Some(helper) = &self.helper {
+            return helper.purge_standby_list();
+        }
+        enable_privilege(SE_PROF_SINGLE_PROCESS_NAME)?;
+        let mut command = MEMORY_PURGE_STANDBY_LIST;
+        // SAFETY: `command` es un i32 vivo durante la llamada y `len` es su tamaño.
+        let status = unsafe {
+            NtSetSystemInformation(
+                SYSTEM_MEMORY_LIST_INFORMATION,
+                (&raw mut command).cast(),
+                size_of::<i32>() as u32,
+            )
+        };
+        if status == STATUS_PRIVILEGE_NOT_HELD {
+            return Err(PlatformError::AccessDenied(
+                "purgar la lista standby pide admin".into(),
+            ));
+        }
+        nt_status(status)
+    }
+}
+
+/// Activa un privilegio en el token de este proceso. Falla si el token no lo tiene.
+fn enable_privilege(name: windows_sys::core::PCWSTR) -> Result<()> {
+    let mut luid = LUID {
+        LowPart: 0,
+        HighPart: 0,
+    };
+    // SAFETY: `name` es una cadena constante terminada en nulo y `luid` un local vivo.
+    if unsafe { LookupPrivilegeValueW(std::ptr::null(), name, &mut luid) } == 0 {
+        return Err(PlatformError::Os(
+            std::io::Error::last_os_error().to_string(),
+        ));
+    }
+    let mut raw: HANDLE = std::ptr::null_mut();
+    // SAFETY: GetCurrentProcess devuelve un pseudo-handle; `raw` es un local vivo.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &mut raw) } == 0 {
+        return Err(PlatformError::Os(
+            std::io::Error::last_os_error().to_string(),
+        ));
+    }
+    // SAFETY: `raw` es un handle nuevo que nos pertenece; OwnedHandle lo cierra al soltarlo.
+    let token = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let privileges = TOKEN_PRIVILEGES {
+        PrivilegeCount: 1,
+        Privileges: [LUID_AND_ATTRIBUTES {
+            Luid: luid,
+            Attributes: SE_PRIVILEGE_ENABLED,
+        }],
+    };
+    // SAFETY: `token` tiene TOKEN_ADJUST_PRIVILEGES; sin estado previo, los punteros de salida
+    // pueden ser nulos.
+    let ok = unsafe {
+        AdjustTokenPrivileges(
+            handle(&token),
+            0,
+            &privileges,
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    // AdjustTokenPrivileges devuelve éxito aunque no asigne el privilegio; lo dice GetLastError.
+    // SAFETY: GetLastError no toma argumentos.
+    if ok == 0 || unsafe { GetLastError() } == ERROR_NOT_ALL_ASSIGNED {
+        return Err(PlatformError::AccessDenied(
+            "el proceso no tiene el privilegio (pide admin)".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl Capabilities for WindowsPlatform {
     fn capabilities(&self) -> CapabilitySet {
         CapabilitySet {
@@ -714,6 +819,7 @@ impl Capabilities for WindowsPlatform {
             services: false,
             power_plans: false,
             affinity: true,
+            memory: true,
         }
     }
 }
@@ -920,6 +1026,13 @@ mod tests {
             w.kill(&v.target),
             Err(PlatformError::AccessDenied(_))
         ));
+    }
+
+    #[test]
+    fn trims_the_working_set_of_a_child() {
+        let w = WindowsPlatform::new();
+        let v = victim();
+        w.trim_working_set(&v.target).unwrap();
     }
 
     #[test]

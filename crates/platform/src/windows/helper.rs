@@ -12,7 +12,9 @@
 //!   cerrarse el pipe o al terminar el proceso que lo lanzó.
 #![allow(unsafe_code)]
 
-use crate::{GameTuning, PlatformError, Result, SavedValue, SystemTweaks, Tweak};
+use crate::{
+    GameTuning, MemoryControl, PlatformError, Result, SavedValue, SystemTweaks, Target, Tweak,
+};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -57,6 +59,10 @@ enum Request {
     /// `game-priority-persistent` del exe.
     SetPersistentPriority(PathBuf),
     RestorePersistentPriority(PathBuf, Vec<SavedValue>),
+    /// `memory-trim` de un proceso.
+    TrimWorkingSet(Target),
+    /// `standby-purge`.
+    PurgeStandbyList,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +147,14 @@ impl Helper {
             exe.to_path_buf(),
             saved.to_vec(),
         ))
+    }
+
+    pub(super) fn trim_working_set(&self, target: &Target) -> Result<()> {
+        self.call(&Request::TrimWorkingSet(target.clone()))
+    }
+
+    pub(super) fn purge_standby_list(&self) -> Result<()> {
+        self.call(&Request::PurgeStandbyList)
     }
 
     fn call(&self, request: &Request) -> Result<()> {
@@ -392,7 +406,10 @@ fn exit_with(parent: u32) -> Result<()> {
 }
 
 /// Atiende peticiones hasta que el cliente cierre la conexión.
-fn serve<S: Read + Write, T: SystemTweaks + GameTuning>(conn: S, platform: &T) -> Result<()> {
+fn serve<S: Read + Write, T: SystemTweaks + GameTuning + MemoryControl>(
+    conn: S,
+    platform: &T,
+) -> Result<()> {
     let mut conn = BufReader::new(conn);
     let mut line = String::new();
     loop {
@@ -418,7 +435,10 @@ fn serve<S: Read + Write, T: SystemTweaks + GameTuning>(conn: S, platform: &T) -
 }
 
 /// Solo atiende lo que pide admin: lo demás lo hace el cliente sin elevar.
-fn handle<T: SystemTweaks + GameTuning>(request: Request, platform: &T) -> Response {
+fn handle<T: SystemTweaks + GameTuning + MemoryControl>(
+    request: Request,
+    platform: &T,
+) -> Response {
     if let Request::ApplyTweak(t) | Request::RestoreTweak(t, _) = &request
         && !platform.tweak_requires_admin(*t)
     {
@@ -431,6 +451,8 @@ fn handle<T: SystemTweaks + GameTuning>(request: Request, platform: &T) -> Respo
         Request::RestorePersistentPriority(exe, saved) => {
             platform.restore_persistent_priority(&exe, &saved)
         }
+        Request::TrimWorkingSet(target) => platform.trim_working_set(&target),
+        Request::PurgeStandbyList => platform.purge_standby_list(),
     };
     match result {
         Ok(()) => Response::Done,
@@ -491,6 +513,12 @@ mod tests {
         }];
         client.restore_persistent_priority(exe, &none).unwrap();
         assert_eq!(mock.read_persistent_priority(exe).unwrap(), none);
+
+        let t = mock.spawn(10, "a.exe", r"C:\a.exe", 1);
+        client.trim_working_set(&t).unwrap();
+        assert_eq!(mock.trims(&t).unwrap(), 1);
+        client.purge_standby_list().unwrap();
+        assert_eq!(mock.standby_purges(), 1);
 
         let user = mock.read_tweak(Tweak::GameDvrOff).unwrap();
         assert!(client.apply_tweak(Tweak::GameDvrOff).is_err());

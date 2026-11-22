@@ -165,6 +165,8 @@ pub struct CapabilitySet {
     pub services: bool,
     pub power_plans: bool,
     pub affinity: bool,
+    /// `memory-trim` y `standby-purge` ([`MemoryControl`]).
+    pub memory: bool,
 }
 
 /// Informa de lo que admite la plataforma.
@@ -172,13 +174,34 @@ pub trait Capabilities {
     fn capabilities(&self) -> CapabilitySet;
 }
 
+/// Liberar memoria antes de jugar (PLAN.md It5.2). No deja estado que revertir: el SO vuelve
+/// a cargar las páginas cuando hacen falta. Las dos operaciones piden admin (P9).
+pub trait MemoryControl {
+    /// `memory-trim`: saca del working set del proceso todas las páginas que pueda.
+    fn trim_working_set(&self, target: &Target) -> Result<()>;
+    /// `standby-purge`: vacía la lista standby (caché de archivos en RAM).
+    fn purge_standby_list(&self) -> Result<()>;
+}
+
 /// Todo lo que `core` necesita del SO.
 pub trait Platform:
-    ProcessControl + ServiceControl + PowerControl + GameTuning + SystemTweaks + Capabilities
+    ProcessControl
+    + ServiceControl
+    + PowerControl
+    + GameTuning
+    + SystemTweaks
+    + MemoryControl
+    + Capabilities
 {
 }
 
 impl<T> Platform for T where
-    T: ProcessControl + ServiceControl + PowerControl + GameTuning + SystemTweaks + Capabilities
+    T: ProcessControl
+        + ServiceControl
+        + PowerControl
+        + GameTuning
+        + SystemTweaks
+        + MemoryControl
+        + Capabilities
 {
 }
