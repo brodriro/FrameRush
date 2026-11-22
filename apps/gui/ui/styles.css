@@ -13,10 +13,6 @@ button,select,input{font:inherit;color:inherit}button{cursor:pointer}
 [hidden]{display:none!important}
 /* El equipo no tiene ese recurso (P15): no se muestra, ni siquiera deshabilitado */
 [data-dev-hidden]{display:none!important}
-/* Barra de desarrollo (solo vista previa con datos de muestra; no existe en la app) */
-.devbar{position:fixed;left:28px;bottom:24px;color:rgba(255,255,255,.35);font-size:12px;max-width:360px}
-.devbar p{margin:0 0 6px}
-body.preview .win{width:420px;max-height:calc(100vh - 48px)}
 .win{width:100%;max-height:100vh;display:flex;flex-direction:column;background:var(--glass);backdrop-filter:blur(18px);border:1px solid var(--l2);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.55);overflow:hidden}
 .bar{display:flex;align-items:center;gap:6px;padding:7px 8px 7px 12px;border-bottom:1px solid var(--l);user-select:none;cursor:move}
 .bar b{font-size:12px;letter-spacing:.3px}.bar .sp{flex:1}

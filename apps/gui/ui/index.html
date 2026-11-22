@@ -9,12 +9,6 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<!-- Solo en la vista previa del navegador: cambia el DeviceProfile de muestra. La app real detecta el SO (Capabilities). -->
-<div class="devbar" data-setting="platform-preview" hidden>
- <p>Maqueta con datos de muestra (<code>sample-data.js</code>). Perfil de equipo simulado:</p>
- <div class="seg" role="group" aria-label="Perfil de muestra"><button data-os="win">Win</button><button data-os="lin">Linux</button><button data-os="mac">mac</button></div>
-</div>
-
 <div class="win" role="dialog" aria-label="FrameRush">
  <div class="bar" data-tauri-drag-region><b>FRAMERUSH</b><span class="sp"></span>
   <button class="ib" data-setting="always-on-top" aria-pressed="false" title="Siempre visible">📌</button><button class="ib" data-win="minimize" title="Minimizar a la bandeja">—</button><button class="ib" data-win="close" title="Cerrar">✕</button>
@@ -203,8 +197,7 @@
  </div>
 </div>
 
-<!-- Orden: datos de muestra → capa de datos (futuro IPC de Tauri) → UI -->
-<script src="sample-data.js"></script>
+<!-- Orden: capa de datos (comandos y eventos de Tauri) → UI -->
 <script src="api.js"></script>
 <script src="app.js"></script>
 </body>

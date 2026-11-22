@@ -1,69 +1,47 @@
 /*
- * Capa de datos de la UI. Hoy sirve los DATOS DE MUESTRA de sample-data.js y simula
- * los eventos del backend; cuando exista el crate de Tauri (apps/gui/src-tauri),
- * estas funciones pasarán a llamar a los comandos y eventos del contrato de
- * design/README.md ("Shared backend contract") y app.js no tendrá que cambiar.
+ * Capa de datos de la UI: comandos y eventos de Tauri (contrato de design/README.md,
+ * "Shared backend contract"). Todo sale del equipo donde corre la app (R8); no hay datos de
+ * muestra. Fuera de Tauri no hay backend y load() falla.
  */
 (function () {
   'use strict';
 
-  const SAMPLE = window.FRAMERUSH_SAMPLE;
-  const inTauri = !!window.__TAURI__;
-
-  /* Copia profunda: la UI nunca muta el snapshot original. */
-  const clone = x => JSON.parse(JSON.stringify(x));
-
-  /* Ruido de la simulación de sensores (solo maqueta). */
-  const jitter = (base, amp) => base + Math.round(Math.random() * 2 * amp - amp);
+  const T = window.__TAURI__;
+  const inTauri = !!T;
 
   window.FrameRushApi = {
     inTauri,
-    /* Claves de los perfiles de muestra (solo para la barra de desarrollo). */
-    sampleKeys: Object.keys(SAMPLE),
 
-    /*
-     * Snapshot inicial: DeviceProfile, capacidades, juegos, plan, reglas, sesión pendiente.
-     * Futuro: capabilities(), detect_game(), list_steam_games(), plan(...), pending_session().
-     */
-    async load(sampleKey) {
-      return clone(SAMPLE[sampleKey] || SAMPLE.win);
+    /* Snapshot del equipo: DeviceProfile, capacidades, plan, protegidos y sesión pendiente. */
+    async load() {
+      if (!inTauri) throw new Error('Abre FrameRush como app para ver los datos de este equipo.');
+      return T.core.invoke('snapshot');
     },
 
     /*
-     * Evento `sensors` a 1 Hz. Cada lectura es número o null ("No disponible");
-     * un null nunca se convierte en 0. Futuro: listen('sensors', ...).
+     * Evento `sensors` a 1 Hz: lista de { id, label, source, kind, value, unit, target }.
+     * value null = "No disponible"; nunca se convierte en 0. Devuelve la función para dejar de escuchar.
      */
-    onSensors(snapshot, cb) {
-      const s = snapshot.sensors;
-      const read = () => cb({
-        cpu: s.cpu.temp == null ? null : jitter(s.cpu.temp, 3),
-        gpu: s.gpu.temp == null ? null : jitter(s.gpu.temp, 3),
-        fans: s.fans.map(f => f.rpm),
-      });
-      read();
-      const h = setInterval(read, 1000);
-      return () => clearInterval(h);
+    onSensors(cb) {
+      let stop = () => {};
+      T.event.listen('sensors', e => cb(e.payload)).then(un => { stop = un; });
+      return () => stop();
     },
 
-    /*
-     * Ventana de Tauri (barra propia: la ventana no tiene bordes). Fuera de Tauri no hace
-     * nada; app.js avisa con un toast.
-     */
+    /* FPS: aún no hay medición (PresentMon / MangoHud llegan en M4), así que siempre null. */
+    onFps(cb) {
+      cb(null);
+      return () => {};
+    },
+
+    /* Ventana de Tauri (barra propia: la ventana no tiene bordes). */
     win(action, arg) {
       if (!inTauri) return Promise.resolve();
-      const w = window.__TAURI__.window.getCurrentWindow();
+      const w = T.window.getCurrentWindow();
       if (action === 'minimize') return w.minimize();
       if (action === 'close') return w.close();
       if (action === 'always-on-top') return w.setAlwaysOnTop(arg);
       return Promise.resolve();
-    },
-
-    /* Evento `fps` a 1 Hz; null si el SO no tiene medición. Futuro: listen('fps', ...). */
-    onFps(snapshot, cb) {
-      const read = () => cb(snapshot.caps.fps ? jitter(70, 5) : null);
-      read();
-      const h = setInterval(read, 1000);
-      return () => clearInterval(h);
     },
   };
 })();
