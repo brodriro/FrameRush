@@ -8,8 +8,7 @@
 use crate::snapshot::{Inputs, data_dir, inputs};
 use anyhow::{Context, Result};
 use framerush_core::{
-    ApplyRequest, Engine, FileStore, Level, Outcome, PlanOptions, RefreshRate, Report, defaults,
-    plan,
+    ApplyRequest, FileStore, Level, Outcome, PlanOptions, RefreshRate, Report, defaults, plan,
 };
 use serde::{Deserialize, Serialize};
 
@@ -165,19 +164,19 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         custom_power_plan,
         refresh_rates,
     };
-    let report = run(helper, |engine| engine.apply(&request).map_err(Into::into))?;
+    let report = run(helper, Op::Apply(Box::new(request)))?;
     outcomes(report, not_wired, needs_admin)
 }
 
 /// Deshace el último `apply`.
 pub fn undo(helper: Option<Elevated>) -> Result<Outcomes> {
-    let report = run(helper, |engine| engine.undo_last().map_err(Into::into))?;
+    let report = run(helper, Op::Undo)?;
     outcomes(report, vec![], vec![])
 }
 
 /// Deshace toda la sesión (Restaurar).
 pub fn revert(helper: Option<Elevated>) -> Result<Outcomes> {
-    let report = run(helper, |engine| engine.revert_all().map_err(Into::into))?;
+    let report = run(helper, Op::Revert)?;
     outcomes(report, vec![], vec![])
 }
 
@@ -216,21 +215,31 @@ pub type Elevated = framerush_platform::Helper;
 #[cfg(not(windows))]
 pub type Elevated = ();
 
+// Fuera de Windows `run` no las ejecuta, así que no se leen.
+#[cfg_attr(not(windows), allow(dead_code))]
+enum Op<'a> {
+    Apply(Box<ApplyRequest<'a>>),
+    Undo,
+    Revert,
+}
+
 #[cfg(windows)]
-fn run(
-    helper: Option<Elevated>,
-    op: impl FnOnce(&Engine<'_, framerush_platform::WindowsPlatform, FileStore>) -> Result<Report>,
-) -> Result<Report> {
+fn run(helper: Option<Elevated>, op: Op<'_>) -> Result<Report> {
     let platform = match helper {
         Some(h) => framerush_platform::WindowsPlatform::with_helper(h),
         None => framerush_platform::WindowsPlatform::new(),
     };
     let store = store()?;
-    op(&Engine::new(&platform, &store))
+    let engine = framerush_core::Engine::new(&platform, &store);
+    Ok(match op {
+        Op::Apply(request) => engine.apply(&request).context("no se pudo aplicar")?,
+        Op::Undo => engine.undo_last().context("no se pudo deshacer")?,
+        Op::Revert => engine.revert_all().context("no se pudo restaurar")?,
+    })
 }
 
 #[cfg(not(windows))]
-fn run<T>(_helper: Option<Elevated>, _op: T) -> Result<Report> {
+fn run(_helper: Option<Elevated>, _op: Op<'_>) -> Result<Report> {
     anyhow::bail!("aplicar, deshacer y restaurar solo están implementados en Windows por ahora")
 }
 
