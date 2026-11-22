@@ -108,6 +108,10 @@ struct GameArgs {
     /// Explícito hasta que la detección del equipo sepa si hay más de una GPU (M2, R8).
     #[arg(long, requires = "game")]
     gpu_alto: bool,
+    /// `cpu-affinity` (opt-in, de sesión): CPU lógicas para el juego, como `2,3,6-11`, o `auto`
+    /// para `cpu-affinity-cores` del equipo. Con anticheat se rechaza (P2).
+    #[arg(long, requires = "game", value_name = "CPUS|auto")]
+    affinity: Option<String>,
 }
 
 /// Valores de `game-priority` (design/SETTINGS.md).
@@ -204,7 +208,7 @@ fn build_plan(
     level: Level,
     admin: bool,
     game: Option<&str>,
-) -> Result<(Plan, Option<ProcessInfo>)> {
+) -> Result<(Plan, Option<ProcessInfo>, DeviceProfile)> {
     let Some(os) = Os::current() else {
         bail!("sistema operativo no admitido");
     };
@@ -227,7 +231,67 @@ fn build_plan(
         elevated: admin,
         keep_alive: defaults::keep_alive(&device).value,
     };
-    Ok((plan(level, &snapshot, &rules, &device, &options), game))
+    let plan = plan(level, &snapshot, &rules, &device, &options);
+    Ok((plan, game, device))
+}
+
+/// CPU de `--affinity`, o `None` si no se pidió. Falla con anticheat (P2) o si `auto` no tiene
+/// topología con la que elegir (R8: no se inventa una).
+fn game_affinity(
+    args: &GameArgs,
+    plan: &Plan,
+    device: &DeviceProfile,
+) -> Result<Option<Vec<usize>>> {
+    let Some(spec) = args.affinity.as_deref() else {
+        return Ok(None);
+    };
+    if !plan.game_tuning_allowed() {
+        bail!(
+            "anticheat en ejecución ({}): la afinidad del juego queda desactivada (P2)",
+            plan.anticheats.join(", ")
+        );
+    }
+    let cpus = if spec == "auto" {
+        let cores = defaults::affinity_cpus(device).value;
+        if cores.is_empty() {
+            bail!(
+                "todavía no se detecta la topología de la CPU (M2): indica las CPU, \
+                 por ejemplo --affinity 2-7"
+            );
+        }
+        cores
+    } else {
+        parse_cpus(spec)?
+    };
+    if defaults::affinity_warning(device) == Some(true) {
+        println!("Aviso: con 4 núcleos físicos o menos la afinidad manual suele empeorar (V18).");
+    }
+    Ok(Some(cpus))
+}
+
+/// `2,3,6-11` → `[2, 3, 6, 7, 8, 9, 10, 11]`, ordenado y sin repetir.
+fn parse_cpus(spec: &str) -> Result<Vec<usize>> {
+    let mut cpus = Vec::new();
+    for part in spec.split(',').map(str::trim) {
+        let number = |s: &str| {
+            s.trim()
+                .parse::<usize>()
+                .with_context(|| format!("`{s}` no es un número de CPU"))
+        };
+        match part.split_once('-') {
+            Some((a, b)) => {
+                let (a, b) = (number(a)?, number(b)?);
+                if a > b {
+                    bail!("rango de CPU al revés: `{part}`");
+                }
+                cpus.extend(a..=b);
+            }
+            None => cpus.push(number(part)?),
+        }
+    }
+    cpus.sort_unstable();
+    cpus.dedup();
+    Ok(cpus)
 }
 
 /// Id de design/SETTINGS.md de la prioridad persistente del juego.
@@ -257,7 +321,12 @@ fn persistent_mark(level: Level, admin: bool, args: &GameArgs, exclude: &[String
     })
 }
 
-fn print_game(game: Option<&ProcessInfo>, args: &GameArgs, persistent: Option<Mark>) {
+fn print_game(
+    game: Option<&ProcessInfo>,
+    args: &GameArgs,
+    persistent: Option<Mark>,
+    affinity: Option<&[usize]>,
+) {
     match game {
         Some(g) => {
             println!(
@@ -276,6 +345,13 @@ fn print_game(game: Option<&ProcessInfo>, args: &GameArgs, persistent: Option<Ma
                     g.target.exe_path.display()
                 );
             }
+            if let Some(cpus) = affinity {
+                let list: Vec<String> = cpus.iter().map(ToString::to_string).collect();
+                println!(
+                    "[x] cpu-affinity                     sesión · CPU {}",
+                    list.join(",")
+                );
+            }
             match persistent {
                 Some(Mark::On) => println!("[x] {PERSISTENT_PRIORITY:<32} persistente"),
                 Some(Mark::Off) => println!("[ ] {PERSISTENT_PRIORITY:<32} persistente"),
@@ -292,12 +368,14 @@ fn print_game(game: Option<&ProcessInfo>, args: &GameArgs, persistent: Option<Ma
 
 fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     notify_open_session();
-    let (plan, game) = build_plan(level, admin, args.game.as_deref())?;
+    let (plan, game, device) = build_plan(level, admin, args.game.as_deref())?;
+    let affinity = game_affinity(args, &plan, &device)?;
     println!("Plan para el nivel {level} (dry-run: no se toca nada)");
     print_game(
         game.as_ref(),
         args,
         persistent_mark(level, admin, args, &[]),
+        affinity.as_deref(),
     );
     let checked: Vec<&PlanItem> = plan.checked().collect();
     print_plan(&plan, &checked, &plan.tweaks, &plan.memory);
@@ -374,7 +452,8 @@ fn select<'a>(plan: &'a Plan, include: &[String], exclude: &[String]) -> Result<
 fn apply(args: &ApplyArgs) -> Result<()> {
     notify_open_session();
     let level = args.level;
-    let (plan, game) = build_plan(level, args.admin, args.game.game.as_deref())?;
+    let (plan, game, device) = build_plan(level, args.admin, args.game.game.as_deref())?;
+    let affinity = game_affinity(&args.game, &plan, &device)?;
     let persistent = persistent_mark(level, args.admin, &args.game, &args.exclude);
     if args.include.iter().any(|id| id == PERSISTENT_PRIORITY) {
         match persistent {
@@ -395,7 +474,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     }
     if !args.yes {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
-        print_game(game.as_ref(), &args.game, persistent);
+        print_game(game.as_ref(), &args.game, persistent, affinity.as_deref());
         print_plan(&plan, &checked, &tweaks, &memory);
         println!("\nRevisa las filas y repite con --yes para aplicarlas.");
         return Ok(());
@@ -413,7 +492,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             priority: args.game.game_priority.into(),
             realtime_confirmed: args.game.confirm_realtime,
             fullscreen_optimizations_off: args.game.fso_off,
-            affinity: None,
+            affinity,
             high_performance_gpu: args.game.gpu_alto,
             persistent_priority: persistent == Some(Mark::On),
         }),

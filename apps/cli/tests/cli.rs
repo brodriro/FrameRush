@@ -83,6 +83,26 @@ fn memory_ops_need_agresivo_and_admin() {
 }
 
 #[test]
+fn affinity_needs_a_game_and_a_valid_list() {
+    let dir = temp_dir("affinity");
+    let (ok, _) = framerush_in(&dir, &["plan", "--affinity", "2-3"]);
+    assert!(!ok, "sin --game");
+    let pid = std::process::id().to_string();
+    let (ok, _) = framerush_in(&dir, &["plan", "--game", &pid, "--affinity", "3-1"]);
+    assert!(!ok, "rango al revés");
+    let (ok, _) = framerush_in(&dir, &["plan", "--game", &pid, "--affinity", "auto"]);
+    assert!(!ok, "sin topología no se inventa una (R8)");
+    let (ok, stdout) = framerush_in(&dir, &["plan", "--game", &pid, "--affinity", "0,2-3,2"]);
+    if stdout.contains("anticheat") {
+        return;
+    }
+    assert!(ok, "{stdout}");
+    assert!(stdout.contains("[x] cpu-affinity"), "{stdout}");
+    assert!(stdout.contains("CPU 0,2,3"), "{stdout}");
+    assert!(!dir.join("session.json").exists());
+}
+
+#[test]
 fn status_without_a_session() {
     let dir = temp_dir("status");
     let (ok, stdout) = framerush_in(&dir, &["status"]);
