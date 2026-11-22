@@ -17,9 +17,9 @@ pub use os::Os;
 pub use process::{Priority, ProcessControl, ProcessInfo, StartTime, Target};
 pub use scan::scan_processes;
 pub use system::{
-    Battery, Capabilities, CapabilitySet, Core, CoreKind, Cpu, Display, DisplayControl, GameTuning,
-    Gpu, GpuVendor, Inventory, MemoryControl, Mode, PciId, Platform, PowerControl, PowerPlan,
-    SavedData, SavedValue, ServiceControl, ServiceState, SystemTweaks, Tweak,
+    Battery, Capabilities, CapabilitySet, Core, CoreKind, Cpu, Display, DisplayControl, GameFiles,
+    GameTuning, Gpu, GpuVendor, Inventory, MemoryControl, Mode, PciId, Platform, PowerControl,
+    PowerPlan, SavedData, SavedValue, ServiceControl, ServiceState, SystemTweaks, Tweak,
 };
 #[cfg(windows)]
 pub use windows::{

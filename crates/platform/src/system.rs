@@ -335,6 +335,19 @@ pub trait MemoryControl {
     fn purge_standby_list(&self) -> Result<()>;
 }
 
+/// Archivos de configuración de un juego que escribe su adaptador (`crates/games`, It5.1):
+/// `cs2_video.txt`, el cfg propio… Son archivos de texto del usuario.
+pub trait GameFiles {
+    /// Contenido y si es de solo lectura; `None` si no existe.
+    fn read_game_file(&self, path: &Path) -> Result<Option<(String, bool)>>;
+    /// Escribe `content` (quitando antes el solo lectura si lo tenía) y, con `read_only`, lo deja
+    /// de solo lectura para que el juego no lo revierta (`game-config-lock`). Crea la carpeta si
+    /// no existe.
+    fn write_game_file(&self, path: &Path, content: &str, read_only: bool) -> Result<()>;
+    /// Borra el archivo, aunque sea de solo lectura. Que no exista no es un error.
+    fn remove_game_file(&self, path: &Path) -> Result<()>;
+}
+
 /// Todo lo que `core` necesita del SO.
 pub trait Platform:
     ProcessControl
@@ -343,6 +356,7 @@ pub trait Platform:
     + DisplayControl
     + Inventory
     + GameTuning
+    + GameFiles
     + SystemTweaks
     + MemoryControl
     + Capabilities
@@ -356,6 +370,7 @@ impl<T> Platform for T where
         + DisplayControl
         + Inventory
         + GameTuning
+        + GameFiles
         + SystemTweaks
         + MemoryControl
         + Capabilities

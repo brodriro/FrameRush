@@ -5,10 +5,10 @@
 //! Los valores de los tests los pone cada test; aquí no hay datos de ningún equipo.
 
 use crate::{
-    Battery, Capabilities, CapabilitySet, Cpu, Display, DisplayControl, GameTuning, Gpu, Inventory,
-    MemoryControl, PlatformError, PowerControl, PowerPlan, Priority, ProcessControl, ProcessInfo,
-    Result, SavedData, SavedValue, ServiceControl, ServiceState, StartTime, SystemTweaks, Target,
-    Tweak,
+    Battery, Capabilities, CapabilitySet, Cpu, Display, DisplayControl, GameFiles, GameTuning, Gpu,
+    Inventory, MemoryControl, PlatformError, PowerControl, PowerPlan, Priority, ProcessControl,
+    ProcessInfo, Result, SavedData, SavedValue, ServiceControl, ServiceState, StartTime,
+    SystemTweaks, Target, Tweak,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -57,6 +57,8 @@ struct State {
     compat: BTreeMap<PathBuf, String>,
     /// Preferencia de GPU por exe.
     gpu: BTreeMap<PathBuf, String>,
+    /// Archivos del juego: contenido y solo lectura.
+    files: BTreeMap<PathBuf, (String, bool)>,
 }
 
 /// Plataforma en memoria.
@@ -465,6 +467,36 @@ impl DisplayControl for MockPlatform {
             )));
         }
         d.current.hz = hz;
+        Ok(())
+    }
+}
+
+impl MockPlatform {
+    /// Crea un archivo del juego ([`GameFiles`]).
+    pub fn put_game_file(&self, path: impl Into<PathBuf>, content: &str, read_only: bool) {
+        self.lock()
+            .files
+            .insert(path.into(), (content.to_owned(), read_only));
+    }
+
+    /// Contenido y solo lectura de un archivo del juego.
+    pub fn game_file(&self, path: &Path) -> Option<(String, bool)> {
+        self.lock().files.get(path).cloned()
+    }
+}
+
+impl GameFiles for MockPlatform {
+    fn read_game_file(&self, path: &Path) -> Result<Option<(String, bool)>> {
+        Ok(self.game_file(path))
+    }
+
+    fn write_game_file(&self, path: &Path, content: &str, read_only: bool) -> Result<()> {
+        self.put_game_file(path, content, read_only);
+        Ok(())
+    }
+
+    fn remove_game_file(&self, path: &Path) -> Result<()> {
+        self.lock().files.remove(path);
         Ok(())
     }
 }

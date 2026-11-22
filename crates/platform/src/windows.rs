@@ -33,10 +33,10 @@ pub use nvapi::Nvapi;
 use registry::Hive;
 
 use crate::{
-    Battery, Capabilities, CapabilitySet, Cpu, Display, DisplayControl, GameTuning, Gpu, Inventory,
-    MemoryControl, PlatformError, PowerControl, PowerPlan, Priority, ProcessControl, ProcessInfo,
-    Result, SavedData, SavedValue, ServiceControl, ServiceState, StartTime, SystemTweaks, Target,
-    Tweak, scan_processes,
+    Battery, Capabilities, CapabilitySet, Cpu, Display, DisplayControl, GameFiles, GameTuning, Gpu,
+    Inventory, MemoryControl, PlatformError, PowerControl, PowerPlan, Priority, ProcessControl,
+    ProcessInfo, Result, SavedData, SavedValue, ServiceControl, ServiceState, StartTime,
+    SystemTweaks, Target, Tweak, scan_processes,
 };
 use std::ffi::c_void;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -582,6 +582,66 @@ fn exe_value_name(exe: &Path) -> Result<String> {
         )));
     }
     Ok(exe.to_string_lossy().into_owned())
+}
+
+/// Error de E/S con la ruta del archivo.
+fn file_error(path: &Path, e: std::io::Error) -> PlatformError {
+    match e.kind() {
+        std::io::ErrorKind::PermissionDenied => {
+            PlatformError::AccessDenied(path.display().to_string())
+        }
+        _ => PlatformError::Os(format!("{}: {e}", path.display())),
+    }
+}
+
+/// Quita o pone el atributo de solo lectura (en Windows, `set_readonly` es ese atributo).
+fn set_read_only(path: &Path, read_only: bool) -> Result<()> {
+    let mut perms = std::fs::metadata(path)
+        .map_err(|e| file_error(path, e))?
+        .permissions();
+    if perms.readonly() != read_only {
+        #[allow(clippy::permissions_set_readonly_false)]
+        // Windows: es el atributo, no un modo Unix.
+        perms.set_readonly(read_only);
+        std::fs::set_permissions(path, perms).map_err(|e| file_error(path, e))?;
+    }
+    Ok(())
+}
+
+impl GameFiles for WindowsPlatform {
+    fn read_game_file(&self, path: &Path) -> Result<Option<(String, bool)>> {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(file_error(path, e)),
+        };
+        let read_only = std::fs::metadata(path)
+            .map_err(|e| file_error(path, e))?
+            .permissions()
+            .readonly();
+        Ok(Some((content, read_only)))
+    }
+
+    fn write_game_file(&self, path: &Path, content: &str, read_only: bool) -> Result<()> {
+        if path.exists() {
+            set_read_only(path, false)?;
+        } else if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| file_error(dir, e))?;
+        }
+        std::fs::write(path, content).map_err(|e| file_error(path, e))?;
+        if read_only {
+            set_read_only(path, true)?;
+        }
+        Ok(())
+    }
+
+    fn remove_game_file(&self, path: &Path) -> Result<()> {
+        if !path.exists() {
+            return Ok(());
+        }
+        set_read_only(path, false)?;
+        std::fs::remove_file(path).map_err(|e| file_error(path, e))
+    }
 }
 
 impl ServiceControl for WindowsPlatform {
@@ -1149,6 +1209,24 @@ mod tests {
             Err(PlatformError::TargetChanged { pid: stale.pid })
         );
         assert_eq!(w.priority(&v.target).unwrap(), original);
+    }
+
+    #[test]
+    fn game_files_keep_and_clear_the_read_only_attribute() {
+        let w = WindowsPlatform::new();
+        let dir = std::env::temp_dir().join(format!("framerush-game-files-{}", std::process::id()));
+        let path = dir.join("cfg").join("video.txt");
+        assert_eq!(w.read_game_file(&path).unwrap(), None);
+        w.write_game_file(&path, "a", true).unwrap();
+        assert_eq!(w.read_game_file(&path).unwrap(), Some(("a".into(), true)));
+        // Reescribir un archivo de solo lectura funciona y puede quitarle el atributo.
+        w.write_game_file(&path, "b", false).unwrap();
+        assert_eq!(w.read_game_file(&path).unwrap(), Some(("b".into(), false)));
+        w.write_game_file(&path, "c", true).unwrap();
+        w.remove_game_file(&path).unwrap();
+        assert_eq!(w.read_game_file(&path).unwrap(), None);
+        w.remove_game_file(&path).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// No se puede forzar el primer plano desde un test; solo se comprueba que lo que devuelve
