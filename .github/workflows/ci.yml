@@ -17,7 +17,7 @@ jobs:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # rustup instala la toolchain fijada en rust-toolchain.toml.
       - run: rustup show active-toolchain
       - run: cargo fmt --all -- --check
