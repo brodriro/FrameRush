@@ -47,6 +47,44 @@ pub trait PowerControl {
     fn delete_power_plan(&self, id: &str) -> Result<()>;
 }
 
+/// Un monitor y sus modos.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Display {
+    /// Identificador del SO (en Windows, el `DeviceName` del adaptador: `\\.\DISPLAY1`).
+    pub id: String,
+    pub current: Mode,
+    /// Modos que admite, tal como los lista el SO.
+    pub modes: Vec<Mode>,
+}
+
+impl Display {
+    /// Máxima frecuencia admitida con la resolución actual.
+    pub fn max_hz_at_current_resolution(&self) -> Option<u32> {
+        self.modes
+            .iter()
+            .filter(|m| m.width == self.current.width && m.height == self.current.height)
+            .map(|m| m.hz)
+            .max()
+    }
+}
+
+/// Resolución y frecuencia.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Mode {
+    pub width: u32,
+    pub height: u32,
+    pub hz: u32,
+}
+
+/// Pantallas: modos y frecuencia de refresco (`refresh-rate-max`).
+pub trait DisplayControl {
+    /// Monitores del escritorio con su modo actual y los modos que admiten.
+    fn displays(&self) -> Result<Vec<Display>>;
+    /// Cambia solo la frecuencia de `id`, manteniendo su resolución. `hz` tiene que ser uno de
+    /// sus modos con la resolución actual.
+    fn set_refresh_rate(&self, id: &str, hz: u32) -> Result<()>;
+}
+
 /// Ajustes sobre el proceso del juego.
 pub trait GameTuning {
     /// CPU lógicas en las que puede correr el proceso (índices desde 0).
@@ -172,6 +210,8 @@ pub struct CapabilitySet {
     pub power_plans: bool,
     /// [`PowerControl::create_custom_power_plan`] (solo Windows).
     pub custom_power_plan: bool,
+    /// [`DisplayControl::set_refresh_rate`].
+    pub refresh_rate: bool,
     pub affinity: bool,
     /// `memory-trim` y `standby-purge` ([`MemoryControl`]).
     pub memory: bool,
@@ -196,6 +236,7 @@ pub trait Platform:
     ProcessControl
     + ServiceControl
     + PowerControl
+    + DisplayControl
     + GameTuning
     + SystemTweaks
     + MemoryControl
@@ -207,6 +248,7 @@ impl<T> Platform for T where
     T: ProcessControl
         + ServiceControl
         + PowerControl
+        + DisplayControl
         + GameTuning
         + SystemTweaks
         + MemoryControl

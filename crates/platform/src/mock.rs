@@ -5,9 +5,9 @@
 //! Los valores de los tests los pone cada test; aquí no hay datos de ningún equipo.
 
 use crate::{
-    Capabilities, CapabilitySet, GameTuning, MemoryControl, PlatformError, PowerControl, PowerPlan,
-    Priority, ProcessControl, ProcessInfo, Result, SavedData, SavedValue, ServiceControl,
-    ServiceState, StartTime, SystemTweaks, Target, Tweak,
+    Capabilities, CapabilitySet, Display, DisplayControl, GameTuning, MemoryControl, PlatformError,
+    PowerControl, PowerPlan, Priority, ProcessControl, ProcessInfo, Result, SavedData, SavedValue,
+    ServiceControl, ServiceState, StartTime, SystemTweaks, Target, Tweak,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -31,6 +31,7 @@ struct State {
     active_plan: Option<String>,
     /// Planes creados con `create_custom_power_plan` (para darles ids distintos).
     created_plans: u32,
+    displays: Vec<Display>,
     logical_cpus: usize,
     caps: CapabilitySet,
     next_start: u64,
@@ -61,6 +62,7 @@ impl MockPlatform {
             services: true,
             power_plans: true,
             custom_power_plan: true,
+            refresh_rate: true,
             affinity: true,
             memory: true,
         };
@@ -116,6 +118,11 @@ impl MockPlatform {
         let mut s = self.lock();
         s.plans = plans;
         s.active_plan = Some(active_id.to_owned());
+    }
+
+    /// Define los monitores.
+    pub fn set_displays(&self, displays: Vec<Display>) {
+        self.lock().displays = displays;
     }
 
     /// Cambia lo que admite la plataforma.
@@ -321,6 +328,34 @@ impl PowerControl for MockPlatform {
         if s.plans.len() == before {
             return Err(PlatformError::NotFound(format!("plan {id}")));
         }
+        Ok(())
+    }
+}
+
+impl DisplayControl for MockPlatform {
+    fn displays(&self) -> Result<Vec<Display>> {
+        Ok(self.lock().displays.clone())
+    }
+
+    fn set_refresh_rate(&self, id: &str, hz: u32) -> Result<()> {
+        self.require(|c| c.refresh_rate, "frecuencia de refresco")?;
+        let mut s = self.lock();
+        let d = s
+            .displays
+            .iter_mut()
+            .find(|d| d.id == id)
+            .ok_or_else(|| PlatformError::NotFound(format!("pantalla {id}")))?;
+        let (w, h) = (d.current.width, d.current.height);
+        if !d
+            .modes
+            .iter()
+            .any(|m| m.width == w && m.height == h && m.hz == hz)
+        {
+            return Err(PlatformError::Os(format!(
+                "{id} no admite {w}x{h} a {hz} Hz"
+            )));
+        }
+        d.current.hz = hz;
         Ok(())
     }
 }
@@ -630,6 +665,25 @@ mod tests {
         m.set_active_power_plan("b").unwrap();
         assert_eq!(m.active_power_plan().unwrap().id, "b");
         assert!(m.set_active_power_plan("z").is_err());
+    }
+
+    #[test]
+    fn refresh_rate_must_be_a_mode_of_the_current_resolution() {
+        let m = platform();
+        let mode = |width, height, hz| crate::Mode { width, height, hz };
+        m.set_displays(vec![Display {
+            id: "d1".into(),
+            current: mode(1920, 1080, 60),
+            modes: vec![
+                mode(1920, 1080, 60),
+                mode(1920, 1080, 144),
+                mode(1280, 720, 240),
+            ],
+        }]);
+        m.set_refresh_rate("d1", 144).unwrap();
+        assert_eq!(m.displays().unwrap()[0].current.hz, 144);
+        assert!(m.set_refresh_rate("d1", 240).is_err());
+        assert!(m.set_refresh_rate("d2", 60).is_err());
     }
 
     #[test]

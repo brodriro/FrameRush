@@ -13,6 +13,7 @@
 #![allow(unsafe_code)]
 
 mod cpus;
+mod display;
 mod effects;
 mod helper;
 mod integrity;
@@ -25,9 +26,9 @@ pub(crate) use integrity::integrity_level;
 use registry::Hive;
 
 use crate::{
-    Capabilities, CapabilitySet, GameTuning, MemoryControl, PlatformError, PowerControl, PowerPlan,
-    Priority, ProcessControl, ProcessInfo, Result, SavedData, SavedValue, ServiceControl,
-    ServiceState, StartTime, SystemTweaks, Target, Tweak, scan_processes,
+    Capabilities, CapabilitySet, Display, DisplayControl, GameTuning, MemoryControl, PlatformError,
+    PowerControl, PowerPlan, Priority, ProcessControl, ProcessInfo, Result, SavedData, SavedValue,
+    ServiceControl, ServiceState, StartTime, SystemTweaks, Target, Tweak, scan_processes,
 };
 use std::ffi::c_void;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -590,6 +591,16 @@ impl PowerControl for WindowsPlatform {
     }
 }
 
+impl DisplayControl for WindowsPlatform {
+    fn displays(&self) -> Result<Vec<Display>> {
+        display::displays()
+    }
+
+    fn set_refresh_rate(&self, id: &str, hz: u32) -> Result<()> {
+        display::set_refresh_rate(id, hz)
+    }
+}
+
 const HKCU: Hive = Hive::CurrentUser;
 const HKLM: Hive = Hive::LocalMachine;
 
@@ -941,6 +952,7 @@ impl Capabilities for WindowsPlatform {
             services: false,
             power_plans: true,
             custom_power_plan: true,
+            refresh_rate: true,
             affinity: true,
             memory: true,
         }

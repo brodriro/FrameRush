@@ -7,6 +7,6 @@ mod profile;
 #[cfg(any(test, feature = "samples"))]
 pub mod samples;
 
-pub use profile::{
-    Battery, Core, CoreKind, Cpu, DeviceProfile, Display, Gpu, GpuVendor, Mode, Source, Sourced,
-};
+// `Display` y `Mode` viven en `platform` porque los usa `DisplayControl`.
+pub use framerush_platform::{Display, Mode};
+pub use profile::{Battery, Core, CoreKind, Cpu, DeviceProfile, Gpu, GpuVendor, Source, Sourced};

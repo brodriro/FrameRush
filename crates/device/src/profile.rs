@@ -1,4 +1,4 @@
-use framerush_platform::{Os, PowerPlan};
+use framerush_platform::{Display, Os, PowerPlan};
 use serde::{Deserialize, Serialize};
 
 /// De dónde sale un valor que se muestra o se usa como valor por defecto.
@@ -154,34 +154,6 @@ pub enum GpuVendor {
     Intel,
     Apple,
     Other,
-}
-
-/// Un monitor y sus modos.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Display {
-    pub id: String,
-    pub current: Mode,
-    /// Modos que admite, tal como los lista el SO.
-    pub modes: Vec<Mode>,
-}
-
-impl Display {
-    /// Máxima frecuencia admitida con la resolución actual.
-    pub fn max_hz_at_current_resolution(&self) -> Option<u32> {
-        self.modes
-            .iter()
-            .filter(|m| m.width == self.current.width && m.height == self.current.height)
-            .map(|m| m.hz)
-            .max()
-    }
-}
-
-/// Resolución y frecuencia.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Mode {
-    pub width: u32,
-    pub height: u32,
-    pub hz: u32,
 }
 
 /// Estado de la batería.
