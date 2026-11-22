@@ -21,6 +21,30 @@ pub struct Snapshot {
     pub tweaks: Vec<Tweak>,
     /// Los de `tweaks` que piden elevación para aplicarse.
     pub admin_tweaks: Vec<Tweak>,
+    /// Operaciones de memoria que admite la plataforma.
+    pub memory: Vec<MemoryOp>,
+}
+
+/// Liberar memoria antes de jugar (PLAN.md It5.2, P9). No deja estado que revertir, así que no
+/// pasa por el journal. Las dos piden admin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryOp {
+    /// `memory-trim`: recorta el working set de los procesos de fondo.
+    Trim,
+    /// `standby-purge`: vacía la lista standby.
+    StandbyPurge,
+}
+
+impl MemoryOp {
+    pub const ALL: [MemoryOp; 2] = [MemoryOp::Trim, MemoryOp::StandbyPurge];
+
+    /// Id de design/SETTINGS.md.
+    pub fn id(self) -> &'static str {
+        match self {
+            MemoryOp::Trim => "memory-trim",
+            MemoryOp::StandbyPurge => "standby-purge",
+        }
+    }
 }
 
 /// Opciones que no dependen del nivel.
@@ -86,6 +110,10 @@ pub struct Plan {
     pub optional_tweaks: Vec<Tweak>,
     /// Ajustes del nivel que piden admin y no hay elevación: se muestran con candado (P14).
     pub locked_tweaks: Vec<Tweak>,
+    /// Operaciones de memoria marcadas (desde Agresivo, con elevación).
+    pub memory: Vec<MemoryOp>,
+    /// Las del nivel que no se pueden hacer sin elevación: con candado (P14).
+    pub locked_memory: Vec<MemoryOp>,
 }
 
 impl Plan {
@@ -203,6 +231,16 @@ pub fn plan(
             tweaks.push(t);
         }
     }
+    let memory_ops = snapshot
+        .memory
+        .iter()
+        .copied()
+        .filter(|_| level.includes(Level::Agresivo));
+    let (memory, locked_memory) = if options.elevated {
+        (memory_ops.collect(), vec![])
+    } else {
+        (vec![], memory_ops.collect())
+    };
     Plan {
         level,
         items,
@@ -210,6 +248,8 @@ pub fn plan(
         tweaks,
         optional_tweaks,
         locked_tweaks,
+        memory,
+        locked_memory,
     }
 }
 
@@ -576,6 +616,35 @@ mod tests {
         let admin = plan(Level::Agresivo, &snap, &[], &device, &elevated);
         assert_eq!(admin.tweaks, [Tweak::GameDvrOff, Tweak::GameDvrPolicyOff]);
         assert!(admin.locked_tweaks.is_empty());
+    }
+
+    /// `memory-trim` y `standby-purge`: desde Agresivo, con candado sin elevación (P9, P14).
+    #[test]
+    fn memory_ops_from_agresivo_and_admin_only() {
+        let device = samples::hybrid_laptop();
+        let snap = Snapshot {
+            memory: MemoryOp::ALL.to_vec(),
+            ..Snapshot::default()
+        };
+        let elevated = PlanOptions {
+            elevated: true,
+            ..PlanOptions::default()
+        };
+        let normal = plan(Level::Normal, &snap, &[], &device, &elevated);
+        assert!(normal.memory.is_empty() && normal.locked_memory.is_empty());
+        let admin = plan(Level::Agresivo, &snap, &[], &device, &elevated);
+        assert_eq!(admin.memory, MemoryOp::ALL);
+        let user = plan(Level::Extremo, &snap, &[], &device, &PlanOptions::default());
+        assert!(user.memory.is_empty());
+        assert_eq!(user.locked_memory, MemoryOp::ALL);
+        let none = plan(
+            Level::Extremo,
+            &Snapshot::default(),
+            &[],
+            &device,
+            &elevated,
+        );
+        assert!(none.memory.is_empty(), "solo lo que admite la plataforma");
     }
 
     /// Un opt-in nunca viene marcado; con candado si pide admin y no hay elevación.

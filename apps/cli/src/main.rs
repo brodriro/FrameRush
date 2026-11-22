@@ -221,6 +221,7 @@ fn build_plan(
         game: game.as_ref().map(|g| g.target.clone()),
         tweaks,
         admin_tweaks,
+        memory: vec![],
     };
     let options = PlanOptions {
         elevated: admin,
@@ -387,6 +388,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         return Ok(());
     }
     let request = ApplyRequest {
+        memory: vec![],
         items: checked,
         tweaks,
         game: game.map(|g| GameBoost {

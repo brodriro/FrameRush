@@ -11,7 +11,7 @@
 
 use crate::journal::{Change, Entry, EntryStatus, Journal, JournalError, JournalStore};
 use crate::protected::is_protected;
-use crate::{Action, PlanItem, Scope, Subject};
+use crate::{Action, MemoryOp, PlanItem, Scope, Subject};
 use framerush_platform::{Platform, PlatformError, Priority, Target, Tweak};
 use std::path::Path;
 
@@ -41,6 +41,8 @@ pub struct ApplyRequest<'a> {
     pub items: Vec<&'a PlanItem>,
     pub tweaks: Vec<Tweak>,
     pub game: Option<GameBoost>,
+    /// Se hacen antes que el resto, como en Turbo (PLAN.md §5, P9).
+    pub memory: Vec<MemoryOp>,
 }
 
 /// Resultado de una acción.
@@ -171,6 +173,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         let batch = journal.last_batch().map_or(1, |b| b + 1);
         let mut report = Report::default();
 
+        for op in &request.memory {
+            self.free_memory(*op, request.game.as_ref(), &mut report);
+        }
         for item in &request.items {
             match &item.subject {
                 Subject::Processes(ps) => {
@@ -225,6 +230,41 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             }
         }
         Ok(report)
+    }
+
+    /// Una operación de memoria. No hay nada que revertir, así que no pasa por el journal, y un
+    /// fallo queda en el informe sin parar el resto.
+    fn free_memory(&self, op: MemoryOp, game: Option<&GameBoost>, report: &mut Report) {
+        let outcome = match op {
+            MemoryOp::StandbyPurge => match self.platform.purge_standby_list() {
+                Ok(()) => Outcome::Done,
+                Err(e) => Outcome::Failed(e),
+            },
+            MemoryOp::Trim => match self.platform.processes() {
+                Err(e) => Outcome::Failed(e),
+                Ok(processes) => {
+                    // De fondo: ni el juego, ni FrameRush, ni la lista de protegidos.
+                    let background = processes.iter().filter(|p| {
+                        !is_protected(&p.name)
+                            && p.target.pid != std::process::id()
+                            && game.is_none_or(|g| g.target != p.target)
+                    });
+                    let (mut done, mut failed) = (0usize, 0usize);
+                    for p in background {
+                        match self.platform.trim_working_set(&p.target) {
+                            Ok(()) => done += 1,
+                            Err(_) => failed += 1,
+                        }
+                    }
+                    report.push(
+                        format!("recorte de working set: {done} procesos ({failed} sin acceso)"),
+                        Outcome::Done,
+                    );
+                    return;
+                }
+            },
+        };
+        report.push(op.id().to_owned(), outcome);
     }
 
     /// Cambio de un valor por exe (FSO, GPU) que solo se hace si el exe no tiene ya uno: no hay
@@ -570,6 +610,7 @@ mod tests {
 
     fn request(items: &[PlanItem]) -> ApplyRequest<'_> {
         ApplyRequest {
+            memory: vec![],
             items: items.iter().collect(),
             tweaks: vec![],
             game: None,
@@ -578,6 +619,7 @@ mod tests {
 
     fn boost(target: &Target, priority: Priority, confirmed: bool) -> ApplyRequest<'static> {
         ApplyRequest {
+            memory: vec![],
             items: vec![],
             tweaks: vec![],
             game: Some(GameBoost {
@@ -630,6 +672,36 @@ mod tests {
 
         engine.revert_all().unwrap();
         assert!(status_lines(&store.load().unwrap()).is_empty());
+    }
+
+    /// Memoria: se recortan los procesos de fondo (ni el juego ni los protegidos), se purga
+    /// la standby y el journal no cambia.
+    #[test]
+    fn memory_ops_trim_the_background_and_leave_no_journal() {
+        let m = MockPlatform::new(4);
+        let a = m.spawn(1, "a.exe", "/a", 1);
+        let csrss = m.spawn(2, "csrss.exe", "/csrss", 1);
+        let game = m.spawn(9, "game.exe", "/game", 1);
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        let mut req = request(&[]);
+        req.memory = MemoryOp::ALL.to_vec();
+        req.game = boost(&game, Priority::Normal, false).game;
+        let report = engine.apply(&req).unwrap();
+        assert_eq!(report.failed(), 0, "{report:?}");
+        assert_eq!(m.trims(&a).unwrap(), 1);
+        assert_eq!(m.trims(&csrss).unwrap(), 0, "protegido");
+        assert_eq!(m.trims(&game).unwrap(), 0, "el juego");
+        assert_eq!(m.standby_purges(), 1);
+        assert!(
+            store
+                .load()
+                .unwrap()
+                .entries
+                .iter()
+                .all(|e| matches!(e.change, Change::Priority { .. })),
+            "solo la prioridad del juego"
+        );
     }
 
     #[test]

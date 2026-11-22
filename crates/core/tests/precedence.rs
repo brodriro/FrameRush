@@ -57,6 +57,7 @@ fn store(name: &str) -> FileStore {
 fn boost(m: &MockPlatform, priority: Priority, confirmed: bool) -> ApplyRequest<'static> {
     let game = m.spawn(9, "game.exe", "/game.exe", 1);
     ApplyRequest {
+        memory: vec![],
         items: vec![],
         tweaks: vec![],
         game: Some(GameBoost {
@@ -139,6 +140,7 @@ fn p5_persistent_changes_survive_the_session_revert() {
     );
     let loc = r"mock\game-dvr-off";
     let request = ApplyRequest {
+        memory: vec![],
         items: p.checked().collect(),
         tweaks: vec![Tweak::GameDvrOff],
         game: None,
@@ -164,6 +166,7 @@ fn notifications_come_back_with_the_session_revert() {
     let s = store("notif");
     let engine = Engine::new(&m, &s);
     let request = ApplyRequest {
+        memory: vec![],
         tweaks: vec![Tweak::NotificationsOff, Tweak::VisualEffectsPerformance],
         ..ApplyRequest::default()
     };
@@ -294,6 +297,7 @@ fn reapplying_a_tweak_keeps_the_original_backup() {
     let loc = r"mock\windows-game-mode";
     m.set_value(loc, 7);
     let request = ApplyRequest {
+        memory: vec![],
         tweaks: vec![Tweak::WindowsGameMode],
         ..ApplyRequest::default()
     };
