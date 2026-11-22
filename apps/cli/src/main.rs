@@ -5,7 +5,8 @@
 //! sesión. Todo cambio pasa por el journal `%LOCALAPPDATA%/framerush/session.json`; la variable
 //! `FRAMERUSH_DATA_DIR` cambia esa carpeta (tests). `power` lista los planes de energía y `power
 //! set` activa uno como un apply más (journal, `undo`). Desde Agresivo, `apply` duplica el plan
-//! del nivel como «FrameRush Max» (`custom-power-plan`; `--exclude` lo quita). `sensors` llega
+//! del nivel como «FrameRush Max» (`custom-power-plan`; `--exclude` lo quita) y sube cada
+//! monitor a su máxima frecuencia (`refresh-rate-max`). `sensors` llega
 //! en M2.
 //!
 //! Lo que pide admin lo hace `framerush-helper` (junto al ejecutable), que se abre con UAC solo
@@ -24,8 +25,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use framerush_core::{
     ApplyRequest, CUSTOM_POWER_PLAN_NAME, Change, EntryStatus, FileStore, GameBoost, JournalStore,
-    Level, MemoryOp, Outcome, Plan, PlanItem, PlanOptions, Report, Scope, Snapshot, Subject,
-    defaults, is_protected, persistent_priority_default, plan, status_lines, tweak_scope,
+    Level, MemoryOp, Outcome, Plan, PlanItem, PlanOptions, RefreshRate, Report, Scope, Snapshot,
+    Subject, defaults, is_protected, persistent_priority_default, plan, status_lines, tweak_scope,
 };
 use framerush_device::DeviceProfile;
 use framerush_platform::{
@@ -246,13 +247,14 @@ fn build_plan(
     let Some(os) = Os::current() else {
         bail!("sistema operativo no admitido");
     };
-    // La detección completa del equipo llega en M2; de momento el perfil tiene el SO y los
-    // planes de energía.
+    // La detección completa del equipo llega en M2; de momento el perfil tiene el SO, los
+    // planes de energía y los monitores.
     let mut device = DeviceProfile::undetected(os);
     if let Ok((plans, active)) = native_power() {
         device.power_plans = plans;
         device.active_power_plan = Some(active.id);
     }
+    device.displays = native_displays();
     let rules = framerush_rules::embedded().context("las reglas embebidas no son válidas")?;
     let processes = scan_processes().context("no se pudo listar los procesos")?;
     let game = game.map(|q| find_game(&processes, q)).transpose()?;
@@ -340,6 +342,38 @@ const POWER_PLAN: &str = "power-plan";
 
 /// Id de design/SETTINGS.md del plan propio "FrameRush Max".
 const CUSTOM_POWER_PLAN: &str = "custom-power-plan";
+
+/// Id de design/SETTINGS.md del refresco al máximo.
+const REFRESH_RATE_MAX: &str = "refresh-rate-max";
+
+/// Frecuencias del nivel, salvo con `--exclude refresh-rate-max`. Vacío si no se ofrece.
+fn level_refresh(level: Level, device: &DeviceProfile, exclude: &[String]) -> Vec<RefreshRate> {
+    if exclude.iter().any(|id| id == REFRESH_RATE_MAX) {
+        return vec![];
+    }
+    defaults::refresh_rate_max(level, device)
+        .into_iter()
+        .map(|(d, hz)| RefreshRate {
+            display: d.id.clone(),
+            hz,
+        })
+        .collect()
+}
+
+/// Se oculta si todos los monitores ya están al máximo (It6).
+fn print_refresh(level: Level, device: &DeviceProfile, rates: &[RefreshRate]) {
+    for (d, hz) in defaults::refresh_rate_max(level, device) {
+        let mark = if rates.iter().any(|r| r.display == d.id) {
+            "x"
+        } else {
+            " "
+        };
+        println!(
+            "[{mark}] {REFRESH_RATE_MAX:<32} sesión · {} {} → {hz} Hz",
+            d.id, d.current.hz
+        );
+    }
+}
 
 /// Energía del nivel (P3): el plan del nivel y, si `custom-power-plan` está marcado, la base
 /// que se duplica (entonces sustituye al plan del nivel).
@@ -472,6 +506,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
         persistent_mark(level, admin, args, &[]),
         affinity.as_deref(),
     );
+    print_refresh(level, &device, &level_refresh(level, &device, &[]));
     print_power(&level_power(level, &device, &[]), &device);
     let checked: Vec<&PlanItem> = plan.checked().collect();
     print_plan(&plan, &checked, &plan.tweaks, &plan.memory);
@@ -564,11 +599,21 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     if args.include.iter().any(|id| id == CUSTOM_POWER_PLAN) {
         bail!("`{CUSTOM_POWER_PLAN}` lo marca el nivel (agresivo o extremo, solo Windows)");
     }
+    if args.include.iter().any(|id| id == REFRESH_RATE_MAX) {
+        bail!("`{REFRESH_RATE_MAX}` lo marca el nivel (agresivo o extremo, solo Windows)");
+    }
     let power = level_power(level, &device, &args.exclude);
+    let refresh = level_refresh(level, &device, &args.exclude);
     let others = |ids: &[String]| -> Vec<String> {
         ids.iter()
             .filter(|id| {
-                ![PERSISTENT_PRIORITY, POWER_PLAN, CUSTOM_POWER_PLAN].contains(&id.as_str())
+                ![
+                    PERSISTENT_PRIORITY,
+                    POWER_PLAN,
+                    CUSTOM_POWER_PLAN,
+                    REFRESH_RATE_MAX,
+                ]
+                .contains(&id.as_str())
             })
             .cloned()
             .collect()
@@ -580,6 +625,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     if !args.yes {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
         print_game(game.as_ref(), &args.game, persistent, affinity.as_deref());
+        print_refresh(level, &device, &refresh);
         print_power(&power, &device);
         print_plan(&plan, &checked, &tweaks, &memory);
         println!("\nRevisa las filas y repite con --yes para aplicarlas.");
@@ -591,6 +637,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         && game.is_none()
         && power.plan.is_none()
         && !power.custom_checked
+        && refresh.is_empty()
     {
         println!("No hay filas ni ajustes marcados ni juego: no se toca nada.");
         return Ok(());
@@ -598,7 +645,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     let request = ApplyRequest {
         memory,
         custom_power_plan: power.custom_base.filter(|_| power.custom_checked),
-        refresh_rates: vec![],
+        refresh_rates: refresh,
         power_plan: power.plan,
         items: checked,
         tweaks,
@@ -671,6 +718,20 @@ fn native_power() -> Result<(Vec<PowerPlan>, PowerPlan)> {
         .active_power_plan()
         .context("no se pudo leer el plan de energía activo")?;
     Ok((plans, active))
+}
+
+/// Monitores de la plataforma nativa; vacío si no se pueden leer (el ajuste se oculta).
+#[cfg(windows)]
+fn native_displays() -> Vec<framerush_platform::Display> {
+    use framerush_platform::DisplayControl;
+    framerush_platform::WindowsPlatform::new()
+        .displays()
+        .unwrap_or_default()
+}
+
+#[cfg(not(windows))]
+fn native_displays() -> Vec<framerush_platform::Display> {
+    vec![]
 }
 
 #[cfg(not(windows))]

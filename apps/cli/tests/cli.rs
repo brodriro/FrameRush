@@ -340,3 +340,25 @@ fn custom_power_plan_from_agresivo() {
     ];
     assert!(!framerush_in(&dir, &args).0);
 }
+
+/// `refresh-rate-max` lo marca el nivel: no se puede añadir con `--include`.
+#[test]
+fn refresh_rate_max_is_set_by_the_level() {
+    let dir = temp_dir("refresh-rate-max");
+    let args = [
+        "apply",
+        "--level",
+        "agresivo",
+        "--include",
+        "refresh-rate-max",
+    ];
+    assert!(!framerush_in(&dir, &args).0);
+    let args = [
+        "apply",
+        "--level",
+        "agresivo",
+        "--exclude",
+        "refresh-rate-max",
+    ];
+    assert!(framerush_in(&dir, &args).0);
+}
