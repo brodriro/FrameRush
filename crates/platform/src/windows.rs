@@ -645,6 +645,13 @@ impl Inventory for WindowsPlatform {
         inventory::laptop()
     }
 
+    fn total_memory(&self) -> Result<Option<u64>> {
+        let mut system = System::new();
+        system.refresh_memory();
+        // sysinfo da 0 si no pudo leerla.
+        Ok(Some(system.total_memory()).filter(|&b| b > 0))
+    }
+
     fn vbs_running(&self) -> Result<Option<bool>> {
         inventory::vbs_running()
     }

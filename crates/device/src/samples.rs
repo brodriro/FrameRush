@@ -38,6 +38,7 @@ pub fn hybrid_laptop() -> DeviceProfile {
         windows_11: Some(true),
         manufacturer: Some("Fabricante de prueba".into()),
         laptop: Some(true),
+        memory_bytes: Some(16 * 1024 * 1024 * 1024),
         cpu: Some(Cpu {
             model: "CPU de prueba 4C/8T".into(),
             cores: smt_cores(4, CoreKind::Performance, 0),
@@ -114,6 +115,7 @@ pub fn amd_desktop_linux() -> DeviceProfile {
         windows_11: None,
         manufacturer: None,
         laptop: Some(false),
+        memory_bytes: Some(32 * 1024 * 1024 * 1024),
         cpu: Some(Cpu {
             model: "CPU híbrida de prueba 6P+4E".into(),
             cores,
@@ -174,6 +176,7 @@ pub fn apple_silicon_mac() -> DeviceProfile {
         windows_11: None,
         manufacturer: Some("Apple".into()),
         laptop: Some(true),
+        memory_bytes: Some(16 * 1024 * 1024 * 1024),
         cpu: Some(Cpu {
             model: "SoC de prueba 8P+4E".into(),
             cores,

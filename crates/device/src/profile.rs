@@ -56,6 +56,8 @@ pub struct DeviceProfile {
     /// Si es un portátil (`PCSystemType` en Windows). Sin sensores de ventilador, la UI lo
     /// usa para explicar por qué no hay RPM.
     pub laptop: Option<bool>,
+    /// Memoria física total en bytes (p. ej. `mem_level` de CS2).
+    pub memory_bytes: Option<u64>,
     pub cpu: Option<Cpu>,
     pub gpus: Vec<Gpu>,
     pub displays: Vec<Display>,
@@ -88,6 +90,7 @@ impl DeviceProfile {
             windows_11: None,
             manufacturer: None,
             laptop: None,
+            memory_bytes: None,
             cpu: None,
             gpus: vec![],
             displays: vec![],

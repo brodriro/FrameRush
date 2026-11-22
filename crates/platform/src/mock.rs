@@ -39,6 +39,7 @@ struct State {
     os_build: Option<String>,
     manufacturer: Option<String>,
     laptop: Option<bool>,
+    total_memory: Option<u64>,
     vbs_running: Option<bool>,
     installed_apps: Vec<String>,
     hags_supported: Option<bool>,
@@ -154,6 +155,11 @@ impl MockPlatform {
         s.manufacturer = manufacturer.map(str::to_owned);
         s.vbs_running = vbs_running;
         s.installed_apps = installed_apps.iter().map(|a| (*a).to_owned()).collect();
+    }
+
+    /// Define la memoria física total ([`Inventory::total_memory`]).
+    pub fn set_total_memory(&self, bytes: Option<u64>) {
+        self.lock().total_memory = bytes;
     }
 
     /// Define si el equipo es un portátil ([`Inventory::laptop`]).
@@ -408,6 +414,10 @@ impl Inventory for MockPlatform {
 
     fn laptop(&self) -> Result<Option<bool>> {
         Ok(self.lock().laptop)
+    }
+
+    fn total_memory(&self) -> Result<Option<u64>> {
+        Ok(self.lock().total_memory)
     }
 
     fn vbs_running(&self) -> Result<Option<bool>> {

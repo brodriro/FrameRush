@@ -575,6 +575,12 @@ fn print_device(device: &DeviceProfile) {
         Some(false) => system.push("no es portátil".into()),
         None => {}
     }
+    if let Some(bytes) = device.memory_bytes {
+        system.push(format!(
+            "{:.1} GB de RAM",
+            bytes as f64 / f64::from(1u32 << 30)
+        ));
+    }
     match device.vbs_hvci_enabled {
         Some(true) => system.push("VBS en ejecución".into()),
         Some(false) => system.push("VBS desactivado".into()),
