@@ -494,6 +494,17 @@ fn print_device(device: &DeviceProfile) {
     if device.gpus.is_empty() {
         println!("GPU: no detectada");
     }
+    match device.hags_supported {
+        Some(true) => println!("HAGS: admitido"),
+        Some(false) => println!("HAGS: no admitido"),
+        None => {}
+    }
+    if !device.virtualization.is_empty() {
+        println!(
+            "Usa el hipervisor: {} (se rompe si se desactiva)",
+            device.virtualization.join(", ")
+        );
+    }
     match device.battery {
         Some(b) if b.discharging => println!("Batería: descargándose (desenchufado)"),
         Some(_) => println!("Batería: enchufado"),
