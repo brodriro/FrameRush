@@ -249,6 +249,7 @@ dependencies = [
 name = "framerush-sensors"
 version = "0.1.0"
 dependencies = [
+ "framerush-platform",
  "nvml-wrapper",
  "thiserror 2.0.21",
 ]

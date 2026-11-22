@@ -8,6 +8,7 @@
 //!   tener ventilador propio de la GPU (`NotSupported`).
 
 use crate::{Kind, Reading, Sensor, SensorError, SensorProvider};
+use framerush_platform::{Gpu, PciId};
 use nvml_wrapper::Nvml;
 use nvml_wrapper::enum_wrappers::device::{TemperatureSensor, TemperatureThreshold};
 
@@ -30,19 +31,62 @@ impl NvidiaGpus {
         Ok(Self { nvml, count })
     }
 
-    /// Umbral de *slowdown* de cada GPU por nombre, en °C; `None` si el driver no lo da.
-    pub fn slowdown_c(&self) -> Vec<(String, Option<f32>)> {
+    /// Cada GPU con su id PCI y su umbral de *slowdown*.
+    pub fn gpus(&self) -> Vec<NvidiaGpu> {
         (0..self.count)
             .filter_map(|i| self.nvml.device_by_index(i).ok())
-            .map(|d| {
-                let name = d.name().unwrap_or_else(|_| "GPU NVIDIA".into());
-                let slowdown = d
+            .map(|d| NvidiaGpu {
+                name: d.name().unwrap_or_else(|_| "GPU NVIDIA".into()),
+                pci: d.pci_info().ok().and_then(|p| {
+                    Some(PciId {
+                        // "The combined 16-bit device ID and 16-bit vendor ID": el fabricante
+                        // va en los 16 bits bajos (comprobado: 0x10de en una GTX 1650).
+                        vendor: (p.pci_device_id & 0xffff) as u16,
+                        device: (p.pci_device_id >> 16) as u16,
+                        subsystem: p.pci_sub_system_id?,
+                    })
+                }),
+                slowdown_c: d
                     .temperature_threshold(TemperatureThreshold::Slowdown)
                     .ok()
-                    .map(|c| c as f32);
-                (name, slowdown)
+                    .map(|c| c as f32),
             })
             .collect()
+    }
+
+    /// Pone el umbral de *slowdown* de NVML en las GPU del perfil (`Gpu::slowdown_c`).
+    pub fn fill_slowdown(&self, gpus: &mut [Gpu]) {
+        fill_slowdown(gpus, &self.gpus());
+    }
+}
+
+/// Una GPU según NVML.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NvidiaGpu {
+    pub name: String,
+    pub pci: Option<PciId>,
+    /// `None` si el driver no lo da (V13).
+    pub slowdown_c: Option<f32>,
+}
+
+/// Empareja por id PCI. Si el id se repite en algún lado (dos tarjetas iguales) no se sabe cuál
+/// es cuál, así que esa GPU se queda sin umbral (fallback "estimado") en lugar de adivinar.
+fn fill_slowdown(gpus: &mut [Gpu], nvidia: &[NvidiaGpu]) {
+    let count = |pci: PciId| {
+        (
+            gpus.iter().filter(|g| g.pci == Some(pci)).count(),
+            nvidia.iter().filter(|n| n.pci == Some(pci)).count(),
+        )
+    };
+    let unique: Vec<(PciId, Option<f32>)> = nvidia
+        .iter()
+        .filter_map(|n| Some((n.pci?, n.slowdown_c)))
+        .filter(|(pci, _)| count(*pci) == (1, 1))
+        .collect();
+    for (pci, slowdown) in unique {
+        if let Some(gpu) = gpus.iter_mut().find(|g| g.pci == Some(pci)) {
+            gpu.slowdown_c = slowdown;
+        }
     }
 }
 
@@ -91,6 +135,7 @@ impl SensorProvider for NvidiaGpus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use framerush_platform::GpuVendor;
 
     /// Sin GPU NVIDIA (la CI) `open` falla y no hay nada que leer; con una, cada GPU tiene su
     /// sensor de temperatura.
@@ -105,6 +150,55 @@ mod tests {
             .filter(|s| s.kind == Kind::GpuTemperature)
             .count();
         assert_eq!(temps, gpus.count as usize);
-        assert_eq!(gpus.slowdown_c().len(), gpus.count as usize);
+        let nvidia = gpus.gpus();
+        assert_eq!(nvidia.len(), gpus.count as usize);
+        for g in nvidia {
+            assert_eq!(g.pci.map(|p| p.vendor), Some(0x10de), "{g:?}");
+        }
+    }
+
+    fn gpu(id: &str, pci: Option<PciId>) -> Gpu {
+        Gpu {
+            id: id.into(),
+            name: id.into(),
+            vendor: GpuVendor::Nvidia,
+            dedicated_vram_bytes: None,
+            slowdown_c: None,
+            pci,
+        }
+    }
+
+    fn nvidia(pci: PciId, slowdown_c: Option<f32>) -> NvidiaGpu {
+        NvidiaGpu {
+            name: "nv".into(),
+            pci: Some(pci),
+            slowdown_c,
+        }
+    }
+
+    const A: PciId = PciId {
+        vendor: 0x10de,
+        device: 0x1f91,
+        subsystem: 0x1,
+    };
+    const B: PciId = PciId {
+        vendor: 0x10de,
+        device: 0x2504,
+        subsystem: 0x2,
+    };
+
+    #[test]
+    fn pairs_by_pci_id_and_leaves_the_rest() {
+        let mut gpus = [gpu("igpu", None), gpu("a", Some(A)), gpu("b", Some(B))];
+        fill_slowdown(&mut gpus, &[nvidia(A, Some(97.0)), nvidia(B, None)]);
+        let slowdowns: Vec<_> = gpus.iter().map(|g| g.slowdown_c).collect();
+        assert_eq!(slowdowns, [None, Some(97.0), None]);
+    }
+
+    #[test]
+    fn identical_cards_are_not_guessed() {
+        let mut gpus = [gpu("a1", Some(A)), gpu("a2", Some(A))];
+        fill_slowdown(&mut gpus, &[nvidia(A, Some(97.0)), nvidia(A, Some(90.0))]);
+        assert!(gpus.iter().all(|g| g.slowdown_c.is_none()));
     }
 }

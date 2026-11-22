@@ -8,7 +8,7 @@ mod nvidia;
 mod poll;
 mod reading;
 
-pub use nvidia::NvidiaGpus;
+pub use nvidia::{NvidiaGpu, NvidiaGpus};
 pub use poll::{POLL_INTERVAL, Poller};
 pub use reading::{Kind, Reading, Sensor};
 
