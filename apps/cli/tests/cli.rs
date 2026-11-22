@@ -308,3 +308,23 @@ fn fso_off_needs_a_game() {
     );
     assert!(!dir.join("session.json").exists());
 }
+
+/// P3: el plan propio sale marcado desde Agresivo en Windows y `--exclude` lo quita.
+#[cfg(windows)]
+#[test]
+fn custom_power_plan_from_agresivo() {
+    let dir = temp_dir("custom-power-plan");
+    let (ok, stdout) = framerush_in(&dir, &["plan", "--level", "normal"]);
+    assert!(ok);
+    assert!(!stdout.contains("custom-power-plan"), "{stdout}");
+    let (ok, stdout) = framerush_in(&dir, &["plan", "--level", "agresivo"]);
+    assert!(ok);
+    assert!(stdout.contains("[x] custom-power-plan"), "{stdout}");
+    assert!(stdout.contains("[x] power-plan"), "{stdout}");
+    let args = ["apply", "--level", "agresivo", "--exclude", "custom-power-plan"];
+    let (ok, stdout) = framerush_in(&dir, &args);
+    assert!(ok);
+    assert!(stdout.contains("[ ] custom-power-plan"), "{stdout}");
+    let args = ["apply", "--level", "agresivo", "--include", "custom-power-plan"];
+    assert!(!framerush_in(&dir, &args).0);
+}

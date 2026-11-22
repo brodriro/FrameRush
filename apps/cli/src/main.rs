@@ -4,7 +4,9 @@
 //! `apply` aplica el plan (solo con `--yes`), `undo` deshace el último apply y `revert` toda la
 //! sesión. Todo cambio pasa por el journal `%LOCALAPPDATA%/framerush/session.json`; la variable
 //! `FRAMERUSH_DATA_DIR` cambia esa carpeta (tests). `power` lista los planes de energía y `power
-//! set` activa uno como un apply más (journal, `undo`). `sensors` llega en M2.
+//! set` activa uno como un apply más (journal, `undo`). Desde Agresivo, `apply` duplica el plan
+//! del nivel como «FrameRush Max» (`custom-power-plan`; `--exclude` lo quita). `sensors` llega
+//! en M2.
 //!
 //! Lo que pide admin lo hace `framerush-helper` (junto al ejecutable), que se abre con UAC solo
 //! cuando hace falta: `apply --admin` con ajustes que lo piden, o `undo`/`revert` de cambios
@@ -21,9 +23,9 @@
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use framerush_core::{
-    ApplyRequest, Change, EntryStatus, FileStore, GameBoost, JournalStore, Level, MemoryOp,
-    Outcome, Plan, PlanItem, PlanOptions, Report, Scope, Snapshot, Subject, defaults, is_protected,
-    persistent_priority_default, plan, status_lines, tweak_scope,
+    ApplyRequest, CUSTOM_POWER_PLAN_NAME, Change, EntryStatus, FileStore, GameBoost, JournalStore,
+    Level, MemoryOp, Outcome, Plan, PlanItem, PlanOptions, Report, Scope, Snapshot, Subject,
+    defaults, is_protected, persistent_priority_default, plan, status_lines, tweak_scope,
 };
 use framerush_device::DeviceProfile;
 use framerush_platform::{
@@ -336,18 +338,41 @@ const PERSISTENT_PRIORITY: &str = "game-priority-persistent";
 /// Id de design/SETTINGS.md del plan de energía del nivel.
 const POWER_PLAN: &str = "power-plan";
 
-/// Plan de energía del nivel, salvo con `--exclude power-plan`.
-fn level_power_plan(level: Level, device: &DeviceProfile, exclude: &[String]) -> Option<PowerPlan> {
-    if exclude.iter().any(|id| id == POWER_PLAN) {
-        return None;
-    }
-    defaults::power_plan_for(level, device).cloned()
+/// Id de design/SETTINGS.md del plan propio "FrameRush Max".
+const CUSTOM_POWER_PLAN: &str = "custom-power-plan";
+
+/// Energía del nivel (P3): el plan del nivel y, si `custom-power-plan` está marcado, la base
+/// que se duplica (entonces sustituye al plan del nivel).
+#[derive(Debug, Default)]
+struct LevelPower {
+    plan: Option<PowerPlan>,
+    /// `Some` si el plan propio se ofrece en este equipo y nivel.
+    custom_base: Option<PowerPlan>,
+    custom_checked: bool,
 }
 
-fn print_power(plan: Option<&PowerPlan>, device: &DeviceProfile) {
-    match plan {
-        Some(p) => println!("[x] {POWER_PLAN:<32} sesión · «{}»", p.name),
-        None => {
+/// `--exclude power-plan` quita los dos (no hay base); `--exclude custom-power-plan` deja solo
+/// el plan del nivel.
+fn level_power(level: Level, device: &DeviceProfile, exclude: &[String]) -> LevelPower {
+    let excluded = |id: &str| exclude.iter().any(|e| e == id);
+    if excluded(POWER_PLAN) {
+        return LevelPower::default();
+    }
+    let custom_base = defaults::custom_power_plan_base(level, device).cloned();
+    LevelPower {
+        plan: defaults::power_plan_for(level, device).cloned(),
+        custom_checked: custom_base.is_some() && !excluded(CUSTOM_POWER_PLAN),
+        custom_base,
+    }
+}
+
+fn print_power(power: &LevelPower, device: &DeviceProfile) {
+    match (&power.plan, &power.custom_base) {
+        (_, Some(base)) if power.custom_checked => {
+            println!("[x] {POWER_PLAN:<32} base · «{}»", base.name)
+        }
+        (Some(p), _) => println!("[x] {POWER_PLAN:<32} sesión · «{}»", p.name),
+        (None, _) => {
             let active = device
                 .active_power_plan
                 .as_deref()
@@ -357,6 +382,12 @@ fn print_power(plan: Option<&PowerPlan>, device: &DeviceProfile) {
                 None => println!("[ ] {POWER_PLAN:<32} no disponible"),
             }
         }
+    }
+    if power.custom_base.is_some() {
+        let mark = if power.custom_checked { "x" } else { " " };
+        println!(
+            "[{mark}] {CUSTOM_POWER_PLAN:<32} sesión · «{CUSTOM_POWER_PLAN_NAME}» (solo CA; se borra al restaurar)"
+        );
     }
     println!();
 }
@@ -441,7 +472,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
         persistent_mark(level, admin, args, &[]),
         affinity.as_deref(),
     );
-    print_power(level_power_plan(level, &device, &[]).as_ref(), &device);
+    print_power(&level_power(level, &device, &[]), &device);
     let checked: Vec<&PlanItem> = plan.checked().collect();
     print_plan(&plan, &checked, &plan.tweaks, &plan.memory);
     Ok(())
@@ -530,10 +561,15 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     if args.include.iter().any(|id| id == POWER_PLAN) {
         bail!("`{POWER_PLAN}` lo marca el nivel; para elegir otro plan usa `framerush power set`");
     }
-    let power = level_power_plan(level, &device, &args.exclude);
+    if args.include.iter().any(|id| id == CUSTOM_POWER_PLAN) {
+        bail!("`{CUSTOM_POWER_PLAN}` lo marca el nivel (agresivo o extremo, solo Windows)");
+    }
+    let power = level_power(level, &device, &args.exclude);
     let others = |ids: &[String]| -> Vec<String> {
         ids.iter()
-            .filter(|id| *id != PERSISTENT_PRIORITY && *id != POWER_PLAN)
+            .filter(|id| {
+                ![PERSISTENT_PRIORITY, POWER_PLAN, CUSTOM_POWER_PLAN].contains(&id.as_str())
+            })
             .cloned()
             .collect()
     };
@@ -544,7 +580,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     if !args.yes {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
         print_game(game.as_ref(), &args.game, persistent, affinity.as_deref());
-        print_power(power.as_ref(), &device);
+        print_power(&power, &device);
         print_plan(&plan, &checked, &tweaks, &memory);
         println!("\nRevisa las filas y repite con --yes para aplicarlas.");
         return Ok(());
@@ -553,15 +589,16 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         && tweaks.is_empty()
         && memory.is_empty()
         && game.is_none()
-        && power.is_none()
+        && power.plan.is_none()
+        && !power.custom_checked
     {
         println!("No hay filas ni ajustes marcados ni juego: no se toca nada.");
         return Ok(());
     }
     let request = ApplyRequest {
         memory,
-        power_plan: power,
-        custom_power_plan: None,
+        custom_power_plan: power.custom_base.filter(|_| power.custom_checked),
+        power_plan: power.plan,
         items: checked,
         tweaks,
         game: game.map(|g| GameBoost {
