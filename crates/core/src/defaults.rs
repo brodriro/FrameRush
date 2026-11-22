@@ -181,10 +181,23 @@ pub fn affinity_warning(device: &DeviceProfile) -> Option<bool> {
         .map(|n| n <= 4)
 }
 
+/// `battery-warning`: el equipo tiene batería y está desenchufado. Es un aviso que no bloquea
+/// Aplicar (design/SETTINGS.md, regla 12); sin batería, o si no se pudo leer, no aparece (P15).
+pub fn battery_warning(device: &DeviceProfile) -> bool {
+    device.battery.is_some_and(|b| b.discharging)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use framerush_device::samples;
+
+    #[test]
+    fn battery_warning_only_when_discharging() {
+        assert!(battery_warning(&samples::hybrid_laptop()));
+        assert!(!battery_warning(&samples::apple_silicon_mac()));
+        assert!(!battery_warning(&samples::desktop_without_battery()));
+    }
 
     #[test]
     fn thermal_thresholds_come_from_the_device() {
