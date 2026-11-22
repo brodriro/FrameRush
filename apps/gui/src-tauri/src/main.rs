@@ -10,13 +10,16 @@
 //! - Watchdog (It1.4, P5): tras `apply`, con `auto-revert-on-exit`, vigila el juego y al cerrarse
 //!   revierte lo de sesión y emite `game-exited` con el informe.
 //! - `profiles` y `save_profile`: perfiles por juego (It3.2) en `profiles.json`.
+//! - evento `game-launched` cuando arranca un juego de Steam: la UI carga y aplica su perfil si
+//!   `profile-auto-apply` está activo (P4).
 //!
-//! Turbo, auto-aplicar el perfil y el diagnóstico aún no están conectados: la UI lo dice.
+//! Turbo y el diagnóstico aún no están conectados: la UI lo dice.
 
 // Sin consola en las compilaciones de release de Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod actions;
+mod launch;
 mod profiles;
 mod snapshot;
 
@@ -289,6 +292,7 @@ fn main() -> anyhow::Result<()> {
             let state = start(app.handle(), framerush_sensors::detect(), None);
             app.manage(Sensors(Mutex::new(state)));
             app.manage(Watchdog(Mutex::new(None)));
+            launch::spawn(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())?;

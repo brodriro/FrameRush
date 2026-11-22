@@ -539,6 +539,39 @@ fn running_game(processes: &[ProcessInfo]) -> Vec<Target> {
     read().unwrap_or_default()
 }
 
+/// Juego de Steam en marcha y sus procesos, para detectar el lanzamiento (It3.2): por
+/// `RunningAppID` o, si Steam no lo da, por el exe en primer plano bajo su carpeta (V12). Sin
+/// procesos todavía (Steam ya lo marca pero aún no arrancó), no hay juego.
+pub(crate) fn detected_game(processes: &[ProcessInfo]) -> Result<Option<(u32, Vec<Target>)>> {
+    let apps = steam_apps()
+        .context("no se pudo leer Steam")?
+        .unwrap_or_default();
+    let running = framerush_steam::running_app_id().context("no se pudo leer RunningAppID")?;
+    let foreground = foreground_exe();
+    Ok(
+        framerush_steam::detect(&apps, running, foreground.as_deref()).and_then(|(app, _)| {
+            let t = targets(app, processes);
+            (!t.is_empty()).then_some((app.appid, t))
+        }),
+    )
+}
+
+#[cfg(windows)]
+fn foreground_exe() -> Option<PathBuf> {
+    use framerush_platform::ProcessControl;
+    // Sin ventana en primer plano (o sin permiso para leerla) solo queda `RunningAppID`.
+    framerush_platform::WindowsPlatform::new()
+        .foreground()
+        .ok()
+        .flatten()
+        .map(|t| t.exe_path)
+}
+
+#[cfg(not(windows))]
+fn foreground_exe() -> Option<PathBuf> {
+    None
+}
+
 /// Procesos del juego `appid` (el que eligió el usuario), vacío si no está en marcha.
 pub(crate) fn game_targets(appid: u32, processes: &[ProcessInfo]) -> Result<Vec<Target>> {
     let apps = steam_apps()
