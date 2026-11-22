@@ -73,6 +73,13 @@ pub enum Change {
         base: PowerPlan,
         created: Option<PowerPlan>,
     },
+    /// `refresh-rate-max`: frecuencia de un monitor durante la sesión. `previous` es la de antes
+    /// de la primera vez (backup único).
+    RefreshRate {
+        display: String,
+        previous: u32,
+        applied: u32,
+    },
 }
 
 impl Change {
@@ -90,7 +97,8 @@ impl Change {
             | Change::Kill { .. }
             | Change::StopService { .. }
             | Change::PowerPlan { .. }
-            | Change::CustomPowerPlan { .. } => Scope::Session,
+            | Change::CustomPowerPlan { .. }
+            | Change::RefreshRate { .. } => Scope::Session,
             Change::Tweak { tweak, .. } => crate::tweak_scope(*tweak),
             Change::FullscreenOptimizationsOff { .. }
             | Change::HighPerformanceGpu { .. }
@@ -111,7 +119,8 @@ impl Change {
             | Change::HighPerformanceGpu { .. }
             | Change::PersistentPriority { .. }
             | Change::PowerPlan { .. }
-            | Change::CustomPowerPlan { .. } => None,
+            | Change::CustomPowerPlan { .. }
+            | Change::RefreshRate { .. } => None,
         }
     }
 }

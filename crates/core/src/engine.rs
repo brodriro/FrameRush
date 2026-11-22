@@ -21,6 +21,13 @@ pub const CUSTOM_POWER_PLAN_NAME: &str = "FrameRush Max";
 /// Prioridad que se pone al bajar la de un proceso de fondo (propuesta de diseño, PLAN.md §6).
 pub const LOWERED_PRIORITY: Priority = Priority::BelowNormal;
 
+/// `refresh-rate-max` para un monitor ([`crate::defaults::refresh_rate_max`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefreshRate {
+    pub display: String,
+    pub hz: u32,
+}
+
 /// Lo que se le hace al juego.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameBoost {
@@ -55,6 +62,8 @@ pub struct ApplyRequest<'a> {
     /// activa ese duplicado ([`crate::defaults::custom_power_plan_base`]). Si está, sustituye a
     /// `power_plan`.
     pub custom_power_plan: Option<PowerPlan>,
+    /// Frecuencias que se ponen durante la sesión, una por monitor.
+    pub refresh_rates: Vec<RefreshRate>,
 }
 
 /// Resultado de una acción.
@@ -132,6 +141,9 @@ pub fn describe(change: &Change) -> String {
             format!("GPU de alto rendimiento: {}", exe.display())
         }
         Change::PowerPlan { applied, .. } => format!("plan de energía «{}»", applied.name),
+        Change::RefreshRate {
+            display, applied, ..
+        } => format!("refresco de {display} a {applied} Hz"),
         Change::CustomPowerPlan { base, .. } => {
             format!(
                 "plan de energía «{CUSTOM_POWER_PLAN_NAME}» (sobre «{}»)",
@@ -202,6 +214,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             self.set_custom_power_plan(&mut journal, batch, base, &mut report)?;
         } else if let Some(plan) = &request.power_plan {
             self.set_power_plan(&mut journal, batch, plan, &mut report)?;
+        }
+        for rate in &request.refresh_rates {
+            self.set_refresh_rate(&mut journal, batch, rate, &mut report)?;
         }
         for item in &request.items {
             match &item.subject {
@@ -523,6 +538,59 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         Ok(())
     }
 
+    /// Frecuencia de un monitor con backup único: la original es la de la primera vez.
+    fn set_refresh_rate(
+        &self,
+        journal: &mut Journal,
+        batch: u64,
+        rate: &RefreshRate,
+        report: &mut Report,
+    ) -> Result<(), EngineError> {
+        let original = journal
+            .entries
+            .iter()
+            .filter(|e| e.status != EntryStatus::Failed)
+            .find_map(|e| match &e.change {
+                Change::RefreshRate {
+                    display, previous, ..
+                } if *display == rate.display => Some(*previous),
+                _ => None,
+            });
+        let previous = match original {
+            Some(hz) => hz,
+            None => {
+                let current = self.platform.displays().map(|ds| {
+                    ds.into_iter()
+                        .find(|d| d.id == rate.display)
+                        .map(|d| d.current.hz)
+                });
+                match current {
+                    Ok(Some(hz)) if hz == rate.hz => {
+                        let what = format!("refresco de {} a {} Hz", rate.display, rate.hz);
+                        report.push(what, Outcome::Skipped("ya está a esa frecuencia".into()));
+                        return Ok(());
+                    }
+                    Ok(Some(hz)) => hz,
+                    Ok(None) => {
+                        let e = PlatformError::NotFound(format!("pantalla {}", rate.display));
+                        report.push(format!("leer {}", rate.display), Outcome::Failed(e));
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        report.push(format!("leer {}", rate.display), Outcome::Failed(e));
+                        return Ok(());
+                    }
+                }
+            }
+        };
+        let change = Change::RefreshRate {
+            display: rate.display.clone(),
+            previous,
+            applied: rate.hz,
+        };
+        self.run(journal, batch, change, report)
+    }
+
     /// Borra el plan propio de la entrada o, si no llegó a anotarse, los que tengan su nombre.
     /// Un plan que ya no existe no es un error.
     fn delete_custom_power_plan(&self, created: Option<&PowerPlan>) -> Result<(), PlatformError> {
@@ -643,6 +711,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::PersistentPriority { exe, .. } => self.platform.set_persistent_priority(exe),
             Change::HighPerformanceGpu { exe } => self.platform.prefer_high_performance_gpu(exe),
             Change::PowerPlan { applied, .. } => self.platform.set_active_power_plan(&applied.id),
+            Change::RefreshRate {
+                display, applied, ..
+            } => self.platform.set_refresh_rate(display, *applied),
             // Lo crea `set_custom_power_plan`; aquí solo se puede activar uno ya creado.
             Change::CustomPowerPlan { created, .. } => match created {
                 Some(plan) => self.platform.set_active_power_plan(&plan.id),
@@ -718,6 +789,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             }
             Change::HighPerformanceGpu { exe } => self.platform.clear_gpu_preference(exe),
             Change::PowerPlan { previous, .. } => self.platform.set_active_power_plan(&previous.id),
+            Change::RefreshRate {
+                display, previous, ..
+            } => self.platform.set_refresh_rate(display, *previous),
             Change::CustomPowerPlan {
                 previous, created, ..
             } => self
@@ -776,6 +850,18 @@ fn already_applied(journal: &Journal, change: &Change) -> bool {
             (Change::PowerPlan { applied: a, .. }, Change::PowerPlan { applied: b, .. }) => {
                 a.id == b.id
             }
+            (
+                Change::RefreshRate {
+                    display: a,
+                    applied: x,
+                    ..
+                },
+                Change::RefreshRate {
+                    display: b,
+                    applied: y,
+                    ..
+                },
+            ) => a == b && x == y,
             // Hay un solo plan propio por sesión.
             (Change::CustomPowerPlan { .. }, Change::CustomPowerPlan { .. }) => true,
             _ => false,
@@ -803,8 +889,8 @@ mod tests {
     use crate::{Category, Level, Risk};
     use framerush_platform::mock::MockPlatform;
     use framerush_platform::{
-        CapabilitySet, GameTuning, PowerControl, ProcessControl, ProcessInfo, ServiceControl,
-        ServiceState,
+        CapabilitySet, DisplayControl, GameTuning, PowerControl, ProcessControl, ProcessInfo,
+        ServiceControl, ServiceState,
     };
     use std::sync::Mutex;
 
@@ -864,6 +950,7 @@ mod tests {
             memory: vec![],
             power_plan: None,
             custom_power_plan: None,
+            refresh_rates: vec![],
             items: items.iter().collect(),
             tweaks: vec![],
             game: None,
@@ -875,6 +962,7 @@ mod tests {
             memory: vec![],
             power_plan: None,
             custom_power_plan: None,
+            refresh_rates: vec![],
             items: vec![],
             tweaks: vec![],
             game: Some(GameBoost {
@@ -1022,6 +1110,57 @@ mod tests {
 
     fn plans(m: &MockPlatform) -> Vec<String> {
         m.power_plans().unwrap().into_iter().map(|p| p.id).collect()
+    }
+
+    #[test]
+    fn refresh_rate_round_trip_keeps_the_original() {
+        let m = MockPlatform::new(4);
+        let mode = |hz| framerush_platform::Mode {
+            width: 1920,
+            height: 1080,
+            hz,
+        };
+        m.set_displays(vec![framerush_platform::Display {
+            id: "d1".into(),
+            current: mode(60),
+            modes: vec![mode(60), mode(120), mode(144)],
+        }]);
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        let req = |hz| ApplyRequest {
+            refresh_rates: vec![RefreshRate {
+                display: "d1".into(),
+                hz,
+            }],
+            ..Default::default()
+        };
+        let hz = || m.displays().unwrap()[0].current.hz;
+
+        // Ya está a 60 Hz: no se toca ni se registra.
+        let report = engine.apply(&req(60)).unwrap();
+        assert!(matches!(report.lines[0].outcome, Outcome::Skipped(_)));
+        assert!(store.load().unwrap().entries.is_empty());
+
+        engine.apply(&req(120)).unwrap();
+        engine.apply(&req(144)).unwrap();
+        assert_eq!(hz(), 144);
+        assert!(
+            store
+                .load()
+                .unwrap()
+                .entries
+                .iter()
+                .all(|e| matches!(e.change, Change::RefreshRate { previous: 60, .. }))
+        );
+
+        engine.revert_session().unwrap();
+        assert_eq!(hz(), 60);
+        assert!(store.load().unwrap().entries.is_empty());
+
+        // Un modo que no existe falla y no deja nada que revertir.
+        let report = engine.apply(&req(75)).unwrap();
+        assert!(matches!(report.lines[0].outcome, Outcome::Failed(_)));
+        assert_eq!(hz(), 60);
     }
 
     #[test]

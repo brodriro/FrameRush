@@ -598,6 +598,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     let request = ApplyRequest {
         memory,
         custom_power_plan: power.custom_base.filter(|_| power.custom_checked),
+        refresh_rates: vec![],
         power_plan: power.plan,
         items: checked,
         tweaks,

@@ -6,7 +6,7 @@
 
 use crate::Level;
 use framerush_device::{CoreKind, DeviceProfile, Gpu, Sourced};
-use framerush_platform::{Os, PowerPlan};
+use framerush_platform::{Display, Os, PowerPlan};
 
 /// Fallback del umbral de alerta térmica (It6).
 pub const FALLBACK_ALERT_C: f32 = 85.0;
@@ -116,6 +116,23 @@ pub fn custom_power_plan_base(level: Level, device: &DeviceProfile) -> Option<&P
     level_plan(level, device)
         .or_else(active)
         .filter(|p| p.name != crate::CUSTOM_POWER_PLAN_NAME)
+}
+
+/// `refresh-rate-max` (Windows, desde Agresivo): cada monitor que no está a su máxima
+/// frecuencia con la resolución actual, con esa frecuencia. Si ya están al máximo, la lista
+/// sale vacía y el ajuste se oculta (It6).
+pub fn refresh_rate_max(level: Level, device: &DeviceProfile) -> Vec<(&Display, u32)> {
+    if device.os != Os::Windows || level == Level::Normal {
+        return vec![];
+    }
+    device
+        .displays
+        .iter()
+        .filter_map(|d| {
+            let max = d.max_hz_at_current_resolution()?;
+            (max > d.current.hz).then_some((d, max))
+        })
+        .collect()
 }
 
 /// `gpu-preference`: la GPU con más VRAM dedicada, solo si hay más de una.
@@ -243,6 +260,27 @@ mod tests {
         let mut d = samples::hybrid_laptop();
         d.active_power_plan = Some(WIN_HIGH_PERFORMANCE.into());
         assert_eq!(power_plan_for(Level::Agresivo, &d), None);
+    }
+
+    #[test]
+    fn refresh_rate_max_only_where_it_can_go_up() {
+        let laptop = samples::hybrid_laptop();
+        assert!(refresh_rate_max(Level::Normal, &laptop).is_empty());
+        let up = refresh_rate_max(Level::Agresivo, &laptop);
+        assert_eq!(up.len(), 1);
+        assert_eq!(
+            up[0].1,
+            laptop.displays[0].max_hz_at_current_resolution().unwrap()
+        );
+        assert!(up[0].1 > laptop.displays[0].current.hz);
+        // Ya al máximo: se oculta.
+        let mut at_max = laptop.clone();
+        at_max.displays[0].current.hz = up[0].1;
+        assert!(refresh_rate_max(Level::Extremo, &at_max).is_empty());
+        // Solo Windows.
+        let mut linux = laptop;
+        linux.os = Os::Linux;
+        assert!(refresh_rate_max(Level::Extremo, &linux).is_empty());
     }
 
     #[test]

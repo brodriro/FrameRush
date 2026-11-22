@@ -60,6 +60,7 @@ fn boost(m: &MockPlatform, priority: Priority, confirmed: bool) -> ApplyRequest<
         memory: vec![],
         power_plan: None,
         custom_power_plan: None,
+        refresh_rates: vec![],
         items: vec![],
         tweaks: vec![],
         game: Some(GameBoost {
@@ -146,6 +147,7 @@ fn p5_persistent_changes_survive_the_session_revert() {
         memory: vec![],
         power_plan: None,
         custom_power_plan: None,
+        refresh_rates: vec![],
         items: p.checked().collect(),
         tweaks: vec![Tweak::GameDvrOff],
         game: None,
