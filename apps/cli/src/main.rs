@@ -525,6 +525,12 @@ fn print_device(device: &DeviceProfile) {
         Some(_) => println!("Batería: enchufado"),
         None => println!("Batería: no hay o no se pudo leer"),
     }
+    if defaults::battery_warning(device) {
+        println!(
+            "AVISO (battery-warning): el equipo está con batería; enchúfalo para jugar. \
+             Aplicar sigue disponible."
+        );
+    }
     println!();
 }
 
