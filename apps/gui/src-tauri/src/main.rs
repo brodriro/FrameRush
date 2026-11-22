@@ -9,13 +9,15 @@
 //!   Con el helper abierto, lo que pide admin pasa por él.
 //! - Watchdog (It1.4, P5): tras `apply`, con `auto-revert-on-exit`, vigila el juego y al cerrarse
 //!   revierte lo de sesión y emite `game-exited` con el informe.
+//! - `profiles` y `save_profile`: perfiles por juego (It3.2) en `profiles.json`.
 //!
-//! El juego, Turbo, los perfiles y el diagnóstico aún no están conectados: la UI lo dice.
+//! Turbo, auto-aplicar el perfil y el diagnóstico aún no están conectados: la UI lo dice.
 
 // Sin consola en las compilaciones de release de Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod actions;
+mod profiles;
 mod snapshot;
 
 use actions::Elevated;
@@ -204,6 +206,18 @@ async fn apply(
     Ok(out)
 }
 
+/// Perfiles guardados por `appid`.
+#[tauri::command]
+fn profiles() -> Result<profiles::Profiles, String> {
+    profiles::load().map_err(|e| format!("{e:#}"))
+}
+
+/// Guarda (o sustituye) el perfil del juego `appid`.
+#[tauri::command]
+fn save_profile(appid: u32, profile: profiles::Profile) -> Result<(), String> {
+    profiles::save(appid, profile).map_err(|e| format!("{e:#}"))
+}
+
 #[tauri::command]
 async fn undo(sensors: tauri::State<'_, Sensors>) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
@@ -263,7 +277,13 @@ fn elevated_sources() -> anyhow::Result<(framerush_sensors::Sources, Elevated)> 
 fn main() -> anyhow::Result<()> {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            snapshot, elevate, apply, undo, revert
+            snapshot,
+            elevate,
+            apply,
+            undo,
+            revert,
+            profiles,
+            save_profile
         ])
         .setup(|app| {
             let state = start(app.handle(), framerush_sensors::detect(), None);

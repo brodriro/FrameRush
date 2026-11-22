@@ -22,10 +22,8 @@ framerush-rules.workspace = true
 framerush-sensors.workspace = true
 framerush-steam.workspace = true
 serde.workspace = true
-tauri.workspace = true
-
-[dev-dependencies]
 serde_json.workspace = true
+tauri.workspace = true
 
 [lints]
 workspace = true
