@@ -212,8 +212,11 @@ fn outcomes(report: Report, not_wired: Vec<String>, needs_admin: Vec<String>) ->
 /// Lo que mantiene abierto el helper elevado.
 #[cfg(windows)]
 pub type Elevated = framerush_platform::Helper;
+/// Fuera de Windows aún no hay helper: el tipo no tiene valores y `Option<Elevated>` siempre es
+/// `None`.
 #[cfg(not(windows))]
-pub type Elevated = ();
+#[derive(Clone)]
+pub enum Elevated {}
 
 // Fuera de Windows `run` no las ejecuta, así que no se leen.
 #[cfg_attr(not(windows), allow(dead_code))]
