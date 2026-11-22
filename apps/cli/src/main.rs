@@ -508,7 +508,10 @@ fn print_device(device: &DeviceProfile) {
         let vram = g.dedicated_vram_bytes.map_or(String::new(), |b| {
             format!(" · {} MB dedicados", b / (1024 * 1024))
         });
-        println!("GPU: {}{vram}", g.name);
+        let slowdown = g
+            .slowdown_c
+            .map_or(String::new(), |c| format!(" · slowdown a {c:.0} °C"));
+        println!("GPU: {}{vram}{slowdown}", g.name);
     }
     if device.gpus.is_empty() {
         println!("GPU: no detectada");
@@ -807,10 +810,10 @@ fn sensor_providers() -> Vec<Box<dyn framerush_sensors::SensorProvider>> {
     let mut providers: Vec<Box<dyn framerush_sensors::SensorProvider>> = vec![];
     match framerush_sensors::NvidiaGpus::open() {
         Ok(gpus) => {
-            for (name, slowdown) in gpus.slowdown_c() {
-                match slowdown {
-                    Some(c) => println!("{name}: slowdown a {c:.0} °C"),
-                    None => println!("{name}: umbral de slowdown no disponible"),
+            for g in gpus.gpus() {
+                match g.slowdown_c {
+                    Some(c) => println!("{}: slowdown a {c:.0} °C", g.name),
+                    None => println!("{}: umbral de slowdown no disponible", g.name),
                 }
             }
             providers.push(Box::new(gpus));
@@ -854,7 +857,12 @@ fn sensors(watch: bool) -> Result<()> {
 /// Perfil del equipo con la plataforma nativa (R8).
 #[cfg(windows)]
 fn native_device(os: Os) -> DeviceProfile {
-    framerush_device::detect(&framerush_platform::WindowsPlatform::new(), os)
+    let mut device = framerush_device::detect(&framerush_platform::WindowsPlatform::new(), os);
+    // El umbral de slowdown viene de NVML (sensores), no de la plataforma.
+    if let Ok(nvidia) = framerush_sensors::NvidiaGpus::open() {
+        nvidia.fill_slowdown(&mut device.gpus);
+    }
+    device
 }
 
 /// Fuera de Windows aún no hay plataforma nativa: solo el SO.
