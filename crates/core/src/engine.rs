@@ -29,6 +29,9 @@ pub struct GameBoost {
     pub fullscreen_optimizations_off: bool,
     /// `gpu-preference = alto` para el exe del juego (persistente, P13, V22).
     pub high_performance_gpu: bool,
+    /// `cpu-affinity` con las CPU de `cpu-affinity-cores` (opt-in, de sesión). Quien arma la
+    /// petición la deja en `None` si hay anticheat (P2, [`crate::Plan::game_tuning_allowed`]).
+    pub affinity: Option<Vec<usize>>,
     /// `game-priority-persistent`: Alta para el exe en cada arranque (IFEO). Se ignora si
     /// `priority` es Normal (P1); ver [`crate::persistent_priority_default`].
     pub persistent_priority: bool,
@@ -103,6 +106,9 @@ pub fn describe(change: &Change) -> String {
         Change::Priority {
             target, applied, ..
         } => format!("prioridad {applied:?} → {}", proc(target)),
+        Change::Affinity {
+            target, applied, ..
+        } => format!("afinidad a {} CPU → {}", applied.len(), proc(target)),
         Change::Suspend { target } => format!("suspender {}", proc(target)),
         Change::Kill { target } => format!("cerrar {}", proc(target)),
         Change::StopService { name } => format!("detener el servicio {name}"),
@@ -214,6 +220,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         }
         if let Some(g) = &request.game {
             self.set_priority(&mut journal, batch, &g.target, g.priority, &mut report)?;
+            if let Some(cpus) = &g.affinity {
+                self.set_affinity(&mut journal, batch, &g.target, cpus, &mut report)?;
+            }
             let exe = &g.target.exe_path;
             if g.fullscreen_optimizations_off {
                 let change = Change::FullscreenOptimizationsOff { exe: exe.clone() };
@@ -379,6 +388,45 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         self.run(journal, batch, change, report)
     }
 
+    /// Afinidad con backup único: la original es la de la primera vez en la sesión.
+    fn set_affinity(
+        &self,
+        journal: &mut Journal,
+        batch: u64,
+        target: &Target,
+        cpus: &[usize],
+        report: &mut Report,
+    ) -> Result<(), EngineError> {
+        let mut applied = cpus.to_vec();
+        applied.sort_unstable();
+        applied.dedup();
+        let original = journal.entries.iter().find_map(|e| match &e.change {
+            Change::Affinity {
+                target: t,
+                previous,
+                ..
+            } if t == target && e.status == EntryStatus::Done => Some(previous.clone()),
+            _ => None,
+        });
+        let previous = match original {
+            Some(p) => p,
+            None => match self.platform.affinity(target) {
+                Ok(p) => p,
+                Err(e) => {
+                    let what = format!("leer la afinidad de {}", target.exe_path.display());
+                    report.push(what, Outcome::Failed(e));
+                    return Ok(());
+                }
+            },
+        };
+        let change = Change::Affinity {
+            target: target.clone(),
+            previous,
+            applied,
+        };
+        self.run(journal, batch, change, report)
+    }
+
     /// Ajuste persistente con backup único: si ya está aplicado no se vuelve a leer el estado
     /// (sería el que pusimos nosotros).
     fn apply_tweak(
@@ -433,6 +481,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::Priority {
                 target, applied, ..
             } => self.platform.set_priority(target, *applied),
+            Change::Affinity {
+                target, applied, ..
+            } => self.platform.set_affinity(target, applied),
             Change::Suspend { target } => self.platform.suspend(target),
             Change::Kill { target } => self.platform.kill(target),
             Change::StopService { name } => self.platform.stop_service(name),
@@ -500,6 +551,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::Priority {
                 target, previous, ..
             } => self.platform.set_priority(target, *previous),
+            Change::Affinity {
+                target, previous, ..
+            } => self.platform.set_affinity(target, previous),
             Change::Suspend { target } => self.platform.resume(target),
             Change::StopService { name } => self.platform.start_service(name),
             Change::Tweak { tweak, previous } => self.platform.restore_tweak(*tweak, previous),
@@ -532,6 +586,18 @@ fn already_applied(journal: &Journal, change: &Change) -> bool {
                     ..
                 },
             ) => a == b && x == y,
+            (
+                Change::Affinity {
+                    target: a,
+                    applied: x,
+                    ..
+                },
+                Change::Affinity {
+                    target: b,
+                    applied: y,
+                    ..
+                },
+            ) => a == b && x == y,
             (Change::Suspend { target: a }, Change::Suspend { target: b }) => a == b,
             (Change::StopService { name: a }, Change::StopService { name: b }) => a == b,
             (
@@ -554,7 +620,9 @@ mod tests {
     use super::*;
     use crate::{Category, Level, Risk};
     use framerush_platform::mock::MockPlatform;
-    use framerush_platform::{ProcessControl, ProcessInfo, ServiceControl, ServiceState};
+    use framerush_platform::{
+        GameTuning, ProcessControl, ProcessInfo, ServiceControl, ServiceState,
+    };
     use std::sync::Mutex;
 
     /// Journal en memoria; con `fail_saves` simula un disco que no se puede escribir.
@@ -627,6 +695,7 @@ mod tests {
                 priority,
                 realtime_confirmed: confirmed,
                 fullscreen_optimizations_off: false,
+                affinity: None,
                 high_performance_gpu: false,
                 persistent_priority: false,
             }),
@@ -702,6 +771,30 @@ mod tests {
                 .all(|e| matches!(e.change, Change::Priority { .. })),
             "solo la prioridad del juego"
         );
+    }
+
+    /// Afinidad del juego: se aplica, reaplicar otra no pierde la original, y revertir la
+    /// devuelve.
+    #[test]
+    fn affinity_round_trip_keeps_the_original() {
+        let m = MockPlatform::new(8);
+        let game = m.spawn(9, "game.exe", "/game", 1);
+        let original = m.affinity(&game).unwrap();
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        let mut req = boost(&game, Priority::Normal, false);
+        if let Some(g) = req.game.as_mut() {
+            g.affinity = Some(vec![5, 2, 3, 2]);
+        }
+        engine.apply(&req).unwrap();
+        assert_eq!(m.affinity(&game).unwrap(), [2, 3, 5]);
+        if let Some(g) = req.game.as_mut() {
+            g.affinity = Some(vec![4]);
+        }
+        engine.apply(&req).unwrap();
+        assert_eq!(m.affinity(&game).unwrap(), [4]);
+        engine.revert_session().unwrap();
+        assert_eq!(m.affinity(&game).unwrap(), original);
     }
 
     #[test]

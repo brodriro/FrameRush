@@ -22,6 +22,13 @@ pub enum Change {
     Suspend {
         target: Target,
     },
+    /// Afinidad del juego (`cpu-affinity`, opt-in). `previous` es la original, como en
+    /// `Priority`.
+    Affinity {
+        target: Target,
+        previous: Vec<usize>,
+        applied: Vec<usize>,
+    },
     /// Proceso cerrado: se registra, pero no se puede deshacer.
     Kill {
         target: Target,
@@ -63,6 +70,7 @@ impl Change {
     pub fn scope(&self) -> Scope {
         match self {
             Change::Priority { .. }
+            | Change::Affinity { .. }
             | Change::Suspend { .. }
             | Change::Kill { .. }
             | Change::StopService { .. } => Scope::Session,
@@ -77,6 +85,7 @@ impl Change {
     pub fn target(&self) -> Option<&Target> {
         match self {
             Change::Priority { target, .. }
+            | Change::Affinity { target, .. }
             | Change::Suspend { target }
             | Change::Kill { target } => Some(target),
             Change::StopService { .. }

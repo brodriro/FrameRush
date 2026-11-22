@@ -413,6 +413,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             priority: args.game.game_priority.into(),
             realtime_confirmed: args.game.confirm_realtime,
             fullscreen_optimizations_off: args.game.fso_off,
+            affinity: None,
             high_performance_gpu: args.game.gpu_alto,
             persistent_priority: persistent == Some(Mark::On),
         }),

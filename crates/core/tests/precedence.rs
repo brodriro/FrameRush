@@ -65,6 +65,7 @@ fn boost(m: &MockPlatform, priority: Priority, confirmed: bool) -> ApplyRequest<
             priority,
             realtime_confirmed: confirmed,
             fullscreen_optimizations_off: false,
+            affinity: None,
             high_performance_gpu: false,
             persistent_priority: false,
         }),
