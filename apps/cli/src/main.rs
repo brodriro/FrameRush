@@ -445,6 +445,26 @@ fn persistent_mark(level: Level, admin: bool, args: &GameArgs, exclude: &[String
 
 /// Perfil de hardware detectado (R8). Lo que falta sale como "no detectado".
 fn print_device(device: &DeviceProfile) {
+    let mut system = vec![match device.windows_11 {
+        Some(true) => "Windows 11".to_owned(),
+        Some(false) => "Windows anterior a 11".to_owned(),
+        None => format!("{:?}", device.os),
+    }];
+    if let Some(build) = &device.os_build {
+        system.push(format!("build {build}"));
+    }
+    if let Some(maker) = &device.manufacturer {
+        system.push(maker.clone());
+    }
+    match device.vbs_hvci_enabled {
+        Some(true) => system.push("VBS en ejecución".into()),
+        Some(false) => system.push("VBS desactivado".into()),
+        None => {}
+    }
+    if !device.installed_apps.is_empty() {
+        system.push(format!("{} apps instaladas", device.installed_apps.len()));
+    }
+    println!("Sistema: {}", system.join(" · "));
     match &device.cpu {
         Some(cpu) => {
             let cores = cpu.physical_cores().map_or("¿?".into(), |n| n.to_string());
