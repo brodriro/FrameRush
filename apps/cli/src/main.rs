@@ -628,20 +628,35 @@ fn run(op: Op<'_>) -> Result<Report> {
             request.tweaks.iter().any(|t| admin(*t))
                 || !request.memory.is_empty()
                 || request.game.as_ref().is_some_and(|g| g.persistent_priority)
+                || request.items.iter().any(|i| {
+                    matches!(&i.subject, Subject::Processes(ps)
+                        if ps.iter().any(|p| p.same_user != Some(true)))
+                })
         }
         Op::Undo | Op::Revert => {
             let journal = store.load()?;
             let last = journal.last_batch();
-            journal
+            let pending: Vec<&Change> = journal
                 .entries
                 .iter()
                 .filter(|e| e.status != EntryStatus::Failed)
                 .filter(|e| matches!(op, Op::Revert) || Some(e.batch) == last)
-                .any(|e| match e.change {
-                    Change::Tweak { tweak, .. } => admin(tweak),
-                    Change::PersistentPriority { .. } => true,
-                    _ => false,
-                })
+                .map(|e| &e.change)
+                .collect();
+            // P12: un proceso que sigue vivo y no es de este usuario solo lo revierte el helper.
+            let foreign = || -> Result<bool> {
+                let running = scan_processes().context("no se pudo listar los procesos")?;
+                Ok(pending.iter().filter_map(|c| c.target()).any(|t| {
+                    running
+                        .iter()
+                        .any(|p| p.target == *t && p.same_user != Some(true))
+                }))
+            };
+            pending.iter().any(|c| match c {
+                Change::Tweak { tweak, .. } => admin(*tweak),
+                Change::PersistentPriority { .. } => true,
+                _ => false,
+            }) || foreign()?
         }
     };
     let platform = if needs_helper {
