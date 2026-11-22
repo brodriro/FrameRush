@@ -4,8 +4,8 @@
 //! Ajustes de sistema en el registro (`SystemTweaks`, módulo `registry`). Los que piden admin
 //! pasan por el helper elevado si hay uno (módulo `helper`).
 //!
-//! Servicios y planes de energía llegan en M5 y M2; hasta entonces devuelven `Unsupported` y
-//! `capabilities()` lo refleja.
+//! Planes de energía con `powrprof` (módulo `power`). Los servicios llegan en M5; hasta entonces
+//! devuelven `Unsupported` y `capabilities()` lo refleja.
 //!
 //! Antes de cada operación se revalida el `Target` (PID, arranque y ruta) con `sysinfo`, la
 //! misma fuente del scan, para no tocar un PID reutilizado. Queda una ventana mínima entre la
@@ -16,6 +16,7 @@ mod cpus;
 mod effects;
 mod helper;
 mod integrity;
+mod power;
 mod registry;
 
 pub use helper::{Helper, serve_helper};
@@ -569,15 +570,15 @@ impl ServiceControl for WindowsPlatform {
 
 impl PowerControl for WindowsPlatform {
     fn power_plans(&self) -> Result<Vec<PowerPlan>> {
-        Err(PlatformError::Unsupported("planes de energía (M2)"))
+        power::power_plans()
     }
 
     fn active_power_plan(&self) -> Result<PowerPlan> {
-        Err(PlatformError::Unsupported("planes de energía (M2)"))
+        power::active_power_plan()
     }
 
-    fn set_active_power_plan(&self, _id: &str) -> Result<()> {
-        Err(PlatformError::Unsupported("planes de energía (M2)"))
+    fn set_active_power_plan(&self, id: &str) -> Result<()> {
+        power::set_active_power_plan(id)
     }
 }
 
@@ -930,7 +931,7 @@ impl Capabilities for WindowsPlatform {
             suspend: true,
             kill: true,
             services: false,
-            power_plans: false,
+            power_plans: true,
             affinity: true,
             memory: true,
         }
