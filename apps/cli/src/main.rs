@@ -475,6 +475,11 @@ fn print_device(device: &DeviceProfile) {
     if let Some(maker) = &device.manufacturer {
         system.push(maker.clone());
     }
+    match device.laptop {
+        Some(true) => system.push("portátil".into()),
+        Some(false) => system.push("no es portátil".into()),
+        None => {}
+    }
     match device.vbs_hvci_enabled {
         Some(true) => system.push("VBS en ejecución".into()),
         Some(false) => system.push("VBS desactivado".into()),
