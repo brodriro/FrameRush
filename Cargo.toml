@@ -20,6 +20,8 @@ serde_json = "1"
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 thiserror = "2"
 toml = "0.9"
+# VDF de Steam (libraryfolders.vdf, appmanifest_*.acf).
+keyvalues-parser = "0.2.4"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 windows-sys = "0.61"

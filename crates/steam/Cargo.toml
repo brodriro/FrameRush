@@ -8,3 +8,10 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+keyvalues-parser.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+framerush-platform.workspace = true

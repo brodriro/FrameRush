@@ -679,6 +679,14 @@ impl DisplayControl for WindowsPlatform {
 const HKCU: Hive = Hive::CurrentUser;
 const HKLM: Hive = Hive::LocalMachine;
 
+/// Clave de Steam del usuario. Valve no la documenta (PLAN §6, V12); se lee en local.
+const STEAM: &str = r"Software\Valve\Steam";
+
+/// Carpeta de instalación de Steam (`SteamPath`), o `None` si Steam no está instalado.
+pub fn steam_root() -> Result<Option<PathBuf>> {
+    Ok(registry::read_string(HKCU, STEAM, "SteamPath")?.map(PathBuf::from))
+}
+
 /// Dato que pone un ajuste en un valor.
 #[derive(Debug)]
 enum RegData {
