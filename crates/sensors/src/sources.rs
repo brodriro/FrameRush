@@ -1,7 +1,9 @@
 //! Qué fuentes de sensores tiene el equipo. El orden es el de preferencia; el tacómetro de la
 //! GPU por NVAPI es el último recurso y solo se consulta si ninguna otra fuente da ventiladores.
 
-use crate::{Kind, NvidiaGpus, Reading, Sensor, SensorProvider};
+use crate::{Kind, NvidiaGpus, SensorProvider};
+#[cfg(windows)]
+use crate::{Reading, Sensor};
 
 /// Proveedores del equipo y nombres de todas las fuentes consultadas, encontraran algo o no
 /// (para explicar en la UI por qué falta un sensor).
