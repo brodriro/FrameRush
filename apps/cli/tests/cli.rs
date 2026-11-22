@@ -59,6 +59,18 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
+fn status_without_a_session() {
+    let dir = temp_dir("status");
+    let (ok, stdout) = framerush_in(&dir, &["status"]);
+    assert!(ok);
+    assert!(stdout.contains("no hay sesión abierta"), "{stdout}");
+    let (ok, stdout) = framerush_in(&dir, &["status", "--json"]);
+    assert!(ok);
+    assert!(stdout.contains("\"session\": []"), "{stdout}");
+    assert!(!dir.join("session.json").exists());
+}
+
+#[test]
 fn apply_without_yes_changes_nothing() {
     let dir = temp_dir("apply");
     let (ok, stdout) = framerush_in(&dir, &["apply", "--level", "extremo"]);

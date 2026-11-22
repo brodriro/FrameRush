@@ -141,6 +141,7 @@ dependencies = [
  "framerush-device",
  "framerush-platform",
  "framerush-rules",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]

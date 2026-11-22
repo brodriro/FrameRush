@@ -20,12 +20,12 @@
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use framerush_core::{
-    ApplyRequest, FileStore, GameBoost, JournalStore, Level, Outcome, Plan, PlanItem, PlanOptions,
-    Report, Scope, Snapshot, Subject, defaults, is_protected, persistent_priority_default, plan,
-    tweak_scope,
+    ApplyRequest, Change, EntryStatus, FileStore, GameBoost, JournalStore, Level, Outcome, Plan,
+    PlanItem, PlanOptions, Report, Scope, Snapshot, Subject, defaults, is_protected,
+    persistent_priority_default, plan, status_lines, tweak_scope,
 };
 use framerush_device::DeviceProfile;
-use framerush_platform::{Os, Priority, ProcessInfo, Tweak, scan_processes};
+use framerush_platform::{Os, Priority, ProcessInfo, SavedData, SavedValue, Tweak, scan_processes};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
@@ -58,6 +58,13 @@ enum Command {
     Undo,
     /// Deshace toda la sesión (Restaurar).
     Revert,
+    /// Vista Estado: lo que la sesión tiene aplicado y el valor actual de cada ajuste del
+    /// sistema. No toca el sistema.
+    Status {
+        /// Salida en JSON (exportable).
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -131,6 +138,7 @@ fn main() -> Result<()> {
         Command::Apply(args) => apply(&args),
         Command::Undo => undo(),
         Command::Revert => revert(),
+        Command::Status { json } => status(json),
     }
 }
 
@@ -406,6 +414,91 @@ fn revert() -> Result<()> {
     Ok(())
 }
 
+/// Vista Estado (PLAN.md It5.6). Solo lee: el journal y el valor actual de cada ajuste.
+fn status(json: bool) -> Result<()> {
+    let path = data_dir()?.join("session.json");
+    let journal = FileStore::new(&path)
+        .load()
+        .with_context(|| format!("no se pudo leer el journal {}", path.display()))?;
+    let session = status_lines(&journal);
+    let applied = |tweak: Tweak| {
+        journal.entries.iter().any(|e| {
+            e.status == EntryStatus::Done
+                && matches!(e.change, Change::Tweak { tweak: t, .. } if t == tweak)
+        })
+    };
+    let tweaks = tweak_states()?;
+    if json {
+        let tweaks: Vec<_> = tweaks
+            .iter()
+            .map(|(t, values)| {
+                serde_json::json!({ "tweak": t, "values": values, "applied": applied(*t) })
+            })
+            .collect();
+        let out = serde_json::json!({ "session": session, "tweaks": tweaks });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+    if session.is_empty() {
+        println!("Sesión: no hay sesión abierta.");
+    } else {
+        println!("Sesión: abierta ({} cambios)", session.len());
+        for l in &session {
+            let scope = match l.scope {
+                Scope::Session => "sesión",
+                Scope::Persistent => "persistente",
+            };
+            let state = match l.status {
+                EntryStatus::Done => "hecho",
+                EntryStatus::Pending => "pendiente",
+                EntryStatus::Failed => "fallido",
+            };
+            println!("  lote {:<3} {scope:<11} {state:<9} {}", l.batch, l.what);
+        }
+    }
+    if !tweaks.is_empty() {
+        println!("\nAjustes del sistema (valor actual):");
+        for (t, values) in &tweaks {
+            let mark = if applied(*t) {
+                " · aplicado por FrameRush"
+            } else {
+                ""
+            };
+            println!("  {}{mark}", t.id());
+            for v in values {
+                let value = match &v.value {
+                    Some(SavedData::Number(n)) => n.to_string(),
+                    Some(SavedData::Text(s)) => format!("\"{s}\""),
+                    None => "(no existe)".to_owned(),
+                };
+                println!("      {} = {value}", v.location);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Valor actual de cada ajuste que admite la plataforma nativa. Leer no pide admin.
+#[cfg(windows)]
+fn tweak_states() -> Result<Vec<(Tweak, Vec<SavedValue>)>> {
+    use framerush_platform::SystemTweaks;
+    let w = framerush_platform::WindowsPlatform::new();
+    w.supported_tweaks()
+        .into_iter()
+        .map(|t| {
+            let values = w
+                .read_tweak(t)
+                .with_context(|| format!("no se pudo leer {}", t.id()))?;
+            Ok((t, values))
+        })
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn tweak_states() -> Result<Vec<(Tweak, Vec<SavedValue>)>> {
+    Ok(vec![])
+}
+
 /// Operación del motor sobre la plataforma nativa.
 #[derive(Debug)]
 #[cfg_attr(
@@ -420,7 +513,6 @@ enum Op<'a> {
 
 #[cfg(windows)]
 fn run(op: Op<'_>) -> Result<Report> {
-    use framerush_core::{Change, EntryStatus};
     use framerush_platform::{Helper, SystemTweaks, WindowsPlatform};
 
     let store = store()?;
