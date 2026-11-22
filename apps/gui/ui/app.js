@@ -388,12 +388,14 @@
     const src = [...new Set(list.map(s => s.source))];
     /* Sin ventiladores se dice por qué: en un portátil (PCSystemType = Mobile) ninguna fuente los expone. */
     const where = D.sensorSources.join(', ') || 'ninguna';
-    const noFans = fans.length ? ''
+    const admin = D.sensorNeedsAdmin.length && !S.admin
+      ? ` ${D.sensorNeedsAdmin.join(', ')} solo se lee con admin: pulsa «${ELEVATE_LABEL[D.os].replace(/^\S+ /, '')}».` : '';
+    const noFans = admin || (fans.length ? ''
       : D.device.laptop ? ` Es un portátil (según Windows): ni el sistema ni la GPU exponen sus ventiladores (consultado: ${where}).`
-        : ` No se encontró ningún ventilador, tampoco en la GPU (consultado: ${where}).`;
+        : ` No se encontró ningún ventilador, tampoco en la GPU (consultado: ${where}).`);
     DS('sensor-backend-notice').forEach(e => {
       e.textContent = src.length ? `Fuentes detectadas: ${src.join(', ')}.${pick('cpu') ? '' : ' La temperatura de la CPU no tiene fuente en este equipo todavía.'}${noFans}`
-        : 'No se encontró ningún sensor de CPU, GPU ni ventiladores en este equipo.' + (D.device.laptop ? ' Es un portátil (según Windows).' : '');
+        : 'No se encontró ningún sensor de CPU, GPU ni ventiladores en este equipo.' + (D.device.laptop ? ' Es un portátil (según Windows).' : '') + admin;
     });
   }
 
@@ -441,7 +443,7 @@
       S.rt = true; $$('[data-setting="game-priority"] button').forEach(x => x.classList.toggle('on', x.dataset.v === 'realtime'));
       $('#rtBox').hidden = true; $('#rtAck').checked = false; toast('Prioridad Tiempo real confirmada (doble confirmación).');
     }
-    if (id === 'run-as-admin') toast(`Elevar el helper ${NOT_WIRED}`);
+    if (id === 'run-as-admin') elevate();
     if (id === 'profile-save') toast(`Guardar perfiles ${NOT_WIRED}`);
     if (id === 'export-diagnostics') toast(`Exportar el diagnóstico ${NOT_WIRED}`);
     if (id === 'always-on-top') { const on = el.getAttribute('aria-pressed') !== 'true'; el.setAttribute('aria-pressed', on); el.classList.toggle('on', on); api.win('always-on-top', on); }
@@ -472,6 +474,19 @@
   document.addEventListener('keydown', e => { if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); apply(); } }); /* shortcut-apply */
 
   /* ---------- Arranque ---------- */
+  /* De momento el helper solo lee los sensores que piden admin; aplicar sigue sin conectar. */
+  async function elevate() {
+    DS('run-as-admin').forEach(b => { b.disabled = true; });
+    try {
+      await api.elevate();
+      toast('Helper elevado activo: ya se leen los sensores que piden admin.');
+      await init();
+    } catch (err) {
+      toast(`No se pudo elevar: ${err && err.message ? err.message : err}`);
+      elevateButton();
+    }
+  }
+
   function elevateButton() {
     DS('run-as-admin').forEach(b => { b.disabled = S.admin; b.textContent = S.admin ? '✓ Helper elevado activo' : ELEVATE_LABEL[D.os]; });
   }

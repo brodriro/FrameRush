@@ -34,6 +34,12 @@
       return () => {};
     },
 
+    /* Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él. */
+    elevate() {
+      if (!inTauri) return Promise.reject(new Error('Solo dentro de la app.'));
+      return T.core.invoke('elevate');
+    },
+
     /* Ventana de Tauri (barra propia: la ventana no tiene bordes). */
     win(action, arg) {
       if (!inTauri) return Promise.resolve();

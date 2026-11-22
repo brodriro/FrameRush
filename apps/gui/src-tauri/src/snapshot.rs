@@ -31,9 +31,12 @@ pub struct View {
     protected: Vec<Protected>,
     /// Fuentes de sensores consultadas, encontraran algo o no (para explicar lo que falta).
     sensor_sources: Vec<&'static str>,
+    /// Fuentes del equipo que solo se leen con el helper elevado (p. ej. el EC de Acer).
+    sensor_needs_admin: Vec<&'static str>,
     /// Journal sin cerrar (restore-after-crash).
     pending_session: Option<Pending>,
-    /// La GUI corre sin privilegios; lo que pide admin pasa por el helper (aún no conectado).
+    /// Hay un helper elevado abierto. La GUI sigue sin privilegios; de momento el helper solo
+    /// lee sensores (aplicar aún no está conectado).
     elevated: bool,
 }
 
@@ -174,9 +177,17 @@ struct Pending {
     changes: usize,
 }
 
+/// Estado de las fuentes de sensores para el snapshot.
+#[derive(Debug, Clone, Default)]
+pub struct SensorInfo {
+    pub checked: Vec<&'static str>,
+    pub needs_admin: Vec<&'static str>,
+    pub elevated: bool,
+}
+
 /// Lee el equipo y arma el snapshot. Tarda (WMI, NVML, escaneo de procesos): se llama fuera
 /// del hilo de la UI.
-pub fn build(sensor_sources: Vec<&'static str>) -> Result<View> {
+pub fn build(sensors: SensorInfo) -> Result<View> {
     let Some(os) = Os::current() else {
         bail!("sistema operativo no admitido");
     };
@@ -248,9 +259,10 @@ pub fn build(sensor_sources: Vec<&'static str>) -> Result<View> {
         processes: rows(&plans),
         anticheats: plans[0].anticheats.clone(),
         protected: protected(&processes),
-        sensor_sources,
+        sensor_sources: sensors.checked,
+        sensor_needs_admin: sensors.needs_admin,
         pending_session: pending_session(),
-        elevated: false,
+        elevated: sensors.elevated,
         device: device_view(&device, gpu_pref.as_deref()),
     })
 }
@@ -526,7 +538,13 @@ mod tests {
     /// juego ni dato de muestra.
     #[test]
     fn this_machine_builds_a_snapshot() {
-        let view = build(framerush_sensors::detect().checked).unwrap();
+        let sources = framerush_sensors::detect();
+        let view = build(SensorInfo {
+            checked: sources.checked,
+            needs_admin: sources.needs_admin,
+            elevated: false,
+        })
+        .unwrap();
         assert_eq!(view.os, "win");
         let json = serde_json::to_value(&view).unwrap();
         assert!(json.get("games").is_none());
