@@ -622,6 +622,14 @@ impl Inventory for WindowsPlatform {
     fn installed_apps(&self) -> Result<Vec<String>> {
         inventory::installed_apps()
     }
+
+    fn hags_supported(&self) -> Result<Option<bool>> {
+        inventory::hags_supported()
+    }
+
+    fn hypervisor_features(&self) -> Result<Vec<String>> {
+        inventory::hypervisor_features()
+    }
 }
 
 impl DisplayControl for WindowsPlatform {

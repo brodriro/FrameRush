@@ -109,12 +109,22 @@ pub(super) fn u32(obj: &IWbemClassObject, name: &str) -> Result<Option<u32>> {
     Ok(unsafe { VariantToUInt32(&v.0) }.ok())
 }
 
-/// Primera fila de `query` en `namespace`, leída con `read`; `None` si no hay filas.
+/// Primera fila de `query` en `namespace`, leída con `read`; `None` si no hay filas. Para
+/// clases de una sola instancia (`Win32_OperatingSystem`, `Win32_ComputerSystem`…).
 pub(super) fn first<T>(
     namespace: &str,
     query: &str,
-    read: impl FnOnce(&IWbemClassObject) -> Result<T>,
+    read: impl FnMut(&IWbemClassObject) -> Result<T>,
 ) -> Result<Option<T>> {
+    rows(namespace, query, read).map(|rows| rows.into_iter().next())
+}
+
+/// Todas las filas de `query` en `namespace`, leídas con `read`.
+pub(super) fn rows<T>(
+    namespace: &str,
+    query: &str,
+    mut read: impl FnMut(&IWbemClassObject) -> Result<T>,
+) -> Result<Vec<T>> {
     let _com = Com::init()?;
     // SAFETY: COM está inicializado en este hilo (`_com`); el crate `windows` gestiona las
     // referencias de las interfaces.
@@ -158,15 +168,19 @@ pub(super) fn first<T>(
         )
     }
     .map_err(os)?;
-    let mut row = [None];
-    let mut returned = 0u32;
-    // SAFETY: `rows` es válido y `row` tiene sitio para un objeto.
-    unsafe { rows.Next(WBEM_INFINITE, &mut row, &mut returned) }
-        .ok()
-        .map_err(os)?;
-    match row[0].take().filter(|_| returned == 1) {
-        Some(obj) => read(&obj).map(Some),
-        None => Ok(None),
+    let mut values = vec![];
+    loop {
+        let mut row = [None];
+        let mut returned = 0u32;
+        // SAFETY: `rows` es válido y `row` tiene sitio para un objeto. Al acabar devuelve
+        // WBEM_S_FALSE (no es un error) con `returned` a 0.
+        unsafe { rows.Next(WBEM_INFINITE, &mut row, &mut returned) }
+            .ok()
+            .map_err(os)?;
+        match row[0].take().filter(|_| returned == 1) {
+            Some(obj) => values.push(read(&obj)?),
+            None => return Ok(values),
+        }
     }
 }
 

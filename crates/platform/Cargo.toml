@@ -24,6 +24,7 @@ windows = { workspace = true, features = [
     "Win32_System_Wmi",
 ] }
 windows-sys = { workspace = true, features = [
+    "Wdk_Graphics_Direct3D",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Security",

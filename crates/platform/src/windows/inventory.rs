@@ -13,6 +13,9 @@
 //!   (`VirtualizationBasedSecurityStatus` 2 = en ejecución).
 //! - Apps: `DisplayName` de las subclaves de `...\CurrentVersion\Uninstall` en HKLM (64 y 32
 //!   bits) y HKCU (Microsoft Learn, "Uninstall Registry Key"). Las apps MSIX no salen ahí.
+//! - HAGS: `D3DKMTQueryAdapterInfo(KMTQAITYPE_WDDM_2_7_CAPS)` por cada adaptador DXGI; el bit 0
+//!   es `HwSchSupported` (Windows SDK 10.0.26100, `shared/d3dkmdt.h`).
+//! - Hipervisor (V6): `Win32_OptionalFeature` con `InstallState` 1 (Enabled, Microsoft Learn).
 #![allow(unsafe_code)]
 
 use super::cpus::{CpuSet, system_cpu_sets};
@@ -20,8 +23,15 @@ use super::registry::{self, Hive};
 use super::wmi;
 use crate::{Battery, Core, CoreKind, Cpu, Gpu, GpuVendor, PlatformError, Result};
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_ERROR_NOT_FOUND, IDXGIFactory1,
+    CreateDXGIFactory1, DXGI_ADAPTER_DESC1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_ERROR_NOT_FOUND,
+    IDXGIFactory1,
 };
+use windows_sys::Wdk::Graphics::Direct3D::{
+    D3DKMT_CLOSEADAPTER, D3DKMT_OPENADAPTERFROMLUID, D3DKMT_QUERYADAPTERINFO, D3DKMT_WDDM_2_7_CAPS,
+    D3DKMTCloseAdapter, D3DKMTOpenAdapterFromLuid, D3DKMTQueryAdapterInfo,
+    KMTQAITYPE_WDDM_2_7_CAPS,
+};
+use windows_sys::Win32::Foundation::LUID;
 use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 
 /// Núcleos físicos en orden de CPU lógica, con su tipo.
@@ -85,11 +95,12 @@ fn vendor(id: u32) -> GpuVendor {
     }
 }
 
-pub(super) fn gpus() -> Result<Vec<Gpu>> {
+/// Adaptadores DXGI de hardware (sin los de software).
+fn adapters() -> Result<Vec<DXGI_ADAPTER_DESC1>> {
     let os = |e: windows::core::Error| PlatformError::Os(format!("DXGI: {e}"));
     // SAFETY: llamada COM sin argumentos de puntero; el crate `windows` gestiona la referencia.
     let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }.map_err(os)?;
-    let mut gpus = vec![];
+    let mut adapters = vec![];
     for index in 0.. {
         // SAFETY: `factory` es una interfaz válida; un índice fuera de rango da NOT_FOUND.
         let adapter = match unsafe { factory.EnumAdapters1(index) } {
@@ -99,9 +110,16 @@ pub(super) fn gpus() -> Result<Vec<Gpu>> {
         };
         // SAFETY: `adapter` es una interfaz válida que devolvió EnumAdapters1.
         let desc = unsafe { adapter.GetDesc1() }.map_err(os)?;
-        if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
-            continue;
+        if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0 {
+            adapters.push(desc);
         }
+    }
+    Ok(adapters)
+}
+
+pub(super) fn gpus() -> Result<Vec<Gpu>> {
+    let mut gpus = vec![];
+    for desc in adapters()? {
         let len = desc
             .Description
             .iter()
@@ -133,6 +151,79 @@ pub(super) fn battery() -> Result<Option<Battery>> {
             discharging: status.ACLineStatus == 0,
         }),
     })
+}
+
+/// `HwSchSupported` de un adaptador, o `None` si el driver no responde a la consulta (p. ej.
+/// un driver anterior a WDDM 2.7).
+fn adapter_hags(luid: windows::Win32::Foundation::LUID) -> Option<bool> {
+    let mut open = D3DKMT_OPENADAPTERFROMLUID {
+        AdapterLuid: LUID {
+            LowPart: luid.LowPart,
+            HighPart: luid.HighPart,
+        },
+        hAdapter: 0,
+    };
+    // SAFETY: `open` es un local vivo con el LUID que dio DXGI.
+    if unsafe { D3DKMTOpenAdapterFromLuid(&mut open) } < 0 {
+        return None;
+    }
+    let mut caps = D3DKMT_WDDM_2_7_CAPS::default();
+    let mut query = D3DKMT_QUERYADAPTERINFO {
+        hAdapter: open.hAdapter,
+        Type: KMTQAITYPE_WDDM_2_7_CAPS,
+        pPrivateDriverData: (&raw mut caps).cast(),
+        PrivateDriverDataSize: size_of::<D3DKMT_WDDM_2_7_CAPS>() as u32,
+    };
+    // SAFETY: `query` apunta a `caps`, del tamaño indicado, y el adaptador está abierto.
+    let status = unsafe { D3DKMTQueryAdapterInfo(&mut query) };
+    // SAFETY: cierra el adaptador abierto arriba.
+    unsafe {
+        D3DKMTCloseAdapter(&D3DKMT_CLOSEADAPTER {
+            hAdapter: open.hAdapter,
+        })
+    };
+    // SAFETY: la unión es un u32 entero; `Value` siempre es válido.
+    let value = unsafe { caps.Anonymous.Value };
+    (status >= 0).then_some(value & HW_SCH_SUPPORTED != 0)
+}
+
+/// Bit 0 de `D3DKMT_WDDM_2_7_CAPS` (Windows SDK 10.0.26100, `shared/d3dkmdt.h`).
+const HW_SCH_SUPPORTED: u32 = 1;
+
+/// Si alguna GPU admite HAGS; `None` si ningún driver lo dice.
+pub(super) fn hags_supported() -> Result<Option<bool>> {
+    let answers: Vec<bool> = adapters()?
+        .into_iter()
+        .filter_map(|d| adapter_hags(d.AdapterLuid))
+        .collect();
+    Ok((!answers.is_empty()).then(|| answers.contains(&true)))
+}
+
+/// Características opcionales de Windows que dependen del hipervisor (V6), con su nombre de
+/// DISM: Hyper-V, Windows Sandbox, WSL, WSL2 y WHPX.
+const HYPERVISOR_FEATURES: [&str; 5] = [
+    "Microsoft-Hyper-V",
+    "Containers-DisposableClientVM",
+    "Microsoft-Windows-Subsystem-Linux",
+    "VirtualMachinePlatform",
+    "HypervisorPlatform",
+];
+
+/// Las de [`HYPERVISOR_FEATURES`] activadas (`Win32_OptionalFeature.InstallState` 1).
+pub(super) fn hypervisor_features() -> Result<Vec<String>> {
+    let names = HYPERVISOR_FEATURES
+        .iter()
+        .map(|n| format!("Name='{n}'"))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    let query =
+        format!("SELECT Name FROM Win32_OptionalFeature WHERE InstallState=1 AND ({names})");
+    let mut features: Vec<String> = wmi::rows(CIMV2, &query, |o| wmi::string(o, "Name"))?
+        .into_iter()
+        .flatten()
+        .collect();
+    features.sort();
+    Ok(features)
 }
 
 const CIMV2: &str = r"ROOT\CIMV2";
@@ -257,6 +348,13 @@ mod tests {
         assert!(build.parse::<u32>().is_ok(), "{build}");
         assert!(manufacturer().unwrap().is_some());
         vbs_running().unwrap();
+        hags_supported().unwrap();
+        let features = hypervisor_features().unwrap();
+        assert!(
+            features
+                .iter()
+                .all(|f| HYPERVISOR_FEATURES.contains(&f.as_str()))
+        );
         let apps = installed_apps().unwrap();
         assert!(
             apps.windows(2).all(|w| w[0] < w[1]),

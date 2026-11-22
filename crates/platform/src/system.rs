@@ -155,6 +155,12 @@ pub trait Inventory {
     fn vbs_running(&self) -> Result<Option<bool>>;
     /// Nombres de las apps instaladas, ordenados y sin repetir.
     fn installed_apps(&self) -> Result<Vec<String>>;
+    /// Si alguna GPU admite la programación de GPU acelerada por hardware (HAGS); `None` si
+    /// ningún driver lo dice.
+    fn hags_supported(&self) -> Result<Option<bool>>;
+    /// Componentes del SO activados que dependen del hipervisor (V6), con su nombre del SO
+    /// (p. ej. `VirtualMachinePlatform`).
+    fn hypervisor_features(&self) -> Result<Vec<String>>;
 }
 
 /// Pantallas: modos y frecuencia de refresco (`refresh-rate-max`).

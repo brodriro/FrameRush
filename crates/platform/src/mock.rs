@@ -40,6 +40,8 @@ struct State {
     manufacturer: Option<String>,
     vbs_running: Option<bool>,
     installed_apps: Vec<String>,
+    hags_supported: Option<bool>,
+    hypervisor_features: Vec<String>,
     logical_cpus: usize,
     caps: CapabilitySet,
     next_start: u64,
@@ -149,6 +151,13 @@ impl MockPlatform {
         s.manufacturer = manufacturer.map(str::to_owned);
         s.vbs_running = vbs_running;
         s.installed_apps = installed_apps.iter().map(|a| (*a).to_owned()).collect();
+    }
+
+    /// Define el soporte de HAGS y los componentes del hipervisor de [`Inventory`].
+    pub fn set_gpu_and_hypervisor(&self, hags_supported: Option<bool>, features: &[&str]) {
+        let mut s = self.lock();
+        s.hags_supported = hags_supported;
+        s.hypervisor_features = features.iter().map(|f| (*f).to_owned()).collect();
     }
 
     /// Define los monitores.
@@ -390,6 +399,14 @@ impl Inventory for MockPlatform {
 
     fn installed_apps(&self) -> Result<Vec<String>> {
         Ok(self.lock().installed_apps.clone())
+    }
+
+    fn hags_supported(&self) -> Result<Option<bool>> {
+        Ok(self.lock().hags_supported)
+    }
+
+    fn hypervisor_features(&self) -> Result<Vec<String>> {
+        Ok(self.lock().hypervisor_features.clone())
     }
 }
 
