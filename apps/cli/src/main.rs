@@ -863,6 +863,7 @@ mod tests {
             name: name.into(),
             memory_bytes: 0,
             cpu_percent: None,
+            same_user: Some(true),
         }
     }
 

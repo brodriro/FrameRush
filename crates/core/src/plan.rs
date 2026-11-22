@@ -200,7 +200,10 @@ pub fn plan(
                 action = Action::LowerPriority;
             }
 
-            let requires_admin = rule.requires_admin();
+            // P12: un proceso de otro usuario o de SYSTEM pide admin aunque la regla no.
+            let requires_admin = rule.requires_admin()
+                || matches!(&subject, Subject::Processes(ps)
+                    if ps.iter().any(|p| p.same_user != Some(true)));
             let locked = requires_admin && !options.elevated;
             Some(PlanItem {
                 rule_id: rule.id.clone(),
@@ -316,6 +319,7 @@ mod tests {
             name: name.into(),
             memory_bytes: 10,
             cpu_percent: None,
+            same_user: Some(true),
         }
     }
 
@@ -616,6 +620,56 @@ mod tests {
         let admin = plan(Level::Agresivo, &snap, &[], &device, &elevated);
         assert_eq!(admin.tweaks, [Tweak::GameDvrOff, Tweak::GameDvrPolicyOff]);
         assert!(admin.locked_tweaks.is_empty());
+    }
+
+    /// P12: una fila con un proceso de otro usuario o de SYSTEM (o de dueño ilegible) lleva
+    /// candado sin elevación, aunque la regla no pida admin.
+    #[test]
+    fn p12_foreign_processes_need_admin() {
+        let device = samples::hybrid_laptop();
+        let rules = vec![rule(
+            "sync",
+            &["sync"],
+            Action::Suspend,
+            Level::Normal,
+            Risk::Low,
+        )];
+        let mut foreign = proc(7, "sync.exe");
+        foreign.same_user = Some(false);
+        let mut unknown = proc(8, "sync.exe");
+        unknown.same_user = None;
+        for p in [foreign, unknown] {
+            let snap = Snapshot {
+                processes: vec![proc(6, "sync.exe"), p],
+                ..Snapshot::default()
+            };
+            let user = plan(
+                Level::Normal,
+                &snap,
+                &rules,
+                &device,
+                &PlanOptions::default(),
+            );
+            assert!(user.items[0].locked && !user.items[0].default_checked);
+            let elevated = PlanOptions {
+                elevated: true,
+                ..PlanOptions::default()
+            };
+            let admin = plan(Level::Normal, &snap, &rules, &device, &elevated);
+            assert!(!admin.items[0].locked && admin.items[0].default_checked);
+        }
+        let own = Snapshot {
+            processes: vec![proc(6, "sync.exe")],
+            ..Snapshot::default()
+        };
+        let user = plan(
+            Level::Normal,
+            &own,
+            &rules,
+            &device,
+            &PlanOptions::default(),
+        );
+        assert!(!user.items[0].locked);
     }
 
     /// `memory-trim` y `standby-purge`: desde Agresivo, con candado sin elevación (P9, P14).
