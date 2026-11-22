@@ -14,6 +14,8 @@ pub use hwmon::Hwmon;
 pub use nvidia::{NvidiaGpu, NvidiaGpus};
 pub use poll::{POLL_INTERVAL, Poller};
 pub use reading::{Kind, Reading, Sensor};
+#[cfg(windows)]
+pub use sources::detect_elevated;
 pub use sources::{Sources, detect};
 
 /// Una fuente de sensores (NVML, hwmon, LibreHardwareMonitor…).

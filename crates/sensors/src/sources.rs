@@ -1,15 +1,22 @@
-//! Qué fuentes de sensores tiene el equipo. El orden es el de preferencia; el tacómetro de la
-//! GPU por NVAPI es el último recurso y solo se consulta si ninguna otra fuente da ventiladores.
+//! Qué fuentes de sensores tiene el equipo. El orden es el de preferencia: NVML (y hwmon en
+//! Linux), después el EC de los portátiles gaming de Acer en Windows y, como último recurso y
+//! solo si nada da ventiladores, el tacómetro de la GPU por NVAPI.
 
 use crate::{Kind, NvidiaGpus, SensorProvider};
 #[cfg(windows)]
 use crate::{Reading, Sensor};
+
+/// Nombre de la fuente del EC de Acer.
+#[cfg(windows)]
+const ACER_EC: &str = "EC Acer";
 
 /// Proveedores del equipo y nombres de todas las fuentes consultadas, encontraran algo o no
 /// (para explicar en la UI por qué falta un sensor).
 pub struct Sources {
     pub providers: Vec<Box<dyn SensorProvider>>,
     pub checked: Vec<&'static str>,
+    /// Fuentes que el equipo tiene pero que solo se leen con admin (con el helper elevado).
+    pub needs_admin: Vec<&'static str>,
 }
 
 impl std::fmt::Debug for Sources {
@@ -17,12 +24,26 @@ impl std::fmt::Debug for Sources {
         f.debug_struct("Sources")
             .field("providers", &self.providers.len())
             .field("checked", &self.checked)
+            .field("needs_admin", &self.needs_admin)
             .finish()
     }
 }
 
 /// Abre las fuentes del equipo. Las que no están (sin GPU NVIDIA, por ejemplo) se saltan.
 pub fn detect() -> Sources {
+    #[cfg(windows)]
+    return detect_with(framerush_platform::WindowsPlatform::new());
+    #[cfg(not(windows))]
+    detect_with()
+}
+
+/// Como [`detect`], pero las fuentes que piden admin se leen a través de `helper`.
+#[cfg(windows)]
+pub fn detect_elevated(helper: framerush_platform::Helper) -> Sources {
+    detect_with(framerush_platform::WindowsPlatform::with_helper(helper))
+}
+
+fn detect_with(#[cfg(windows)] platform: framerush_platform::WindowsPlatform) -> Sources {
     let mut providers: Vec<Box<dyn SensorProvider>> = vec![];
     // En macOS no hay más fuentes que añadir después de NVML.
     #[cfg_attr(target_os = "macos", allow(unused_mut))]
@@ -35,10 +56,24 @@ pub fn detect() -> Sources {
         checked.push("hwmon");
         providers.push(Box::new(crate::Hwmon::new()));
     }
-    let has_fans = providers
-        .iter_mut()
-        .flat_map(|p| p.read())
-        .any(|s| s.kind == Kind::Fan);
+    // Las fuentes que solo se leen con admin; de momento solo las hay en Windows.
+    #[cfg(not(windows))]
+    let needs_admin = vec![];
+    #[cfg(windows)]
+    let needs_admin = {
+        checked.push(ACER_EC);
+        let has_gpu_temperature = has(&mut providers, Kind::GpuTemperature);
+        match AcerEc::open(platform, !has_gpu_temperature) {
+            Ok(Some(ec)) => {
+                providers.push(Box::new(ec));
+                vec![]
+            }
+            Err(framerush_platform::PlatformError::AccessDenied(_)) => vec![ACER_EC],
+            // Sin la interfaz (no es un Acer gaming) o sin esos sensores: nada que leer.
+            Ok(None) | Err(_) => vec![],
+        }
+    };
+    let has_fans = has(&mut providers, Kind::Fan);
     #[cfg(windows)]
     if !has_fans {
         checked.push("NVAPI");
@@ -48,7 +83,75 @@ pub fn detect() -> Sources {
     }
     #[cfg(not(windows))]
     let _ = has_fans;
-    Sources { providers, checked }
+    Sources {
+        providers,
+        checked,
+        needs_admin,
+    }
+}
+
+/// Algún proveedor da un sensor de `kind`, con lectura o sin ella.
+fn has(providers: &mut [Box<dyn SensorProvider>], kind: Kind) -> bool {
+    providers
+        .iter_mut()
+        .flat_map(|p| p.read())
+        .any(|s| s.kind == kind)
+}
+
+/// EC de los portátiles gaming de Acer: temperatura de la CPU y RPM medidas de los
+/// ventiladores de CPU y GPU. La temperatura de la GPU solo entra si no la da otra fuente.
+#[cfg(windows)]
+struct AcerEc {
+    platform: framerush_platform::WindowsPlatform,
+    sensors: Vec<framerush_platform::AcerSensor>,
+}
+
+#[cfg(windows)]
+impl AcerEc {
+    /// `Ok(None)` si el EC no tiene ninguno de esos sensores.
+    fn open(
+        platform: framerush_platform::WindowsPlatform,
+        with_gpu_temperature: bool,
+    ) -> framerush_platform::Result<Option<Self>> {
+        use framerush_platform::AcerSensor;
+        let sensors: Vec<AcerSensor> = platform
+            .acer_sensors()?
+            .into_iter()
+            .filter(|s| with_gpu_temperature || *s != AcerSensor::GpuTemperature)
+            .collect();
+        Ok((!sensors.is_empty()).then_some(Self { platform, sensors }))
+    }
+}
+
+#[cfg(windows)]
+impl SensorProvider for AcerEc {
+    fn read(&mut self) -> Vec<Sensor> {
+        use framerush_platform::AcerSensor;
+        self.sensors
+            .iter()
+            .map(|&s| {
+                let (id, label, kind) = match s {
+                    AcerSensor::CpuTemperature => ("acer:cpu", "CPU", Kind::CpuTemperature),
+                    AcerSensor::CpuFan => ("acer:cpu:fan", "CPU · ventilador", Kind::Fan),
+                    AcerSensor::GpuFan => ("acer:gpu:fan", "GPU · ventilador", Kind::Fan),
+                    AcerSensor::GpuTemperature => ("acer:gpu", "GPU", Kind::GpuTemperature),
+                };
+                let value = self.platform.acer_read(s).ok().flatten().map(u32::from);
+                Sensor {
+                    id: id.into(),
+                    label: label.into(),
+                    kind,
+                    reading: value.map(|v| match kind {
+                        Kind::Fan => Reading::Rpm {
+                            value: v,
+                            target: false,
+                        },
+                        _ => Reading::Celsius(v as f32),
+                    }),
+                }
+            })
+            .collect()
+    }
 }
 
 /// Tacómetro de las GPU NVIDIA por NVAPI: RPM medidas, no objetivo. Solo entran las GPU que
@@ -116,6 +219,19 @@ mod tests {
         assert_eq!(
             sources.checked.contains(&"NVAPI"),
             cfg!(windows) && fans_before_nvapi == 0
+        );
+    }
+
+    /// En Windows se consulta siempre el EC de Acer; si pide admin, se dice.
+    #[test]
+    fn lists_sources_that_need_admin() {
+        let sources = detect();
+        assert_eq!(sources.checked.contains(&"EC Acer"), cfg!(windows));
+        assert!(
+            sources
+                .needs_admin
+                .iter()
+                .all(|s| sources.checked.contains(s))
         );
     }
 }
