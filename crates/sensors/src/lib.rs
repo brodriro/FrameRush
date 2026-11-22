@@ -4,10 +4,12 @@
 //! ("No disponible") y nunca se convierte en 0. [`Poller`] los lee en un hilo aparte, por
 //! defecto a 1 Hz ([`POLL_INTERVAL`]).
 
+mod hwmon;
 mod nvidia;
 mod poll;
 mod reading;
 
+pub use hwmon::Hwmon;
 pub use nvidia::{NvidiaGpu, NvidiaGpus};
 pub use poll::{POLL_INTERVAL, Poller};
 pub use reading::{Kind, Reading, Sensor};
