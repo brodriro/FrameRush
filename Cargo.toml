@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/cli", "apps/helper"]
+members = ["crates/*", "apps/cli", "apps/gui/src-tauri", "apps/helper"]
 
 [workspace.package]
 version = "0.1.0"
@@ -27,6 +27,9 @@ windows-sys = "0.61"
 windows = "0.61"
 # NVML (GPU NVIDIA): carga nvml.dll / libnvidia-ml.so del driver en tiempo de ejecución.
 nvml-wrapper = "0.13"
+# GUI (Tauri 2 estable; la 3 aún es alpha).
+tauri = "2.12"
+tauri-build = "2.7"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [workspace.lints.rust]
