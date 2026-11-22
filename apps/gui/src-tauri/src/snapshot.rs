@@ -214,7 +214,7 @@ pub(crate) fn inputs() -> Result<Inputs> {
         processes: processes.clone(),
         // Los servicios se consultan con el SCM / systemd en M5.
         services: vec![],
-        game: vec![],
+        game: running_game(&processes),
         tweaks: tweaks.clone(),
         admin_tweaks,
         memory: if caps.memory {
@@ -507,6 +507,27 @@ struct GameView {
     running: bool,
     /// Procesos bajo la carpeta del juego.
     pids: Vec<u32>,
+}
+
+/// Procesos del juego de Steam en marcha (`RunningAppID`, todos los de su carpeta): quedan
+/// fuera del plan. Si Steam no se puede leer no hay juego; el motivo ya va en `gamesNote`.
+fn running_game(processes: &[ProcessInfo]) -> Vec<framerush_platform::Target> {
+    let read = || -> framerush_steam::Result<Vec<framerush_platform::Target>> {
+        let Some(root) = framerush_steam::locate()? else {
+            return Ok(vec![]);
+        };
+        let found = framerush_steam::installed_apps(&root)?;
+        let running = framerush_steam::running_app_id()?;
+        Ok(framerush_steam::detect(&found.apps, running, None)
+            .map(|(app, _)| {
+                framerush_steam::game_processes(app, processes)
+                    .into_iter()
+                    .map(|p| p.target.clone())
+                    .collect()
+            })
+            .unwrap_or_default())
+    };
+    read().unwrap_or_default()
 }
 
 /// Juegos de Steam y, si no hay, el motivo. La GUI está en primer plano cuando se pide el
