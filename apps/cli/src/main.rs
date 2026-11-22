@@ -499,6 +499,9 @@ fn print_device(device: &DeviceProfile) {
         Some(false) => println!("HAGS: no admitido"),
         None => {}
     }
+    if !device.antivirus.is_empty() {
+        println!("Antivirus registrado: {}", device.antivirus.join(", "));
+    }
     if !device.virtualization.is_empty() {
         println!(
             "Usa el hipervisor: {} (se rompe si se desactiva)",
