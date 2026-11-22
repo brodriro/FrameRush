@@ -20,6 +20,7 @@ mod integrity;
 mod inventory;
 mod power;
 mod registry;
+mod wmi;
 
 pub use helper::{Helper, serve_helper};
 pub(crate) use integrity::integrity_level;
@@ -604,6 +605,22 @@ impl Inventory for WindowsPlatform {
 
     fn battery(&self) -> Result<Option<Battery>> {
         inventory::battery()
+    }
+
+    fn os_build(&self) -> Result<Option<String>> {
+        inventory::os_build()
+    }
+
+    fn manufacturer(&self) -> Result<Option<String>> {
+        inventory::manufacturer()
+    }
+
+    fn vbs_running(&self) -> Result<Option<bool>> {
+        inventory::vbs_running()
+    }
+
+    fn installed_apps(&self) -> Result<Vec<String>> {
+        inventory::installed_apps()
     }
 }
 

@@ -147,6 +147,14 @@ pub trait Inventory {
     fn gpus(&self) -> Result<Vec<Gpu>>;
     /// `None` si el equipo no tiene batería.
     fn battery(&self) -> Result<Option<Battery>>;
+    /// Build del SO tal como lo da el sistema (p. ej. "26100" en Windows).
+    fn os_build(&self) -> Result<Option<String>>;
+    /// Fabricante del equipo.
+    fn manufacturer(&self) -> Result<Option<String>>;
+    /// Si VBS (Device Guard) está en ejecución; `None` si el SO no lo tiene o no lo expone.
+    fn vbs_running(&self) -> Result<Option<bool>>;
+    /// Nombres de las apps instaladas, ordenados y sin repetir.
+    fn installed_apps(&self) -> Result<Vec<String>>;
 }
 
 /// Pantallas: modos y frecuencia de refresco (`refresh-rate-max`).

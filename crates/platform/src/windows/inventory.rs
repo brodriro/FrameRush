@@ -8,9 +8,16 @@
 //!   (pci-ids: 10de NVIDIA, 1002 AMD/ATI, 8086 Intel).
 //! - Batería: `GetSystemPowerStatus` (`BatteryFlag` 128 = sin batería, 255 = desconocido;
 //!   `ACLineStatus` 0 = desenchufado).
+//! - Sistema (WMI, sin admin): build de `Win32_OperatingSystem.BuildNumber`, fabricante de
+//!   `Win32_ComputerSystem.Manufacturer` y VBS de `Win32_DeviceGuard`
+//!   (`VirtualizationBasedSecurityStatus` 2 = en ejecución).
+//! - Apps: `DisplayName` de las subclaves de `...\CurrentVersion\Uninstall` en HKLM (64 y 32
+//!   bits) y HKCU (Microsoft Learn, "Uninstall Registry Key"). Las apps MSIX no salen ahí.
 #![allow(unsafe_code)]
 
 use super::cpus::{CpuSet, system_cpu_sets};
+use super::registry::{self, Hive};
+use super::wmi;
 use crate::{Battery, Core, CoreKind, Cpu, Gpu, GpuVendor, PlatformError, Result};
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_ERROR_NOT_FOUND, IDXGIFactory1,
@@ -128,6 +135,72 @@ pub(super) fn battery() -> Result<Option<Battery>> {
     })
 }
 
+const CIMV2: &str = r"ROOT\CIMV2";
+
+/// Número de build del SO (p. ej. "26100").
+pub(super) fn os_build() -> Result<Option<String>> {
+    wmi::first(
+        CIMV2,
+        "SELECT BuildNumber FROM Win32_OperatingSystem",
+        |o| wmi::string(o, "BuildNumber"),
+    )
+    .map(Option::flatten)
+}
+
+pub(super) fn manufacturer() -> Result<Option<String>> {
+    wmi::first(
+        CIMV2,
+        "SELECT Manufacturer FROM Win32_ComputerSystem",
+        |o| wmi::string(o, "Manufacturer"),
+    )
+    .map(Option::flatten)
+}
+
+/// Si VBS está en ejecución; `None` si el sistema no tiene la clase `Win32_DeviceGuard`.
+pub(super) fn vbs_running() -> Result<Option<bool>> {
+    wmi::first(
+        r"ROOT\Microsoft\Windows\DeviceGuard",
+        "SELECT VirtualizationBasedSecurityStatus FROM Win32_DeviceGuard",
+        |o| wmi::u32(o, "VirtualizationBasedSecurityStatus"),
+    )
+    .map(|status| status.flatten().map(|s| s == 2))
+}
+
+const UNINSTALL: [(Hive, &str); 3] = [
+    (
+        Hive::LocalMachine,
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+    ),
+    (
+        Hive::LocalMachine,
+        r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+    ),
+    (
+        Hive::CurrentUser,
+        r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+    ),
+];
+
+/// Nombres de las apps instaladas, ordenados y sin repetir. Una entrada que no se puede leer
+/// se salta.
+pub(super) fn installed_apps() -> Result<Vec<String>> {
+    let mut apps = vec![];
+    for (hive, root) in UNINSTALL {
+        for key in registry::subkeys(hive, root)? {
+            let path = format!(r"{root}\{key}");
+            if let Ok(Some(name)) = registry::read_string(hive, &path, "DisplayName") {
+                let name = name.trim();
+                if !name.is_empty() {
+                    apps.push(name.to_owned());
+                }
+            }
+        }
+    }
+    apps.sort();
+    apps.dedup();
+    Ok(apps)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +249,18 @@ mod tests {
             assert!(!g.name.is_empty(), "{g:?}");
         }
         battery().unwrap();
+    }
+
+    #[test]
+    fn this_machine_reads_the_system() {
+        let build = os_build().unwrap().unwrap();
+        assert!(build.parse::<u32>().is_ok(), "{build}");
+        assert!(manufacturer().unwrap().is_some());
+        vbs_running().unwrap();
+        let apps = installed_apps().unwrap();
+        assert!(
+            apps.windows(2).all(|w| w[0] < w[1]),
+            "ordenadas y sin repetir"
+        );
     }
 }

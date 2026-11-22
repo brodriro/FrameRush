@@ -14,7 +14,15 @@ thiserror.workspace = true
 [target.'cfg(windows)'.dependencies]
 # Protocolo del helper elevado.
 serde_json.workspace = true
-windows = { workspace = true, features = ["Win32_Graphics_Dxgi"] }
+windows = { workspace = true, features = [
+    "Win32_Graphics_Dxgi",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Rpc",
+    "Win32_System_Variant",
+    "Win32_System_Wmi",
+] }
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

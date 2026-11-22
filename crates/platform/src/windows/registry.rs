@@ -6,11 +6,14 @@
 
 use crate::{PlatformError, Result};
 use std::ptr::{null, null_mut};
-use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+use windows_sys::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_NO_MORE_ITEMS, ERROR_SUCCESS,
+};
 use windows_sys::Win32::System::Registry::{
-    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_SET_VALUE, REG_DWORD, REG_OPTION_NON_VOLATILE,
-    REG_SZ, REG_VALUE_TYPE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW,
-    RegDeleteKeyValueW, RegGetValueW, RegSetValueExW,
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, REG_DWORD,
+    REG_OPTION_NON_VOLATILE, REG_SZ, REG_VALUE_TYPE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegCloseKey,
+    RegCreateKeyExW, RegDeleteKeyValueW, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW,
+    RegSetValueExW,
 };
 
 /// Colmena del registro en la que vive un valor.
@@ -75,6 +78,50 @@ pub(super) fn read_dword(hive: Hive, path: &str, name: &str) -> Result<Option<u3
         ERROR_FILE_NOT_FOUND => Ok(None),
         c => Err(error(c, hive, path, name)),
     }
+}
+
+/// Nombres de las subclaves de `path`; vacío si la clave no existe.
+pub(super) fn subkeys(hive: Hive, path: &str) -> Result<Vec<String>> {
+    let p = wide(path);
+    let mut key: HKEY = null_mut();
+    // SAFETY: `p` termina en nulo y vive durante la llamada; `key` recibe el handle.
+    let code = unsafe { RegOpenKeyExW(hive.hkey(), p.as_ptr(), 0, KEY_READ, &mut key) };
+    match code {
+        ERROR_SUCCESS => {}
+        ERROR_FILE_NOT_FOUND => return Ok(vec![]),
+        c => return Err(error(c, hive, path, "")),
+    }
+    let mut names = vec![];
+    // Un nombre de clave tiene como mucho 255 caracteres ("Registry element size limits").
+    let mut buf = [0u16; 256];
+    let mut result = Ok(());
+    for index in 0.. {
+        let mut len = buf.len() as u32;
+        // SAFETY: `key` está abierto; `buf` tiene `len` caracteres y vive durante la llamada.
+        let code = unsafe {
+            RegEnumKeyExW(
+                key,
+                index,
+                buf.as_mut_ptr(),
+                &mut len,
+                null(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+            )
+        };
+        match code {
+            ERROR_SUCCESS => names.push(String::from_utf16_lossy(&buf[..len as usize])),
+            ERROR_NO_MORE_ITEMS => break,
+            c => {
+                result = Err(error(c, hive, path, ""));
+                break;
+            }
+        }
+    }
+    // SAFETY: `key` lo abrió RegOpenKeyExW y no se usa después.
+    unsafe { RegCloseKey(key) };
+    result.map(|()| names)
 }
 
 /// Cadena actual (REG_SZ), o `None` si la clave o el valor no existen.

@@ -36,6 +36,10 @@ struct State {
     cpu: Option<Cpu>,
     gpus: Vec<Gpu>,
     battery: Option<Battery>,
+    os_build: Option<String>,
+    manufacturer: Option<String>,
+    vbs_running: Option<bool>,
+    installed_apps: Vec<String>,
     logical_cpus: usize,
     caps: CapabilitySet,
     next_start: u64,
@@ -130,6 +134,21 @@ impl MockPlatform {
         s.cpu = cpu;
         s.gpus = gpus;
         s.battery = battery;
+    }
+
+    /// Define lo que devuelve [`Inventory`] del sistema: build, fabricante, VBS y apps.
+    pub fn set_system(
+        &self,
+        os_build: Option<&str>,
+        manufacturer: Option<&str>,
+        vbs_running: Option<bool>,
+        installed_apps: &[&str],
+    ) {
+        let mut s = self.lock();
+        s.os_build = os_build.map(str::to_owned);
+        s.manufacturer = manufacturer.map(str::to_owned);
+        s.vbs_running = vbs_running;
+        s.installed_apps = installed_apps.iter().map(|a| (*a).to_owned()).collect();
     }
 
     /// Define los monitores.
@@ -355,6 +374,22 @@ impl Inventory for MockPlatform {
 
     fn battery(&self) -> Result<Option<Battery>> {
         Ok(self.lock().battery)
+    }
+
+    fn os_build(&self) -> Result<Option<String>> {
+        Ok(self.lock().os_build.clone())
+    }
+
+    fn manufacturer(&self) -> Result<Option<String>> {
+        Ok(self.lock().manufacturer.clone())
+    }
+
+    fn vbs_running(&self) -> Result<Option<bool>> {
+        Ok(self.lock().vbs_running)
+    }
+
+    fn installed_apps(&self) -> Result<Vec<String>> {
+        Ok(self.lock().installed_apps.clone())
     }
 }
 
