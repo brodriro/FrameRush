@@ -8,11 +8,13 @@ mod hwmon;
 mod nvidia;
 mod poll;
 mod reading;
+mod sources;
 
 pub use hwmon::Hwmon;
 pub use nvidia::{NvidiaGpu, NvidiaGpus};
 pub use poll::{POLL_INTERVAL, Poller};
 pub use reading::{Kind, Reading, Sensor};
+pub use sources::{Sources, detect};
 
 /// Una fuente de sensores (NVML, hwmon, LibreHardwareMonitor…).
 pub trait SensorProvider: Send {
