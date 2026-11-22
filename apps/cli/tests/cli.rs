@@ -321,10 +321,22 @@ fn custom_power_plan_from_agresivo() {
     assert!(ok);
     assert!(stdout.contains("[x] custom-power-plan"), "{stdout}");
     assert!(stdout.contains("[x] power-plan"), "{stdout}");
-    let args = ["apply", "--level", "agresivo", "--exclude", "custom-power-plan"];
+    let args = [
+        "apply",
+        "--level",
+        "agresivo",
+        "--exclude",
+        "custom-power-plan",
+    ];
     let (ok, stdout) = framerush_in(&dir, &args);
     assert!(ok);
     assert!(stdout.contains("[ ] custom-power-plan"), "{stdout}");
-    let args = ["apply", "--level", "agresivo", "--include", "custom-power-plan"];
+    let args = [
+        "apply",
+        "--level",
+        "agresivo",
+        "--include",
+        "custom-power-plan",
+    ];
     assert!(!framerush_in(&dir, &args).0);
 }
