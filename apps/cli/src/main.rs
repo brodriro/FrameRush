@@ -130,7 +130,7 @@ struct GameArgs {
     #[arg(long, requires = "game")]
     fso_off: bool,
     /// `gpu-preference = alto`: el exe del juego usa la GPU de alto rendimiento (persistente).
-    /// Explícito hasta que la detección del equipo sepa si hay más de una GPU (M2, R8).
+    /// Solo con más de una GPU detectada (R8).
     #[arg(long, requires = "game")]
     gpu_alto: bool,
     /// `cpu-affinity` (opt-in, de sesión): CPU lógicas para el juego, como `2,3,6-11`, o `auto`
@@ -267,6 +267,18 @@ fn build_plan(
     };
     let plan = plan(level, &snapshot, &rules, &device, &options);
     Ok((plan, game, device))
+}
+
+/// `--gpu-alto` solo se ofrece si el equipo tiene más de una GPU (PLAN.md It6: con una sola no
+/// hay nada que elegir).
+fn check_gpu_preference(args: &GameArgs, device: &DeviceProfile) -> Result<()> {
+    if args.gpu_alto && defaults::gpu_preference(device).is_none() {
+        bail!(
+            "`gpu-preference` solo se ofrece con más de una GPU detectada (este equipo: {})",
+            device.gpus.len()
+        );
+    }
+    Ok(())
 }
 
 /// CPU de `--affinity`, o `None` si no se pidió. Falla con anticheat (P2) o si `auto` no tiene
@@ -565,6 +577,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     notify_open_session();
     let (plan, game, device) = build_plan(level, admin, args.game.as_deref())?;
     let affinity = game_affinity(args, &plan, &device)?;
+    check_gpu_preference(args, &device)?;
     println!("Plan para el nivel {level} (dry-run: no se toca nada)");
     print_device(&device);
     print_game(
@@ -652,6 +665,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     let level = args.level;
     let (plan, game, device) = build_plan(level, args.admin, args.game.game.as_deref())?;
     let affinity = game_affinity(&args.game, &plan, &device)?;
+    check_gpu_preference(&args.game, &device)?;
     let persistent = persistent_mark(level, args.admin, &args.game, &args.exclude);
     if args.include.iter().any(|id| id == PERSISTENT_PRIORITY) {
         match persistent {

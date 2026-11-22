@@ -296,9 +296,19 @@ fn gpu_alto_needs_a_game() {
     let (ok, _) = framerush_in(&dir, &["apply", "--gpu-alto"]);
     assert!(!ok);
     let pid = std::process::id().to_string();
+    // Depende del equipo: con más de una GPU se ofrece; con una o ninguna (la CI) se rechaza.
+    let (_, profile) = framerush_in(&dir, &["plan"]);
+    let gpus = profile
+        .lines()
+        .filter(|l| l.starts_with("GPU: ") && !l.contains("no detectada"))
+        .count();
     let (ok, stdout) = framerush_in(&dir, &["apply", "--game", &pid, "--gpu-alto"]);
-    assert!(ok);
-    assert!(stdout.contains("[x] gpu-preference = alto"), "{stdout}");
+    if gpus > 1 {
+        assert!(ok);
+        assert!(stdout.contains("[x] gpu-preference = alto"), "{stdout}");
+    } else {
+        assert!(!ok, "{stdout}");
+    }
     assert!(!dir.join("session.json").exists());
 }
 
