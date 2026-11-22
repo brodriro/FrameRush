@@ -1053,6 +1053,12 @@ dependencies = [
 [[package]]
 name = "framerush-games"
 version = "0.1.0"
+dependencies = [
+ "framerush-core",
+ "framerush-device",
+ "framerush-platform",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "framerush-gui"
