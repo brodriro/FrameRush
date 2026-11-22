@@ -42,6 +42,7 @@ struct State {
     installed_apps: Vec<String>,
     hags_supported: Option<bool>,
     hypervisor_features: Vec<String>,
+    antivirus: Vec<String>,
     logical_cpus: usize,
     caps: CapabilitySet,
     next_start: u64,
@@ -158,6 +159,11 @@ impl MockPlatform {
         let mut s = self.lock();
         s.hags_supported = hags_supported;
         s.hypervisor_features = features.iter().map(|f| (*f).to_owned()).collect();
+    }
+
+    /// Define los antivirus registrados de [`Inventory`].
+    pub fn set_antivirus(&self, names: &[&str]) {
+        self.lock().antivirus = names.iter().map(|n| (*n).to_owned()).collect();
     }
 
     /// Define los monitores.
@@ -407,6 +413,10 @@ impl Inventory for MockPlatform {
 
     fn hypervisor_features(&self) -> Result<Vec<String>> {
         Ok(self.lock().hypervisor_features.clone())
+    }
+
+    fn antivirus(&self) -> Result<Vec<String>> {
+        Ok(self.lock().antivirus.clone())
     }
 }
 

@@ -161,6 +161,9 @@ pub trait Inventory {
     /// Componentes del SO activados que dependen del hipervisor (V6), con su nombre del SO
     /// (p. ej. `VirtualMachinePlatform`).
     fn hypervisor_features(&self) -> Result<Vec<String>>;
+    /// Nombres de los antivirus registrados en el SO (Security Center en Windows), ordenados.
+    /// Solo el nombre: no dice cuál está activo.
+    fn antivirus(&self) -> Result<Vec<String>>;
 }
 
 /// Pantallas: modos y frecuencia de refresco (`refresh-rate-max`).

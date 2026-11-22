@@ -28,10 +28,10 @@ fn os(e: windows::core::Error) -> PlatformError {
 }
 
 /// COM inicializado en este hilo mientras vive; `CoUninitialize` al soltarlo.
-struct Com;
+pub(super) struct Com;
 
 impl Com {
-    fn init() -> Result<Self> {
+    pub(super) fn init() -> Result<Self> {
         // SAFETY: inicializa COM en el hilo actual; S_FALSE (ya inicializado) también cuenta y
         // también pide `CoUninitialize`.
         unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }

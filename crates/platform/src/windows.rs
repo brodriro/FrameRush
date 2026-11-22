@@ -630,6 +630,10 @@ impl Inventory for WindowsPlatform {
     fn hypervisor_features(&self) -> Result<Vec<String>> {
         inventory::hypervisor_features()
     }
+
+    fn antivirus(&self) -> Result<Vec<String>> {
+        inventory::antivirus()
+    }
 }
 
 impl DisplayControl for WindowsPlatform {

@@ -16,6 +16,9 @@
 //! - HAGS: `D3DKMTQueryAdapterInfo(KMTQAITYPE_WDDM_2_7_CAPS)` por cada adaptador DXGI; el bit 0
 //!   es `HwSchSupported` (Windows SDK 10.0.26100, `shared/d3dkmdt.h`).
 //! - Hipervisor (V6): `Win32_OptionalFeature` con `InstallState` 1 (Enabled, Microsoft Learn).
+//! - Antivirus: nombres de la API de Security Center (`IWSCProductList::Initialize` con
+//!   `WSC_SECURITY_PROVIDER_ANTIVIRUS` + `IWscProduct::get_ProductName`; Windows 8+, solo
+//!   ediciones cliente). El estado no se lee.
 #![allow(unsafe_code)]
 
 use super::cpus::{CpuSet, system_cpu_sets};
@@ -25,6 +28,10 @@ use crate::{Battery, Core, CoreKind, Cpu, Gpu, GpuVendor, PlatformError, Result}
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, DXGI_ADAPTER_DESC1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_ERROR_NOT_FOUND,
     IDXGIFactory1,
+};
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
+use windows::Win32::System::SecurityCenter::{
+    IWSCProductList, WSC_SECURITY_PROVIDER_ANTIVIRUS, WSCProductList,
 };
 use windows_sys::Wdk::Graphics::Direct3D::{
     D3DKMT_CLOSEADAPTER, D3DKMT_OPENADAPTERFROMLUID, D3DKMT_QUERYADAPTERINFO, D3DKMT_WDDM_2_7_CAPS,
@@ -226,6 +233,34 @@ pub(super) fn hypervisor_features() -> Result<Vec<String>> {
     Ok(features)
 }
 
+/// Nombres de los antivirus registrados en Security Center, ordenados y sin repetir. Falla en
+/// Windows Server, que no tiene esta API.
+pub(super) fn antivirus() -> Result<Vec<String>> {
+    let os = |e: windows::core::Error| PlatformError::Os(format!("Security Center: {e}"));
+    let _com = wmi::Com::init()?;
+    // SAFETY: COM está inicializado en este hilo (`_com`); el crate `windows` gestiona las
+    // referencias de las interfaces.
+    let list: IWSCProductList =
+        unsafe { CoCreateInstance(&WSCProductList, None, CLSCTX_INPROC_SERVER) }.map_err(os)?;
+    // SAFETY: `list` es válido e `Initialize` se llama una sola vez (documentado).
+    unsafe { list.Initialize(WSC_SECURITY_PROVIDER_ANTIVIRUS) }.map_err(os)?;
+    // SAFETY: `list` ya está inicializado.
+    let count = unsafe { list.Count() }.map_err(os)?;
+    let mut names = vec![];
+    for index in 0..u32::try_from(count).unwrap_or(0) {
+        // SAFETY: `index` está dentro de `Count`.
+        let product = unsafe { list.get_Item(index) }.map_err(os)?;
+        // SAFETY: `product` es una interfaz válida que devolvió `get_Item`.
+        let name = unsafe { product.ProductName() }.map_err(os)?.to_string();
+        if !name.trim().is_empty() {
+            names.push(name.trim().to_owned());
+        }
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
 const CIMV2: &str = r"ROOT\CIMV2";
 
 /// Número de build del SO (p. ej. "26100").
@@ -349,6 +384,10 @@ mod tests {
         assert!(manufacturer().unwrap().is_some());
         vbs_running().unwrap();
         hags_supported().unwrap();
+        // Windows Server (la CI) no tiene Security Center: ahí basta con que no reviente.
+        if let Ok(names) = antivirus() {
+            assert!(names.iter().all(|n| !n.is_empty()));
+        }
         let features = hypervisor_features().unwrap();
         assert!(
             features
