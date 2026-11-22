@@ -117,6 +117,31 @@ pub fn describe(change: &Change) -> String {
     }
 }
 
+/// Una línea de la vista Estado (PLAN.md It5.6): un cambio de la sesión, con su alcance.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct StatusLine {
+    pub batch: u64,
+    pub what: String,
+    pub scope: Scope,
+    pub status: EntryStatus,
+}
+
+/// Todo lo que la sesión tiene aplicado o pendiente, en el orden en que se aplicó. Los cambios
+/// fallidos también salen: el journal los conserva para que se vean.
+pub fn status_lines(journal: &Journal) -> Vec<StatusLine> {
+    let mut entries: Vec<&Entry> = journal.entries.iter().collect();
+    entries.sort_by_key(|e| e.seq);
+    entries
+        .into_iter()
+        .map(|e| StatusLine {
+            batch: e.batch,
+            what: describe(&e.change),
+            scope: e.change.scope(),
+            status: e.status,
+        })
+        .collect()
+}
+
 /// Motor sobre una plataforma y un journal.
 #[derive(Debug)]
 pub struct Engine<'a, P, S> {
@@ -580,6 +605,31 @@ mod tests {
             v.push(format!("{s} {:?}", m.service_state(s).unwrap()));
         }
         v
+    }
+
+    /// La vista Estado lista la sesión en orden de aplicación, con alcance y estado.
+    #[test]
+    fn status_lines_list_the_session_in_order() {
+        let m = MockPlatform::new(4);
+        let a = m.spawn(1, "a.exe", "/a", 1);
+        let game = m.spawn(9, "game.exe", "/game", 1);
+        let items = [item(Action::LowerPriority, procs(&m, &[&a]))];
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        assert!(status_lines(&store.load().unwrap()).is_empty());
+
+        let mut req = request(&items);
+        req.game = boost(&game, Priority::High, false).game;
+        engine.apply(&req).unwrap();
+        let lines = status_lines(&store.load().unwrap());
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines.iter().all(|l| l.status == EntryStatus::Done));
+        assert!(lines.iter().all(|l| l.scope == Scope::Session));
+        assert!(lines[0].what.ends_with("/a (pid 1)"), "{lines:?}");
+        assert!(lines[1].what.ends_with("/game (pid 9)"), "{lines:?}");
+
+        engine.revert_all().unwrap();
+        assert!(status_lines(&store.load().unwrap()).is_empty());
     }
 
     #[test]

@@ -12,7 +12,7 @@ mod rule;
 
 pub use engine::{
     ApplyRequest, Engine, EngineError, GameBoost, LOWERED_PRIORITY, Outcome, Report, ReportLine,
-    describe,
+    StatusLine, describe, status_lines,
 };
 pub use journal::{Change, Entry, EntryStatus, FileStore, Journal, JournalError, JournalStore};
 pub use model::{Action, Category, Level, ParseError, Risk, Scope};
