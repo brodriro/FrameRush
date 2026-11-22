@@ -1025,6 +1025,7 @@ dependencies = [
  "framerush-platform",
  "framerush-rules",
  "framerush-sensors",
+ "framerush-steam",
  "serde_json",
  "tracing",
  "tracing-subscriber",

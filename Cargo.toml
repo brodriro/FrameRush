@@ -14,6 +14,7 @@ framerush-device = { path = "crates/device" }
 framerush-platform = { path = "crates/platform" }
 framerush-rules = { path = "crates/rules" }
 framerush-sensors = { path = "crates/sensors" }
+framerush-steam = { path = "crates/steam" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

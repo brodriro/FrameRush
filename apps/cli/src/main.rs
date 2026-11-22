@@ -86,6 +86,9 @@ enum Command {
         #[command(subcommand)]
         command: Option<PowerCommand>,
     },
+    /// Steam: juegos instalados y el que está en marcha (`RunningAppID` o la ventana en primer
+    /// plano bajo la carpeta del juego). No toca el sistema.
+    Steam,
 }
 
 #[derive(Debug, Subcommand)]
@@ -183,6 +186,7 @@ fn main() -> Result<()> {
             None | Some(PowerCommand::Get) => power_get(),
             Some(PowerCommand::Set { id, yes }) => power_set(&id, yes),
         },
+        Command::Steam => steam(),
     }
 }
 
@@ -786,6 +790,56 @@ fn power_get() -> Result<()> {
     }
     println!("(* = activo)");
     Ok(())
+}
+
+fn steam() -> Result<()> {
+    let Some(root) = framerush_steam::locate().context("no se pudo buscar Steam")? else {
+        println!("Steam no está instalado (en Linux y macOS aún no se busca).");
+        return Ok(());
+    };
+    println!("Steam: {}", root.display());
+    let found = framerush_steam::installed_apps(&root).context("no se pudo leer Steam")?;
+    for app in &found.apps {
+        println!("{:>8}  {}  {}", app.appid, app.name, app.dir.display());
+    }
+    for e in &found.errors {
+        println!("aviso: {e}");
+    }
+    let running = framerush_steam::running_app_id().context("no se pudo leer RunningAppID")?;
+    let foreground = foreground_exe()?;
+    let Some((app, source)) = framerush_steam::detect(&found.apps, running, foreground.as_deref())
+    else {
+        println!("Juego en marcha: ninguno");
+        return Ok(());
+    };
+    let source = match source {
+        framerush_steam::Source::RunningAppId => "RunningAppID",
+        framerush_steam::Source::Foreground => "primer plano",
+    };
+    println!(
+        "Juego en marcha: {} ({}), según {source}",
+        app.name, app.appid
+    );
+    let processes = scan_processes().context("no se pudo listar los procesos")?;
+    for p in framerush_steam::game_processes(app, &processes) {
+        println!("  {:>6}  {}", p.target.pid, p.target.exe_path.display());
+    }
+    Ok(())
+}
+
+/// Exe de la ventana en primer plano (desde una terminal, la propia terminal).
+#[cfg(windows)]
+fn foreground_exe() -> Result<Option<PathBuf>> {
+    use framerush_platform::ProcessControl;
+    let w = framerush_platform::WindowsPlatform::new();
+    Ok(w.foreground()
+        .context("no se pudo leer la ventana en primer plano")?
+        .map(|t| t.exe_path))
+}
+
+#[cfg(not(windows))]
+fn foreground_exe() -> Result<Option<PathBuf>> {
+    Ok(None)
 }
 
 fn power_set(id: &str, yes: bool) -> Result<()> {
