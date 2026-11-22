@@ -187,6 +187,7 @@ dependencies = [
  "serde_json",
  "sysinfo",
  "thiserror",
+ "windows",
  "windows-sys",
 ]
 

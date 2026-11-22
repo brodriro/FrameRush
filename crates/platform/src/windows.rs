@@ -17,6 +17,7 @@ mod display;
 mod effects;
 mod helper;
 mod integrity;
+mod inventory;
 mod power;
 mod registry;
 
@@ -26,9 +27,10 @@ pub(crate) use integrity::integrity_level;
 use registry::Hive;
 
 use crate::{
-    Capabilities, CapabilitySet, Display, DisplayControl, GameTuning, MemoryControl, PlatformError,
-    PowerControl, PowerPlan, Priority, ProcessControl, ProcessInfo, Result, SavedData, SavedValue,
-    ServiceControl, ServiceState, StartTime, SystemTweaks, Target, Tweak, scan_processes,
+    Battery, Capabilities, CapabilitySet, Cpu, Display, DisplayControl, GameTuning, Gpu, Inventory,
+    MemoryControl, PlatformError, PowerControl, PowerPlan, Priority, ProcessControl, ProcessInfo,
+    Result, SavedData, SavedValue, ServiceControl, ServiceState, StartTime, SystemTweaks, Target,
+    Tweak, scan_processes,
 };
 use std::ffi::c_void;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -588,6 +590,20 @@ impl PowerControl for WindowsPlatform {
 
     fn delete_power_plan(&self, id: &str) -> Result<()> {
         power::delete_power_plan(id)
+    }
+}
+
+impl Inventory for WindowsPlatform {
+    fn cpu(&self) -> Result<Option<Cpu>> {
+        inventory::cpu()
+    }
+
+    fn gpus(&self) -> Result<Vec<Gpu>> {
+        inventory::gpus()
+    }
+
+    fn battery(&self) -> Result<Option<Battery>> {
+        inventory::battery()
     }
 }
 

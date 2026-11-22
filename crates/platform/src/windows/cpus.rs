@@ -18,6 +18,11 @@ pub(super) struct CpuSet {
     pub id: u32,
     pub group: u16,
     pub index: u8,
+    /// Núcleo, relativo al grupo: lo comparten los hilos SMT de un núcleo (Microsoft Learn,
+    /// `SYSTEM_CPU_SET_INFORMATION`).
+    pub core: u8,
+    /// Mayor = núcleo más rápido y menos eficiente; distinto de 0 solo en CPUs híbridas.
+    pub efficiency_class: u8,
 }
 
 /// Los CPU Sets del equipo, ordenados por `(grupo, índice)`: la posición es el número global.
@@ -70,6 +75,8 @@ pub(super) fn system_cpu_sets() -> Result<Vec<CpuSet>> {
                 id: s.Id,
                 group: s.Group,
                 index: s.LogicalProcessorIndex,
+                core: s.CoreIndex,
+                efficiency_class: s.EfficiencyClass,
             });
         }
         offset += entry.Size as usize;
@@ -116,6 +123,8 @@ mod tests {
                 id: 256 + i,
                 group: (i / 64) as u16,
                 index: (i % 64) as u8,
+                core: ((i % 64) / 2) as u8,
+                efficiency_class: 0,
             })
             .collect()
     }

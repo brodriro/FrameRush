@@ -5,9 +5,10 @@
 //! Los valores de los tests los pone cada test; aquí no hay datos de ningún equipo.
 
 use crate::{
-    Capabilities, CapabilitySet, Display, DisplayControl, GameTuning, MemoryControl, PlatformError,
-    PowerControl, PowerPlan, Priority, ProcessControl, ProcessInfo, Result, SavedData, SavedValue,
-    ServiceControl, ServiceState, StartTime, SystemTweaks, Target, Tweak,
+    Battery, Capabilities, CapabilitySet, Cpu, Display, DisplayControl, GameTuning, Gpu, Inventory,
+    MemoryControl, PlatformError, PowerControl, PowerPlan, Priority, ProcessControl, ProcessInfo,
+    Result, SavedData, SavedValue, ServiceControl, ServiceState, StartTime, SystemTweaks, Target,
+    Tweak,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -32,6 +33,9 @@ struct State {
     /// Planes creados con `create_custom_power_plan` (para darles ids distintos).
     created_plans: u32,
     displays: Vec<Display>,
+    cpu: Option<Cpu>,
+    gpus: Vec<Gpu>,
+    battery: Option<Battery>,
     logical_cpus: usize,
     caps: CapabilitySet,
     next_start: u64,
@@ -118,6 +122,14 @@ impl MockPlatform {
         let mut s = self.lock();
         s.plans = plans;
         s.active_plan = Some(active_id.to_owned());
+    }
+
+    /// Define el hardware que devuelve [`Inventory`].
+    pub fn set_inventory(&self, cpu: Option<Cpu>, gpus: Vec<Gpu>, battery: Option<Battery>) {
+        let mut s = self.lock();
+        s.cpu = cpu;
+        s.gpus = gpus;
+        s.battery = battery;
     }
 
     /// Define los monitores.
@@ -329,6 +341,20 @@ impl PowerControl for MockPlatform {
             return Err(PlatformError::NotFound(format!("plan {id}")));
         }
         Ok(())
+    }
+}
+
+impl Inventory for MockPlatform {
+    fn cpu(&self) -> Result<Option<Cpu>> {
+        Ok(self.lock().cpu.clone())
+    }
+
+    fn gpus(&self) -> Result<Vec<Gpu>> {
+        Ok(self.lock().gpus.clone())
+    }
+
+    fn battery(&self) -> Result<Option<Battery>> {
+        Ok(self.lock().battery)
     }
 }
 

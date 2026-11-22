@@ -76,6 +76,79 @@ pub struct Mode {
     pub hz: u32,
 }
 
+/// CPU y su topología.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Cpu {
+    pub model: String,
+    /// Núcleos físicos en orden. Vacío si no se pudo leer la topología.
+    pub cores: Vec<Core>,
+    /// CPU lógicas que ve el SO.
+    pub logical_cpus: usize,
+    /// Temperatura máxima de unión (MSR/LHM/hwmon `temp*_crit`).
+    pub tjmax_c: Option<f32>,
+}
+
+impl Cpu {
+    /// Núcleos físicos, si se conoce la topología.
+    pub fn physical_cores(&self) -> Option<usize> {
+        (!self.cores.is_empty()).then_some(self.cores.len())
+    }
+}
+
+/// Un núcleo físico y las CPU lógicas (hilos SMT) que lo componen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Core {
+    pub kind: CoreKind,
+    pub logical: Vec<usize>,
+}
+
+/// Tipo de núcleo en CPUs híbridas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoreKind {
+    Performance,
+    Efficiency,
+}
+
+/// Una GPU.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Gpu {
+    /// Identificador estable del SO (LUID/ruta de dispositivo), para `gpu-preference`.
+    pub id: String,
+    pub name: String,
+    pub vendor: GpuVendor,
+    /// VRAM dedicada tal como la da el SO (`None` si no se pudo leer). Una integrada suele
+    /// dar un valor pequeño que el driver reserva.
+    pub dedicated_vram_bytes: Option<u64>,
+    /// Umbral de *slowdown* (NVML); puede no estar disponible (V13).
+    pub slowdown_c: Option<f32>,
+}
+
+/// Fabricante de la GPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GpuVendor {
+    Nvidia,
+    Amd,
+    Intel,
+    Apple,
+    Other,
+}
+
+/// Estado de la batería.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Battery {
+    pub discharging: bool,
+}
+
+/// Inventario del hardware para el `DeviceProfile` (R8). `None` o lista vacía: no se pudo leer.
+pub trait Inventory {
+    fn cpu(&self) -> Result<Option<Cpu>>;
+    fn gpus(&self) -> Result<Vec<Gpu>>;
+    /// `None` si el equipo no tiene batería.
+    fn battery(&self) -> Result<Option<Battery>>;
+}
+
 /// Pantallas: modos y frecuencia de refresco (`refresh-rate-max`).
 pub trait DisplayControl {
     /// Monitores del escritorio con su modo actual y los modos que admiten.
@@ -237,6 +310,7 @@ pub trait Platform:
     + ServiceControl
     + PowerControl
     + DisplayControl
+    + Inventory
     + GameTuning
     + SystemTweaks
     + MemoryControl
@@ -249,6 +323,7 @@ impl<T> Platform for T where
         + ServiceControl
         + PowerControl
         + DisplayControl
+        + Inventory
         + GameTuning
         + SystemTweaks
         + MemoryControl
