@@ -129,26 +129,27 @@ struct ApplyArgs {
 
 #[derive(Debug, Args)]
 struct GameArgs {
-    /// Proceso del juego: nombre del ejecutable (cs2.exe) o PID. Queda fuera del plan.
+    /// Proceso del juego: nombre del ejecutable (cs2.exe) o PID. Sin él se usa el juego de Steam
+    /// en marcha (`RunningAppID`), con todos sus procesos. El juego queda fuera del plan.
     #[arg(long)]
     game: Option<String>,
     /// Prioridad del juego (PLAN.md R3, P1).
-    #[arg(long, value_enum, default_value_t = GamePriority::Alta, requires = "game")]
+    #[arg(long, value_enum, default_value_t = GamePriority::Alta)]
     game_priority: GamePriority,
     /// Segunda confirmación para `--game-priority realtime` (nunca se persiste).
-    #[arg(long, requires = "game")]
+    #[arg(long)]
     confirm_realtime: bool,
     /// Desactiva las optimizaciones de pantalla completa solo para el exe del juego (opt-in,
     /// persistente). Puede empeorar juegos DX12 (PLAN.md V10).
-    #[arg(long, requires = "game")]
+    #[arg(long)]
     fso_off: bool,
     /// `gpu-preference = alto`: el exe del juego usa la GPU de alto rendimiento (persistente).
     /// Solo con más de una GPU detectada (R8).
-    #[arg(long, requires = "game")]
+    #[arg(long)]
     gpu_alto: bool,
     /// `cpu-affinity` (opt-in, de sesión): CPU lógicas para el juego, como `2,3,6-11`, o `auto`
     /// para `cpu-affinity-cores` del equipo. Con anticheat se rechaza (P2).
-    #[arg(long, requires = "game", value_name = "CPUS|auto")]
+    #[arg(long, value_name = "CPUS|auto")]
     affinity: Option<String>,
 }
 
@@ -254,24 +255,104 @@ fn find_game(processes: &[ProcessInfo], query: &str) -> Result<ProcessInfo> {
     Ok(game.clone())
 }
 
+/// El juego: lo que indica `--game` o, sin él, el juego de Steam en marcha.
+#[derive(Debug)]
+struct Game {
+    /// Cómo se muestra: `cs2.exe (pid 123)` o `Counter-Strike 2 (730, Steam) · pid 123, 124`.
+    label: String,
+    processes: Vec<ProcessInfo>,
+}
+
+fn resolve_game(processes: &[ProcessInfo], query: Option<&str>) -> Result<Option<Game>> {
+    let Some(query) = query else {
+        return Ok(steam_game(processes));
+    };
+    let p = find_game(processes, query)?;
+    Ok(Some(Game {
+        label: format!("{} (pid {})", p.name, p.target.pid),
+        processes: vec![p],
+    }))
+}
+
+/// El juego que Steam tiene en marcha (`RunningAppID`) con todos sus procesos, salvo los
+/// protegidos. Si Steam no se puede leer, se avisa y se sigue sin juego.
+fn steam_game(processes: &[ProcessInfo]) -> Option<Game> {
+    let read = || -> framerush_steam::Result<Option<(framerush_steam::App, Vec<ProcessInfo>)>> {
+        let Some(root) = framerush_steam::locate()? else {
+            return Ok(None);
+        };
+        let found = framerush_steam::installed_apps(&root)?;
+        let running = framerush_steam::running_app_id()?;
+        // Desde una terminal el primer plano es la terminal: solo cuenta `RunningAppID`.
+        let Some((app, _)) = framerush_steam::detect(&found.apps, running, None) else {
+            return Ok(None);
+        };
+        let procs = framerush_steam::game_processes(app, processes)
+            .into_iter()
+            .filter(|p| !is_protected(&p.name))
+            .cloned()
+            .collect();
+        Ok(Some((app.clone(), procs)))
+    };
+    match read() {
+        Ok(Some((app, procs))) if procs.is_empty() => {
+            println!(
+                "Aviso: Steam tiene «{}» en marcha pero no hay procesos bajo {}.",
+                app.name,
+                app.dir.display()
+            );
+            None
+        }
+        Ok(Some((app, procs))) => {
+            let pids: Vec<String> = procs.iter().map(|p| p.target.pid.to_string()).collect();
+            Some(Game {
+                label: format!(
+                    "{} ({}, detectado en Steam) · pid {}",
+                    app.name,
+                    app.appid,
+                    pids.join(", ")
+                ),
+                processes: procs,
+            })
+        }
+        Ok(None) => None,
+        Err(e) => {
+            println!("Aviso: no se pudo leer Steam ({e}); sigue sin juego.");
+            None
+        }
+    }
+}
+
+/// Las opciones del juego necesitan un juego (`--game` o uno de Steam en marcha).
+fn require_game(args: &GameArgs, game: Option<&Game>) -> Result<()> {
+    let wants = args.fso_off || args.gpu_alto || args.affinity.is_some() || args.confirm_realtime;
+    if wants && game.is_none() {
+        bail!("esa opción necesita un juego: indica --game o abre el juego desde Steam");
+    }
+    Ok(())
+}
+
 fn build_plan(
     level: Level,
     admin: bool,
     game: Option<&str>,
-) -> Result<(Plan, Option<ProcessInfo>, DeviceProfile)> {
+) -> Result<(Plan, Option<Game>, DeviceProfile)> {
     let Some(os) = Os::current() else {
         bail!("sistema operativo no admitido");
     };
     let device = native_device(os);
     let rules = framerush_rules::embedded().context("las reglas embebidas no son válidas")?;
     let processes = scan_processes().context("no se pudo listar los procesos")?;
-    let game = game.map(|q| find_game(&processes, q)).transpose()?;
+    let game = resolve_game(&processes, game)?;
     let (tweaks, admin_tweaks) = native_tweaks();
     let snapshot = Snapshot {
         processes,
         // Los servicios se consultan con el SCM / systemd en M5.
         services: vec![],
-        game: game.iter().map(|g| g.target.clone()).collect(),
+        game: game
+            .iter()
+            .flat_map(|g| g.processes.iter().map(|p| p.target.clone()))
+            .collect(),
         tweaks,
         admin_tweaks,
         memory: native_memory(),
@@ -457,8 +538,14 @@ enum Mark {
 
 /// `game-priority-persistent` para este juego, o `None` si no aplica (sin juego, por el nivel o
 /// por la prioridad, P1). `--exclude game-priority-persistent` lo desmarca.
-fn persistent_mark(level: Level, admin: bool, args: &GameArgs, exclude: &[String]) -> Option<Mark> {
-    if args.game.is_none() || !persistent_priority_default(level, args.game_priority.into()) {
+fn persistent_mark(
+    level: Level,
+    admin: bool,
+    args: &GameArgs,
+    has_game: bool,
+    exclude: &[String],
+) -> Option<Mark> {
+    if !has_game || !persistent_priority_default(level, args.game_priority.into()) {
         return None;
     }
     Some(if !admin {
@@ -558,28 +645,27 @@ fn print_device(device: &DeviceProfile) {
 }
 
 fn print_game(
-    game: Option<&ProcessInfo>,
+    game: Option<&Game>,
     args: &GameArgs,
     persistent: Option<Mark>,
     affinity: Option<&[usize]>,
 ) {
     match game {
         Some(g) => {
-            println!(
-                "Juego: {} (pid {}) → prioridad {:?}",
-                g.name, g.target.pid, args.game_priority
-            );
+            println!("Juego: {} → prioridad {:?}", g.label, args.game_priority);
+            let mut exes: Vec<String> = g
+                .processes
+                .iter()
+                .map(|p| p.target.exe_path.display().to_string())
+                .collect();
+            exes.sort();
+            exes.dedup();
+            let exes = exes.join(", ");
             if args.fso_off {
-                println!(
-                    "[x] fullscreen-optimizations-off   persistente · {}",
-                    g.target.exe_path.display()
-                );
+                println!("[x] fullscreen-optimizations-off   persistente · {exes}");
             }
             if args.gpu_alto {
-                println!(
-                    "[x] gpu-preference = alto             persistente · {}",
-                    g.target.exe_path.display()
-                );
+                println!("[x] gpu-preference = alto             persistente · {exes}");
             }
             if let Some(cpus) = affinity {
                 let list: Vec<String> = cpus.iter().map(ToString::to_string).collect();
@@ -598,13 +684,16 @@ fn print_game(
             }
             println!();
         }
-        None => println!("Juego: sin indicar (--game); su prioridad no se toca.\n"),
+        None => {
+            println!("Juego: ni --game ni juego de Steam en marcha; su prioridad no se toca.\n")
+        }
     }
 }
 
 fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     notify_open_session();
     let (plan, game, device) = build_plan(level, admin, args.game.as_deref())?;
+    require_game(args, game.as_ref())?;
     let affinity = game_affinity(args, &plan, &device)?;
     check_gpu_preference(args, &device)?;
     println!("Plan para el nivel {level} (dry-run: no se toca nada)");
@@ -612,7 +701,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     print_game(
         game.as_ref(),
         args,
-        persistent_mark(level, admin, args, &[]),
+        persistent_mark(level, admin, args, game.is_some(), &[]),
         affinity.as_deref(),
     );
     print_refresh(level, &device, &level_refresh(level, &device, &[]));
@@ -693,12 +782,15 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     notify_open_session();
     let level = args.level;
     let (plan, game, device) = build_plan(level, args.admin, args.game.game.as_deref())?;
+    require_game(&args.game, game.as_ref())?;
     let affinity = game_affinity(&args.game, &plan, &device)?;
     check_gpu_preference(&args.game, &device)?;
-    let persistent = persistent_mark(level, args.admin, &args.game, &args.exclude);
+    let persistent = persistent_mark(level, args.admin, &args.game, game.is_some(), &args.exclude);
     if args.include.iter().any(|id| id == PERSISTENT_PRIORITY) {
         match persistent {
-            None => bail!("`{PERSISTENT_PRIORITY}` necesita --game y el nivel agresivo o extremo"),
+            None => bail!(
+                "`{PERSISTENT_PRIORITY}` necesita un juego (--game o Steam) y el nivel agresivo o extremo"
+            ),
             Some(Mark::Locked) => bail!("`{PERSISTENT_PRIORITY}` requiere admin: usa --admin"),
             Some(_) => {}
         }
@@ -761,7 +853,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         items: checked,
         tweaks,
         game: game.map(|g| GameBoost {
-            targets: vec![g.target],
+            targets: g.processes.into_iter().map(|p| p.target).collect(),
             priority: args.game.game_priority.into(),
             realtime_confirmed: args.game.confirm_realtime,
             fullscreen_optimizations_off: args.game.fso_off,
