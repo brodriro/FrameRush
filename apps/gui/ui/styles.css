@@ -1,5 +1,5 @@
 /* FrameRush GUI: estilos del diseño final (design/v3-overlay-compact.html). */
-:root{--glass:rgba(20,22,24,.88);--l:rgba(255,255,255,.08);--l2:rgba(255,255,255,.14);--tx:#eef0f1;--tx2:#a9b0b5;--tx3:#727a80;
+:root{--glass:rgba(20,22,24,.98);--l:rgba(255,255,255,.08);--l2:rgba(255,255,255,.14);--tx:#eef0f1;--tx2:#a9b0b5;--tx3:#727a80;
 --acc:#7cc4b8;--ok:#6fcf8e;--warn:#f0b552;--bad:#f07a6a;--mono:'IBM Plex Mono',ui-monospace,Consolas,monospace;
 --menu:#1b1e21;color-scheme:dark}
 *{box-sizing:border-box}
