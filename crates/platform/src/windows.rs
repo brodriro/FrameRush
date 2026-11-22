@@ -12,6 +12,7 @@
 //! comprobación y la llamada al SO.
 #![allow(unsafe_code)]
 
+mod cpus;
 mod helper;
 mod registry;
 
@@ -42,12 +43,12 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
 use windows_sys::Win32::System::ProcessStatus::EmptyWorkingSet;
 use windows_sys::Win32::System::Threading::{
     ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass,
-    GetProcessAffinityMask, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
-    OpenProcess, OpenProcessToken, OpenThread, PROCESS_ACCESS_RIGHTS,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_QUOTA,
-    PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, REALTIME_PRIORITY_CLASS, ResumeThread,
-    SetPriorityClass, SetProcessAffinityMask, SuspendThread, THREAD_SUSPEND_RESUME,
-    TerminateProcess,
+    GetProcessAffinityMask, GetProcessDefaultCpuSets, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS,
+    NORMAL_PRIORITY_CLASS, OpenProcess, OpenProcessToken, OpenThread, PROCESS_ACCESS_RIGHTS,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_LIMITED_INFORMATION,
+    PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, REALTIME_PRIORITY_CLASS,
+    ResumeThread, SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets,
+    SuspendThread, THREAD_SUSPEND_RESUME, TerminateProcess,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
@@ -323,9 +324,33 @@ fn target_of(pid: u32) -> Option<Target> {
     })
 }
 
+/// CPU Sets por defecto de un proceso, como CPU globales. Sin CPU Sets el proceso puede usar
+/// todas las CPU del equipo.
+fn default_cpu_sets(h: &OwnedHandle, target: &Target, sets: &[cpus::CpuSet]) -> Result<Vec<usize>> {
+    let mut ids = vec![0u32; sets.len()];
+    let mut required = 0u32;
+    // SAFETY: `ids` tiene `sets.len()` huecos y vive durante la llamada.
+    let ok = unsafe {
+        GetProcessDefaultCpuSets(handle(h), ids.as_mut_ptr(), ids.len() as u32, &mut required)
+    };
+    if ok == 0 {
+        return Err(last_error(target));
+    }
+    ids.truncate(required as usize);
+    if ids.is_empty() {
+        return Ok((0..sets.len()).collect());
+    }
+    Ok(cpus::cpus_for(sets, &ids))
+}
+
 impl GameTuning for WindowsPlatform {
-    /// Solo el grupo de procesadores del proceso (hasta 64 CPU lógicas).
+    /// Con un grupo, la máscara de afinidad; con varios, los CPU Sets por defecto (V23).
     fn affinity(&self, target: &Target) -> Result<Vec<usize>> {
+        let sets = cpus::system_cpu_sets()?;
+        if cpus::multi_group(&sets) {
+            let h = self.open(target, PROCESS_QUERY_LIMITED_INFORMATION)?;
+            return default_cpu_sets(&h, target, &sets);
+        }
         let h = self.open(target, PROCESS_QUERY_LIMITED_INFORMATION)?;
         let (mut process_mask, mut system_mask) = (0usize, 0usize);
         // SAFETY: `h` es válido y los dos punteros apuntan a variables locales vivas.
@@ -337,7 +362,34 @@ impl GameTuning for WindowsPlatform {
             .collect())
     }
 
+    /// Con varios grupos son CPU Sets: el SO los respeta salvo en los hilos que el juego fije
+    /// por su cuenta. Pedir todas las CPU los quita, que es el estado por defecto.
     fn set_affinity(&self, target: &Target, cpus: &[usize]) -> Result<()> {
+        if cpus.is_empty() {
+            return Err(PlatformError::Os("afinidad vacía".into()));
+        }
+        let sets = cpus::system_cpu_sets()?;
+        if cpus::multi_group(&sets) {
+            let mut wanted = cpus.to_vec();
+            wanted.sort_unstable();
+            wanted.dedup();
+            let ids = if wanted.len() == sets.len() {
+                vec![]
+            } else {
+                cpus::ids_for(&sets, &wanted)?
+            };
+            let h = self.open(target, PROCESS_SET_LIMITED_INFORMATION)?;
+            let ptr = if ids.is_empty() {
+                std::ptr::null()
+            } else {
+                ids.as_ptr()
+            };
+            // SAFETY: `ptr` es nulo (quita los CPU Sets) o apunta a `ids.len()` ids vivos.
+            if unsafe { SetProcessDefaultCpuSets(handle(&h), ptr, ids.len() as u32) } == 0 {
+                return Err(last_error(target));
+            }
+            return Ok(());
+        }
         let bits = usize::BITS as usize;
         if cpus.is_empty() || cpus.iter().any(|&c| c >= bits) {
             return Err(PlatformError::Os(format!("afinidad inválida {cpus:?}")));
