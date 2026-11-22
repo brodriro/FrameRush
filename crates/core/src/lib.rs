@@ -9,6 +9,7 @@ mod model;
 mod plan;
 mod protected;
 mod rule;
+mod watchdog;
 
 pub use engine::{
     ApplyRequest, CUSTOM_POWER_PLAN_NAME, Engine, EngineError, GameBoost, LOWERED_PRIORITY,
@@ -22,3 +23,4 @@ pub use plan::{
 };
 pub use protected::{ProtectedReason, is_protected, protected_reason};
 pub use rule::{OsNames, Rule};
+pub use watchdog::game_running;
