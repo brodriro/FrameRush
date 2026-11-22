@@ -809,10 +809,9 @@ fn power_set(id: &str, yes: bool) -> Result<()> {
     Ok(())
 }
 
-/// Fuentes de sensores del equipo. Las que no están (sin GPU NVIDIA, por ejemplo) se avisan y
-/// se saltan.
+/// Fuentes de sensores del equipo (`framerush_sensors::detect`; el tacómetro de la GPU por
+/// NVAPI es el último recurso). Se dice cuáles se consultaron.
 fn sensor_providers() -> Vec<Box<dyn framerush_sensors::SensorProvider>> {
-    let mut providers: Vec<Box<dyn framerush_sensors::SensorProvider>> = vec![];
     match framerush_sensors::NvidiaGpus::open() {
         Ok(gpus) => {
             for g in gpus.gpus() {
@@ -821,13 +820,12 @@ fn sensor_providers() -> Vec<Box<dyn framerush_sensors::SensorProvider>> {
                     None => println!("{}: umbral de slowdown no disponible", g.name),
                 }
             }
-            providers.push(Box::new(gpus));
         }
         Err(e) => println!("{e}"),
     }
-    #[cfg(target_os = "linux")]
-    providers.push(Box::new(framerush_sensors::Hwmon::new()));
-    providers
+    let sources = framerush_sensors::detect();
+    println!("Fuentes consultadas: {}", sources.checked.join(", "));
+    sources.providers
 }
 
 fn print_sensors(sensors: &[framerush_sensors::Sensor]) {
