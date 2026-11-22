@@ -419,7 +419,13 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     };
     let report = run(Op::Apply(request))?;
     print_report(&report);
-    println!("Deshacer: `framerush undo` (último apply) o `framerush revert` (toda la sesión).");
+    // Lo que no deja estado (memoria) no abre sesión: entonces no hay nada que deshacer.
+    let journal = FileStore::new(data_dir()?.join("session.json")).load()?;
+    if journal.is_open() {
+        println!(
+            "Deshacer: `framerush undo` (último apply) o `framerush revert` (toda la sesión)."
+        );
+    }
     Ok(())
 }
 
