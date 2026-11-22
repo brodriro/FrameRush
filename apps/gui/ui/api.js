@@ -50,6 +50,15 @@
       T.event.listen('game-exited', e => cb(e.payload)).then(un => { stop = un; });
       return () => stop();
     },
+    /*
+     * Evento `game-launched`: arrancó un juego de Steam (no cuenta el que ya corría al abrir la app).
+     * { appid, pids }.
+     */
+    onGameLaunched(cb) {
+      let stop = () => {};
+      T.event.listen('game-launched', e => cb(e.payload)).then(un => { stop = un; });
+      return () => stop();
+    },
     undo() { return T.core.invoke('undo'); },
 
     /*

@@ -349,7 +349,7 @@
   }
 
   /* El backend vuelve a planificar con el equipo de ahora y aplica solo lo marcado. */
-  async function apply(force) {
+  async function apply(force, verb = 'Aplicar') {
     const n = S.chk.filter(Boolean).length + S.stc.filter(Boolean).length + levelToggles().length;
     if (first('dry-run')?.checked) { toast(`Simulación: se aplicarían ${n} cambios. No se ha modificado nada.`); return; }
     if (!force && active('vbs-hvci-off')) { /* SETTINGS §4.8 */
@@ -357,7 +357,7 @@
       toast('Confirma el aviso de compatibilidad para aplicar.');
       return;
     }
-    const r = await run('Aplicar', () => api.apply({
+    const r = await run(verb, () => api.apply({
       level: S.level,
       rows: D.processes.filter((p, i) => S.chk[i]).map(p => p.id),
       settings: levelToggles().map(x => x.dataset.setting),
@@ -396,6 +396,27 @@
       if (!e.outcomes.sessionOpen) { S.hist = []; D.pendingSession = null; }
     }
     sess();
+  }
+
+  /*
+   * Lanzamiento fuera de la app (It3.2, P4): con profile-auto-apply y un perfil guardado, se elige el
+   * juego, se carga su perfil y se aplica como con el botón (las confirmaciones siguen pidiéndose).
+   */
+  function onGameLaunched(e) {
+    const i = D.games.findIndex(g => g.appid === e.appid);
+    if (i < 0) return; /* instalado después de abrir la app: no hay datos de él */
+    Object.assign(D.games[i], { running: true, pids: e.pids });
+    const p = S.profiles[e.appid];
+    if (!p || !first('profile-auto-apply')?.checked) {
+      if (S.game === i) caps();
+      toast(`${D.games[i].name} se ha iniciado${p ? ' (auto-aplicar desactivado)' : ' · sin perfil guardado'}.`);
+      return;
+    }
+    S.game = i;
+    DS('game-target').forEach(s => { s.value = String(i); });
+    caps();
+    useProfile(e.appid, true);
+    apply(false, `${p.name} iniciado, perfil aplicado`);
   }
 
   function launchGame() {
@@ -481,7 +502,7 @@
       await api.saveProfile(g.appid, g.name, data);
       S.profiles[g.appid] = { name: g.name, data };
       fillProfiles(g.appid);
-      toast(`Perfil de «${g.name}» guardado: se carga al elegir el juego. Auto-aplicar al lanzarlo ${NOT_WIRED}`);
+      toast(`Perfil de «${g.name}» guardado: se carga al elegir el juego${first('profile-auto-apply')?.checked ? ' y se aplica al iniciarlo' : ''}.`);
     } catch (err) {
       toast(`No se pudo guardar el perfil: ${err && err.message ? err.message : err}`);
       fillProfiles(g.appid);
@@ -705,7 +726,7 @@
     try { S.profiles = await api.profiles(); } catch (err) { S.profiles = {}; toast(`No se pudieron leer los perfiles: ${err && err.message ? err.message : err}`); }
     const g = D.games[S.game];
     if (g && g.appid in S.profiles) useProfile(g.appid); else fillProfiles('global');
-    stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited));
+    stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited), api.onGameLaunched(onGameLaunched));
   }
 
   DS('hardware-profile').forEach(e => { e.textContent = 'Leyendo el equipo…'; });
