@@ -22,4 +22,6 @@ pub use system::{
     SavedData, SavedValue, ServiceControl, ServiceState, SystemTweaks, Tweak,
 };
 #[cfg(windows)]
-pub use windows::{AcerSensor, Helper, Nvapi, WindowsPlatform, serve_helper, steam_root};
+pub use windows::{
+    AcerSensor, Helper, Nvapi, WindowsPlatform, serve_helper, steam_root, steam_running_app,
+};

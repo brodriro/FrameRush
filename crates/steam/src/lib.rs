@@ -3,11 +3,16 @@
 //! - [`locate`]: la carpeta de Steam del equipo (hoy solo Windows; Linux y macOS, PLAN §6).
 //! - [`installed_apps`]: los juegos de todas las bibliotecas, leídos de
 //!   `steamapps/libraryfolders.vdf` y de cada `steamapps/appmanifest_<appid>.acf`.
+//! - [`detect`]: el juego en marcha (`RunningAppID` o el proceso en primer plano) y
+//!   [`game_processes`], sus procesos.
 //!
 //! El formato de estos archivos no está documentado por Valve: se leen solo las claves que se
 //! usan (`path`, `appid`, `name`, `installdir`) y un archivo ilegible se informa sin abortar.
 
+mod running;
 mod vdf;
+
+pub use running::{Source, detect, game_processes, running_app_id};
 
 use std::path::{Path, PathBuf};
 

@@ -687,6 +687,11 @@ pub fn steam_root() -> Result<Option<PathBuf>> {
     Ok(registry::read_string(HKCU, STEAM, "SteamPath")?.map(PathBuf::from))
 }
 
+/// `appid` del juego que Steam tiene en marcha (`RunningAppID`; 0 = ninguno), o `None`.
+pub fn steam_running_app() -> Result<Option<u32>> {
+    Ok(registry::read_dword(HKCU, STEAM, "RunningAppID")?.filter(|&id| id != 0))
+}
+
 /// Dato que pone un ajuste en un valor.
 #[derive(Debug)]
 enum RegData {
