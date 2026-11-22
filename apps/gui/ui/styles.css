@@ -1,6 +1,7 @@
 /* FrameRush GUI: estilos del diseño final (design/v3-overlay-compact.html). */
 :root{--glass:rgba(20,22,24,.88);--l:rgba(255,255,255,.08);--l2:rgba(255,255,255,.14);--tx:#eef0f1;--tx2:#a9b0b5;--tx3:#727a80;
---acc:#7cc4b8;--ok:#6fcf8e;--warn:#f0b552;--bad:#f07a6a;--mono:'IBM Plex Mono',ui-monospace,Consolas,monospace}
+--acc:#7cc4b8;--ok:#6fcf8e;--warn:#f0b552;--bad:#f07a6a;--mono:'IBM Plex Mono',ui-monospace,Consolas,monospace;
+--menu:#1b1e21;color-scheme:dark}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 /* Dentro de Tauri la ventana mide 420 px y es transparente: el panel la ocupa entera. */
@@ -81,6 +82,8 @@ input[type=checkbox]{accent-color:var(--acc);width:14px;height:14px;margin:0}
 .tg:after{content:"";position:absolute;left:2px;top:2px;width:13px;height:13px;border-radius:50%;background:#ccd;transition:.12s}
 .tg:checked{background:var(--acc)}.tg:checked:after{left:15px;background:#10201d}.tg:disabled{opacity:.35;cursor:not-allowed}
 select,input[type=number],input[type=text]{background:rgba(0,0,0,.35);border:1px solid var(--l2);border-radius:5px;font-size:11.5px;padding:2px 5px}
+/* La lista desplegable la pinta el sistema: sin fondo opaco propio sale blanca con el texto claro heredado. */
+option,optgroup{background:var(--menu);color:var(--tx)}
 input[type=number]{width:56px}input[type=text]{width:104px}
 .rt{margin:4px 0;padding:7px;border-radius:6px;background:rgba(240,122,106,.1);border:1px solid rgba(240,122,106,.35);color:#f7b3a9;font-size:11px}
 .rt label{display:flex;gap:6px;align-items:center;margin:5px 0}
