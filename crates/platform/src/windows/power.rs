@@ -275,6 +275,14 @@ pub(super) fn delete_power_plan(id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+
+    /// Los tests que leen o cambian los planes del equipo van de uno en uno: duplicar el plan
+    /// activo a la vez que se reactiva hace fallar a uno de los dos.
+    fn system_plans() -> MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 
     #[test]
     fn guids_round_trip() {
@@ -293,6 +301,7 @@ mod tests {
     /// activar el que ya lo está funciona sin elevar.
     #[test]
     fn the_active_plan_is_listed() {
+        let _lock = system_plans();
         let plans = power_plans().unwrap();
         assert!(!plans.is_empty());
         assert!(plans.iter().all(|p| !p.name.is_empty()));
@@ -306,6 +315,7 @@ mod tests {
     /// así que no cambia el plan del equipo.
     #[test]
     fn custom_plan_is_created_and_deleted() {
+        let _lock = system_plans();
         let active = active_power_plan().unwrap();
         let custom = create_custom_power_plan(&active.id, "FrameRush test").unwrap();
         assert_eq!(custom.name, "FrameRush test");
