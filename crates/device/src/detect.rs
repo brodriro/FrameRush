@@ -6,10 +6,27 @@
 use crate::DeviceProfile;
 use framerush_platform::{DisplayControl, Inventory, Os, PowerControl};
 
-/// Perfil del equipo con lo que la plataforma sabe leer. Todavía no rellena build del SO,
-/// fabricante, apps, VBS/HVCI, HAGS, antivirus ni virtualización.
+/// Primer build de Windows 11: 21H2 es "OS build 22000" en "Windows 11 release information"
+/// (Microsoft Learn); el último de Windows 10 es 19045.
+const WINDOWS_11_FIRST_BUILD: u32 = 22000;
+
+/// Si `build` ("26100" o "10.0.26100") es de Windows 11; `None` si no es un número.
+fn is_windows_11(build: &str) -> Option<bool> {
+    let number = build.rsplit('.').next()?.trim().parse::<u32>().ok()?;
+    Some(number >= WINDOWS_11_FIRST_BUILD)
+}
+
+/// Perfil del equipo con lo que la plataforma sabe leer. Todavía no rellena HAGS, antivirus ni
+/// virtualización.
 pub fn detect<P: PowerControl + DisplayControl + Inventory>(platform: &P, os: Os) -> DeviceProfile {
     let mut device = DeviceProfile::undetected(os);
+    device.os_build = platform.os_build().ok().flatten();
+    if os == Os::Windows {
+        device.windows_11 = device.os_build.as_deref().and_then(is_windows_11);
+    }
+    device.manufacturer = platform.manufacturer().ok().flatten();
+    device.vbs_hvci_enabled = platform.vbs_running().ok().flatten();
+    device.installed_apps = platform.installed_apps().unwrap_or_default();
     device.cpu = platform.cpu().ok().flatten();
     device.gpus = platform.gpus().unwrap_or_default();
     device.battery = platform.battery().ok().flatten();
@@ -56,5 +73,34 @@ mod tests {
         assert_eq!(d.power_plans, [plan]);
         assert_eq!(d.active_power_plan.as_deref(), Some("a"));
         assert_eq!(d.manufacturer, None);
+        assert_eq!(d.windows_11, None);
+    }
+
+    #[test]
+    fn reads_the_system_and_derives_windows_11_from_the_build() {
+        let m = MockPlatform::new(4);
+        m.set_system(
+            Some("22631"),
+            Some("Acme"),
+            Some(true),
+            &["Discord", "Steam"],
+        );
+        let d = detect(&m, Os::Windows);
+        assert_eq!(d.os_build.as_deref(), Some("22631"));
+        assert_eq!(d.windows_11, Some(true));
+        assert_eq!(d.manufacturer.as_deref(), Some("Acme"));
+        assert_eq!(d.vbs_hvci_enabled, Some(true));
+        assert_eq!(d.installed_apps, ["Discord", "Steam"]);
+
+        // Windows 11 solo tiene sentido en Windows.
+        assert_eq!(detect(&m, Os::Linux).windows_11, None);
+    }
+
+    #[test]
+    fn windows_11_starts_at_build_22000() {
+        assert_eq!(is_windows_11("19045"), Some(false));
+        assert_eq!(is_windows_11("22000"), Some(true));
+        assert_eq!(is_windows_11("10.0.26100"), Some(true));
+        assert_eq!(is_windows_11("raro"), None);
     }
 }
