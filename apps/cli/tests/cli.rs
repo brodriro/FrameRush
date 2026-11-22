@@ -380,3 +380,12 @@ fn refresh_rate_max_is_set_by_the_level() {
     ];
     assert!(framerush_in(&dir, &args).0);
 }
+
+/// Con o sin GPU NVIDIA, `sensors` termina bien y nunca muestra un 0 de relleno.
+#[test]
+fn sensors_reads_once_and_never_fills_with_zero() {
+    let dir = temp_dir("sensors");
+    let (ok, stdout) = framerush_in(&dir, &["sensors"]);
+    assert!(ok, "{stdout}");
+    assert!(!stdout.contains(": 0 °C"), "{stdout}");
+}

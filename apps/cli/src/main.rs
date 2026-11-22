@@ -71,6 +71,12 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Temperaturas y ventiladores (R4). Lo que no se puede leer sale como "No disponible".
+    Sensors {
+        /// Sigue leyendo cada segundo hasta Ctrl+C.
+        #[arg(long)]
+        watch: bool,
+    },
     /// Planes de energía del equipo (R5). Sin subcomando, los lista.
     Power {
         #[command(subcommand)]
@@ -168,6 +174,7 @@ fn main() -> Result<()> {
         Command::Undo => undo(),
         Command::Revert => revert(),
         Command::Status { json } => status(json),
+        Command::Sensors { watch } => sensors(watch),
         Command::Power { command } => match command {
             None | Some(PowerCommand::Get) => power_get(),
             Some(PowerCommand::Set { id, yes }) => power_set(&id, yes),
@@ -791,6 +798,56 @@ fn power_set(id: &str, yes: bool) -> Result<()> {
     };
     print_report(&run(Op::Apply(Box::new(request)))?);
     println!("Deshacer: `framerush undo` (último apply) o `framerush revert` (toda la sesión).");
+    Ok(())
+}
+
+/// Fuentes de sensores del equipo. Las que no están (sin GPU NVIDIA, por ejemplo) se avisan y
+/// se saltan.
+fn sensor_providers() -> Vec<Box<dyn framerush_sensors::SensorProvider>> {
+    let mut providers: Vec<Box<dyn framerush_sensors::SensorProvider>> = vec![];
+    match framerush_sensors::NvidiaGpus::open() {
+        Ok(gpus) => {
+            for (name, slowdown) in gpus.slowdown_c() {
+                match slowdown {
+                    Some(c) => println!("{name}: slowdown a {c:.0} °C"),
+                    None => println!("{name}: umbral de slowdown no disponible"),
+                }
+            }
+            providers.push(Box::new(gpus));
+        }
+        Err(e) => println!("{e}"),
+    }
+    providers
+}
+
+fn print_sensors(sensors: &[framerush_sensors::Sensor]) {
+    if sensors.is_empty() {
+        println!("No hay sensores disponibles todavía (CPU y ventiladores llegan con M2).");
+    }
+    for s in sensors {
+        println!("{s}");
+    }
+}
+
+fn sensors(watch: bool) -> Result<()> {
+    let mut providers = sensor_providers();
+    if !watch {
+        let sensors: Vec<_> = providers.iter_mut().flat_map(|p| p.read()).collect();
+        print_sensors(&sensors);
+        return Ok(());
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _poller = framerush_sensors::Poller::spawn(
+        providers,
+        framerush_sensors::POLL_INTERVAL,
+        move |sensors| {
+            let _ = tx.send(sensors);
+        },
+    );
+    for sensors in rx {
+        println!();
+        print_sensors(&sensors);
+    }
     Ok(())
 }
 
