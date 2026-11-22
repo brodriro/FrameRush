@@ -313,7 +313,8 @@
     if (fails.length) msg += ` Primer fallo: ${fails[0].what} (${fails[0].detail}).`;
     if (r.needsAdmin.length) msg += ` Piden admin (pulsa «${ELEVATE_LABEL[D.os].replace(/^\S+ /, '')}»): ${r.needsAdmin.join(', ')}.`;
     if (r.notWired.length) msg += ` Aún no conectado, no se aplicó: ${r.notWired.join(', ')}.`;
-    if (!r.lines.length && !r.notWired.length && !r.needsAdmin.length) msg = `${verb}: no había nada que hacer.`;
+    if (r.notes.length) msg += ` No aplicado: ${r.notes.join('; ')}.`;
+    if (!r.lines.length && !r.notWired.length && !r.needsAdmin.length && !r.notes.length) msg = `${verb}: no había nada que hacer.`;
     toast(msg);
   }
 
@@ -360,8 +361,26 @@
       rows: D.processes.filter((p, i) => S.chk[i]).map(p => p.id),
       settings: levelToggles().map(x => x.dataset.setting),
       powerPlan: S.plan ?? null,
+      game: gameSelection(),
     }));
     if (r && r.done) { S.hist.push(r.done); sess(); }
+  }
+
+  /* Panel del juego (R3): lo que el backend necesita para el GameBoost. FSO e IFEO van en settings. */
+  function gameSelection() {
+    const g = D.games[S.game];
+    if (!g) return null;
+    const aff = first('cpu-affinity');
+    const cores = $$('[data-setting="cpu-affinity-cores"] input:checked').map(x => +x.id.replace('core', ''));
+    const affOn = aff && aff.checked && !aff.disabled && shown(aff) && cores.length;
+    const gpu = first('gpu-preference');
+    return {
+      appid: g.appid,
+      priority: priorityValue() || 'alta',
+      realtimeConfirmed: S.rt,
+      affinity: affOn ? cores : null,
+      highPerformanceGpu: !!(gpu && !gpu.disabled && shown(gpu) && gpu.value === 'alto'),
+    };
   }
 
   function launchGame() {

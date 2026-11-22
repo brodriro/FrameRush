@@ -9,7 +9,7 @@ use framerush_core::{
     ProtectedReason, Snapshot, Subject, defaults, plan, protected_reason,
 };
 use framerush_device::{CoreKind, DeviceProfile, Sourced};
-use framerush_platform::{Os, ProcessInfo, scan_processes};
+use framerush_platform::{Os, ProcessInfo, Target, scan_processes};
 use framerush_sensors::{Kind, Reading, Sensor};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -509,39 +509,58 @@ struct GameView {
     pids: Vec<u32>,
 }
 
+/// Juegos instalados en Steam, o `None` si Steam no está instalado.
+fn steam_apps() -> framerush_steam::Result<Option<Vec<framerush_steam::App>>> {
+    let Some(root) = framerush_steam::locate()? else {
+        return Ok(None);
+    };
+    Ok(Some(framerush_steam::installed_apps(&root)?.apps))
+}
+
+/// Procesos de la carpeta del juego, salvo los protegidos (su anticheat puede vivir ahí).
+fn targets(app: &framerush_steam::App, processes: &[ProcessInfo]) -> Vec<Target> {
+    framerush_steam::game_processes(app, processes)
+        .into_iter()
+        .filter(|p| protected_reason(&p.name).is_none())
+        .map(|p| p.target.clone())
+        .collect()
+}
+
 /// Procesos del juego de Steam en marcha (`RunningAppID`, todos los de su carpeta): quedan
 /// fuera del plan. Si Steam no se puede leer no hay juego; el motivo ya va en `gamesNote`.
-fn running_game(processes: &[ProcessInfo]) -> Vec<framerush_platform::Target> {
-    let read = || -> framerush_steam::Result<Vec<framerush_platform::Target>> {
-        let Some(root) = framerush_steam::locate()? else {
-            return Ok(vec![]);
-        };
-        let found = framerush_steam::installed_apps(&root)?;
+fn running_game(processes: &[ProcessInfo]) -> Vec<Target> {
+    let read = || -> framerush_steam::Result<Vec<Target>> {
+        let apps = steam_apps()?.unwrap_or_default();
         let running = framerush_steam::running_app_id()?;
-        Ok(framerush_steam::detect(&found.apps, running, None)
-            .map(|(app, _)| {
-                framerush_steam::game_processes(app, processes)
-                    .into_iter()
-                    .map(|p| p.target.clone())
-                    .collect()
-            })
+        Ok(framerush_steam::detect(&apps, running, None)
+            .map(|(app, _)| targets(app, processes))
             .unwrap_or_default())
     };
     read().unwrap_or_default()
+}
+
+/// Procesos del juego `appid` (el que eligió el usuario), vacío si no está en marcha.
+pub(crate) fn game_targets(appid: u32, processes: &[ProcessInfo]) -> Result<Vec<Target>> {
+    let apps = steam_apps()
+        .context("no se pudo leer Steam")?
+        .unwrap_or_default();
+    Ok(apps
+        .iter()
+        .find(|a| a.appid == appid)
+        .map(|app| targets(app, processes))
+        .unwrap_or_default())
 }
 
 /// Juegos de Steam y, si no hay, el motivo. La GUI está en primer plano cuando se pide el
 /// snapshot, así que aquí solo cuenta `RunningAppID`.
 fn steam_games(processes: &[ProcessInfo]) -> (Vec<GameView>, Option<String>) {
     let read = || -> framerush_steam::Result<Option<Vec<GameView>>> {
-        let Some(root) = framerush_steam::locate()? else {
+        let Some(apps) = steam_apps()? else {
             return Ok(None);
         };
-        let found = framerush_steam::installed_apps(&root)?;
         let running = framerush_steam::running_app_id()?;
-        let detected = framerush_steam::detect(&found.apps, running, None).map(|(a, _)| a.appid);
-        let mut games: Vec<GameView> = found
-            .apps
+        let detected = framerush_steam::detect(&apps, running, None).map(|(a, _)| a.appid);
+        let mut games: Vec<GameView> = apps
             .iter()
             .map(|app| {
                 let procs = framerush_steam::game_processes(app, processes);

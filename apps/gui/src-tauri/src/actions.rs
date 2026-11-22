@@ -5,17 +5,22 @@
 //! UI marca y aún no está conectado (juego, Turbo, ajustes sin backend) vuelve en `not_wired`
 //! para que la UI lo diga en vez de darlo por hecho.
 
-use crate::snapshot::{Inputs, data_dir, inputs};
+use crate::snapshot::{Inputs, data_dir, game_targets, inputs};
 use anyhow::{Context, Result};
 use framerush_core::{
-    ApplyRequest, FileStore, Level, Outcome, PlanOptions, RefreshRate, Report, defaults, plan,
+    ApplyRequest, FileStore, GameBoost, Level, Outcome, PlanOptions, RefreshRate, Report, defaults,
+    persistent_priority_default, plan,
 };
+use framerush_platform::Priority;
 use serde::{Deserialize, Serialize};
 
 /// Ids de design/SETTINGS.md que no son reglas ni ajustes de `Tweak`/`MemoryOp`.
 const POWER_PLAN: &str = "power-plan";
 const CUSTOM_POWER_PLAN: &str = "custom-power-plan";
 const REFRESH_RATE_MAX: &str = "refresh-rate-max";
+/// Ajustes del exe del juego que llegan como ids de `settings`.
+const PERSISTENT_PRIORITY: &str = "game-priority-persistent";
+const FSO_OFF: &str = "fullscreen-optimizations-off";
 
 /// Lo que el usuario dejó marcado en la UI.
 #[derive(Debug, Deserialize)]
@@ -29,6 +34,40 @@ pub struct Selection {
     settings: Vec<String>,
     /// Índice del plan de energía elegido en `device.power.plans`.
     power_plan: Option<usize>,
+    /// El juego elegido en `game-target` y su panel; `null` sin juegos.
+    game: Option<GameSelection>,
+}
+
+/// Panel del juego (R3).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameSelection {
+    appid: u32,
+    priority: GamePriority,
+    /// Segunda confirmación de Tiempo real (It1.5).
+    realtime_confirmed: bool,
+    /// CPU lógicas de `cpu-affinity-cores` si `cpu-affinity` está marcado.
+    affinity: Option<Vec<usize>>,
+    /// `gpu-preference = alto`.
+    high_performance_gpu: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum GamePriority {
+    Normal,
+    Alta,
+    Realtime,
+}
+
+impl From<GamePriority> for Priority {
+    fn from(p: GamePriority) -> Self {
+        match p {
+            GamePriority::Normal => Priority::Normal,
+            GamePriority::Alta => Priority::High,
+            GamePriority::Realtime => Priority::Realtime,
+        }
+    }
 }
 
 /// Resultado para la UI: una línea por acción.
@@ -42,6 +81,8 @@ pub struct Outcomes {
     not_wired: Vec<String>,
     /// Marcados que piden admin y no hay helper elevado.
     needs_admin: Vec<String>,
+    /// Lo que se pidió y no se aplicó, con el motivo (juego sin procesos, anticheat...).
+    notes: Vec<String>,
     /// Queda una sesión que deshacer.
     session_open: bool,
 }
@@ -72,9 +113,19 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
     let Inputs {
         device,
         rules,
-        snapshot,
+        processes,
+        mut snapshot,
         ..
     } = inputs()?;
+    // El juego elegido (si está en marcha) queda fuera del plan aunque Steam no lo dé como el
+    // juego en marcha.
+    let game_targets = match &selection.game {
+        Some(g) => game_targets(g.appid, &processes)?,
+        None => vec![],
+    };
+    if !game_targets.is_empty() {
+        snapshot.game = game_targets.clone();
+    }
     let options = PlanOptions {
         elevated: helper.is_some(),
         keep_alive: defaults::keep_alive(&device).value,
@@ -140,10 +191,53 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         vec![]
     };
 
+    let mut notes = vec![];
+    let game = selection.game.as_ref().and_then(|g| {
+        if game_targets.is_empty() {
+            notes.push("el juego elegido no está en marcha: su prioridad no se toca".to_owned());
+            return None;
+        }
+        let priority = Priority::from(g.priority);
+        let affinity = g.affinity.clone().filter(|_| {
+            let allowed = plan.game_tuning_allowed();
+            if !allowed {
+                notes.push(format!(
+                    "anticheat en ejecución ({}): afinidad desactivada (P2)",
+                    plan.anticheats.join(", ")
+                ));
+            }
+            allowed
+        });
+        let persistent =
+            wanted(PERSISTENT_PRIORITY) && persistent_priority_default(level, priority);
+        if persistent && helper.is_none() {
+            needs_admin.push(PERSISTENT_PRIORITY.to_owned());
+        }
+        Some(GameBoost {
+            targets: game_targets.clone(),
+            priority,
+            realtime_confirmed: g.realtime_confirmed,
+            fullscreen_optimizations_off: wanted(FSO_OFF),
+            affinity,
+            high_performance_gpu: g.high_performance_gpu
+                && defaults::gpu_preference(&device).is_some(),
+            persistent_priority: persistent && helper.is_some(),
+        })
+    });
+    if game.is_none() {
+        for id in [FSO_OFF, PERSISTENT_PRIORITY] {
+            if wanted(id) {
+                notes.push(format!("{id}: no hay juego en marcha"));
+            }
+        }
+    }
+
     let handled = |id: &str| {
         id == POWER_PLAN
             || id == CUSTOM_POWER_PLAN
             || id == REFRESH_RATE_MAX
+            || id == FSO_OFF
+            || id == PERSISTENT_PRIORITY
             || tweaks.iter().any(|t| t.id() == id)
             || memory.iter().any(|m| m.id() == id)
             || needs_admin.iter().any(|n| n == id)
@@ -158,29 +252,34 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
     let request = ApplyRequest {
         items,
         tweaks,
-        game: None,
+        game,
         memory,
         power_plan,
         custom_power_plan,
         refresh_rates,
     };
     let report = run(helper, Op::Apply(Box::new(request)))?;
-    outcomes(report, not_wired, needs_admin)
+    outcomes(report, not_wired, needs_admin, notes)
 }
 
 /// Deshace el último `apply`.
 pub fn undo(helper: Option<Elevated>) -> Result<Outcomes> {
     let report = run(helper, Op::Undo)?;
-    outcomes(report, vec![], vec![])
+    outcomes(report, vec![], vec![], vec![])
 }
 
 /// Deshace toda la sesión (Restaurar).
 pub fn revert(helper: Option<Elevated>) -> Result<Outcomes> {
     let report = run(helper, Op::Revert)?;
-    outcomes(report, vec![], vec![])
+    outcomes(report, vec![], vec![], vec![])
 }
 
-fn outcomes(report: Report, not_wired: Vec<String>, needs_admin: Vec<String>) -> Result<Outcomes> {
+fn outcomes(
+    report: Report,
+    not_wired: Vec<String>,
+    needs_admin: Vec<String>,
+    notes: Vec<String>,
+) -> Result<Outcomes> {
     let session_open = framerush_core::JournalStore::load(&store()?)
         .map(|j| j.is_open())
         .unwrap_or(false);
@@ -205,6 +304,7 @@ fn outcomes(report: Report, not_wired: Vec<String>, needs_admin: Vec<String>) ->
             .collect(),
         not_wired,
         needs_admin,
+        notes,
         session_open,
     })
 }
@@ -254,13 +354,22 @@ mod tests {
     #[test]
     fn reads_the_ui_selection() {
         let s: Selection = serde_json::from_str(
-            r#"{"level":2,"rows":["sync-onedrive"],"settings":["game-dvr-off"],"powerPlan":null}"#,
+            r#"{"level":2,"rows":["sync-onedrive"],"settings":["game-dvr-off"],"powerPlan":null,
+                "game":{"appid":70,"priority":"realtime","realtimeConfirmed":true,
+                        "affinity":[2,3],"highPerformanceGpu":false}}"#,
         )
         .unwrap();
         assert_eq!(level(s.level).unwrap(), Level::Agresivo);
         assert_eq!(s.rows, ["sync-onedrive"]);
         assert_eq!(s.settings, ["game-dvr-off"]);
         assert_eq!(s.power_plan, None);
+        let g = s.game.unwrap();
+        assert_eq!(
+            (g.appid, Priority::from(g.priority)),
+            (70, Priority::Realtime)
+        );
+        assert!(g.realtime_confirmed && !g.high_performance_gpu);
+        assert_eq!(g.affinity, Some(vec![2, 3]));
     }
 
     #[test]
