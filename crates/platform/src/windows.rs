@@ -128,6 +128,63 @@ impl WindowsPlatform {
     }
 }
 
+/// Acciones de proceso en este proceso, sin elevar. Las de procesos de otro usuario o de SYSTEM
+/// fallan con `AccessDenied` y pasan al helper si hay uno (P12).
+impl WindowsPlatform {
+    /// Sin el privilegio de aumentar la prioridad base, Windows convierte Tiempo real en Alta.
+    fn set_priority_here(&self, target: &Target, priority: Priority) -> Result<()> {
+        let h = self.open(target, PROCESS_SET_INFORMATION)?;
+        // SAFETY: `h` es un handle abierto con PROCESS_SET_INFORMATION.
+        if unsafe { SetPriorityClass(handle(&h), to_class(priority)) } == 0 {
+            return Err(last_error(target));
+        }
+        Ok(())
+    }
+
+    /// `NtSuspendProcess` y, si falla, hilo a hilo (V17).
+    fn suspend_here(&self, target: &Target) -> Result<()> {
+        let h = self.open(target, PROCESS_SUSPEND_RESUME)?;
+        // SAFETY: `h` es un handle abierto con PROCESS_SUSPEND_RESUME.
+        if nt_status(unsafe { NtSuspendProcess(handle(&h)) }).is_ok() {
+            return Ok(());
+        }
+        self.revalidate(target)?;
+        for_each_thread(target.pid, SuspendThread)
+    }
+
+    /// `NtResumeProcess` y, si falla, hilo a hilo.
+    fn resume_here(&self, target: &Target) -> Result<()> {
+        let h = self.open(target, PROCESS_SUSPEND_RESUME)?;
+        // SAFETY: `h` es un handle abierto con PROCESS_SUSPEND_RESUME.
+        if nt_status(unsafe { NtResumeProcess(handle(&h)) }).is_ok() {
+            return Ok(());
+        }
+        self.revalidate(target)?;
+        for_each_thread(target.pid, ResumeThread)
+    }
+
+    fn kill_here(&self, target: &Target) -> Result<()> {
+        let h = self.open(target, PROCESS_TERMINATE)?;
+        // SAFETY: `h` es un handle abierto con PROCESS_TERMINATE.
+        if unsafe { TerminateProcess(handle(&h), 1) } == 0 {
+            return Err(last_error(target));
+        }
+        Ok(())
+    }
+
+    /// `here` o, si el SO lo deniega y hay helper, la misma acción en el helper.
+    fn or_helper(
+        &self,
+        here: Result<()>,
+        elevated: impl FnOnce(&Helper) -> Result<()>,
+    ) -> Result<()> {
+        match (here, &self.helper) {
+            (Err(PlatformError::AccessDenied(_)), Some(helper)) => elevated(helper),
+            (result, _) => result,
+        }
+    }
+}
+
 fn handle(h: &OwnedHandle) -> HANDLE {
     h.as_raw_handle()
 }
@@ -251,45 +308,24 @@ impl ProcessControl for WindowsPlatform {
 
     /// Sin el privilegio de aumentar la prioridad base, Windows convierte Tiempo real en Alta.
     fn set_priority(&self, target: &Target, priority: Priority) -> Result<()> {
-        let h = self.open(target, PROCESS_SET_INFORMATION)?;
-        // SAFETY: `h` es un handle abierto con PROCESS_SET_INFORMATION.
-        if unsafe { SetPriorityClass(handle(&h), to_class(priority)) } == 0 {
-            return Err(last_error(target));
-        }
-        Ok(())
+        self.or_helper(self.set_priority_here(target, priority), |h| {
+            h.set_priority(target, priority)
+        })
     }
 
     /// `NtSuspendProcess` y, si falla, hilo a hilo (V17).
     fn suspend(&self, target: &Target) -> Result<()> {
         self.refuse_own(target)?;
-        let h = self.open(target, PROCESS_SUSPEND_RESUME)?;
-        // SAFETY: `h` es un handle abierto con PROCESS_SUSPEND_RESUME.
-        if nt_status(unsafe { NtSuspendProcess(handle(&h)) }).is_ok() {
-            return Ok(());
-        }
-        self.revalidate(target)?;
-        for_each_thread(target.pid, SuspendThread)
+        self.or_helper(self.suspend_here(target), |h| h.suspend(target))
     }
 
-    /// `NtResumeProcess` y, si falla, hilo a hilo.
     fn resume(&self, target: &Target) -> Result<()> {
-        let h = self.open(target, PROCESS_SUSPEND_RESUME)?;
-        // SAFETY: `h` es un handle abierto con PROCESS_SUSPEND_RESUME.
-        if nt_status(unsafe { NtResumeProcess(handle(&h)) }).is_ok() {
-            return Ok(());
-        }
-        self.revalidate(target)?;
-        for_each_thread(target.pid, ResumeThread)
+        self.or_helper(self.resume_here(target), |h| h.resume(target))
     }
 
     fn kill(&self, target: &Target) -> Result<()> {
         self.refuse_own(target)?;
-        let h = self.open(target, PROCESS_TERMINATE)?;
-        // SAFETY: `h` es un handle abierto con PROCESS_TERMINATE.
-        if unsafe { TerminateProcess(handle(&h), 1) } == 0 {
-            return Err(last_error(target));
-        }
-        Ok(())
+        self.or_helper(self.kill_here(target), |h| h.kill(target))
     }
 
     fn foreground(&self) -> Result<Option<Target>> {

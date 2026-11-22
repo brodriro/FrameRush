@@ -7,13 +7,16 @@
 //!   clientes remotos, y solo acepta como cliente a ese PID. El cliente comprueba a su vez que
 //!   el servidor es el proceso que lanzó.
 //! - Protocolo: una petición JSON por línea y una respuesta por línea. Solo hay comandos
-//!   tipados ([`Request`]) y solo para ajustes que piden admin.
+//!   tipados ([`Request`]): ajustes que piden admin y acciones sobre procesos que el cliente
+//!   no puede tocar (de otro usuario o de SYSTEM, P12). Los procesos pasan por la guardia de
+//!   quien lanza el helper (la lista de protegidos de `core`) y nunca son el propio cliente.
 //! - El journal lo sigue escribiendo el cliente antes de cada petición. El helper termina al
 //!   cerrarse el pipe o al terminar el proceso que lo lanzó.
 #![allow(unsafe_code)]
 
 use crate::{
-    GameTuning, MemoryControl, PlatformError, Result, SavedValue, SystemTweaks, Target, Tweak,
+    GameTuning, MemoryControl, PlatformError, Priority, ProcessControl, Result, SavedValue,
+    SystemTweaks, Target, Tweak,
 };
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -63,6 +66,20 @@ enum Request {
     TrimWorkingSet(Target),
     /// `standby-purge`.
     PurgeStandbyList,
+    /// Acciones sobre un proceso que el cliente no puede tocar sin elevar.
+    SetPriority(Target, Priority),
+    Suspend(Target),
+    Resume(Target),
+    Kill(Target),
+}
+
+/// Qué procesos puede tocar el helper.
+#[derive(Debug, Clone, Copy)]
+struct Policy {
+    /// El cliente: nunca se congela, cierra ni cambia de prioridad desde aquí.
+    parent: u32,
+    /// Guardia de quien lanza el helper: `false` para un proceso protegido.
+    may_touch: fn(&Target) -> bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,6 +174,22 @@ impl Helper {
         self.call(&Request::PurgeStandbyList)
     }
 
+    pub(super) fn set_priority(&self, target: &Target, priority: Priority) -> Result<()> {
+        self.call(&Request::SetPriority(target.clone(), priority))
+    }
+
+    pub(super) fn suspend(&self, target: &Target) -> Result<()> {
+        self.call(&Request::Suspend(target.clone()))
+    }
+
+    pub(super) fn resume(&self, target: &Target) -> Result<()> {
+        self.call(&Request::Resume(target.clone()))
+    }
+
+    pub(super) fn kill(&self, target: &Target) -> Result<()> {
+        self.call(&Request::Kill(target.clone()))
+    }
+
     fn call(&self, request: &Request) -> Result<()> {
         let mut conn = self
             .conn
@@ -186,11 +219,18 @@ impl Helper {
 
 /// Lado del helper: espera al cliente `parent` en `pipe` y atiende sus peticiones con la
 /// plataforma de este proceso (elevado) hasta que cierre el pipe. Termina el proceso si
-/// `parent` termina antes.
-pub fn serve_helper(pipe: &str, parent: u32, sid: &str) -> Result<()> {
+/// `parent` termina antes. `may_touch` decide qué procesos se pueden congelar, cerrar o cambiar
+/// de prioridad (la lista de protegidos vive en `core`, por encima de este crate).
+pub fn serve_helper(
+    pipe: &str,
+    parent: u32,
+    sid: &str,
+    may_touch: fn(&Target) -> bool,
+) -> Result<()> {
     exit_with(parent)?;
     let file = listen(pipe, parent, sid)?;
-    serve(file, &super::WindowsPlatform::new())
+    let policy = Policy { parent, may_touch };
+    serve(file, &super::WindowsPlatform::new(), policy)
 }
 
 /// Nombre aleatorio para que otro proceso no pueda adelantarse a crearlo.
@@ -406,9 +446,10 @@ fn exit_with(parent: u32) -> Result<()> {
 }
 
 /// Atiende peticiones hasta que el cliente cierre la conexión.
-fn serve<S: Read + Write, T: SystemTweaks + GameTuning + MemoryControl>(
+fn serve<S: Read + Write, T: ProcessControl + SystemTweaks + GameTuning + MemoryControl>(
     conn: S,
     platform: &T,
+    policy: Policy,
 ) -> Result<()> {
     let mut conn = BufReader::new(conn);
     let mut line = String::new();
@@ -422,7 +463,7 @@ fn serve<S: Read + Write, T: SystemTweaks + GameTuning + MemoryControl>(
             return Ok(());
         }
         let response = match serde_json::from_str(&line) {
-            Ok(request) => handle(request, platform),
+            Ok(request) => handle(request, platform, policy),
             Err(e) => Response::Failed(format!("petición no válida: {e}")),
         };
         let mut out = serde_json::to_string(&response)
@@ -435,10 +476,19 @@ fn serve<S: Read + Write, T: SystemTweaks + GameTuning + MemoryControl>(
 }
 
 /// Solo atiende lo que pide admin: lo demás lo hace el cliente sin elevar.
-fn handle<T: SystemTweaks + GameTuning + MemoryControl>(
+fn handle<T: ProcessControl + SystemTweaks + GameTuning + MemoryControl>(
     request: Request,
     platform: &T,
+    policy: Policy,
 ) -> Response {
+    if let Request::SetPriority(t, _) | Request::Suspend(t) | Request::Kill(t) = &request {
+        if t.pid == policy.parent {
+            return Response::Failed("el helper no actúa sobre su cliente".into());
+        }
+        if !(policy.may_touch)(t) {
+            return Response::Failed(format!("{} está protegido", t.exe_path.display()));
+        }
+    }
     if let Request::ApplyTweak(t) | Request::RestoreTweak(t, _) = &request
         && !platform.tweak_requires_admin(*t)
     {
@@ -453,6 +503,10 @@ fn handle<T: SystemTweaks + GameTuning + MemoryControl>(
         }
         Request::TrimWorkingSet(target) => platform.trim_working_set(&target),
         Request::PurgeStandbyList => platform.purge_standby_list(),
+        Request::SetPriority(target, priority) => platform.set_priority(&target, priority),
+        Request::Suspend(target) => platform.suspend(&target),
+        Request::Resume(target) => platform.resume(&target),
+        Request::Kill(target) => platform.kill(&target),
     };
     match result {
         Ok(()) => Response::Done,
@@ -467,6 +521,14 @@ mod tests {
     use super::*;
     use crate::mock::MockPlatform;
     use std::sync::Arc;
+
+    /// Guardia de prueba: protegido es lo que se llama `protected.exe`.
+    fn policy(parent: u32) -> Policy {
+        Policy {
+            parent,
+            may_touch: |t| !t.exe_path.ends_with("protected.exe"),
+        }
+    }
 
     fn helper(file: File) -> Helper {
         Helper {
@@ -491,7 +553,7 @@ mod tests {
         let mock = Arc::new(MockPlatform::new(4));
         let server = {
             let (pipe, mock) = (pipe.clone(), Arc::clone(&mock));
-            std::thread::spawn(move || serve(listen(&pipe, me, &sid)?, &*mock))
+            std::thread::spawn(move || serve(listen(&pipe, me, &sid)?, &*mock, policy(me)))
         };
         let client = helper(connect(&pipe, me, None).unwrap());
 
@@ -519,6 +581,20 @@ mod tests {
         assert_eq!(mock.trims(&t).unwrap(), 1);
         client.purge_standby_list().unwrap();
         assert_eq!(mock.standby_purges(), 1);
+
+        // Procesos: sí a uno cualquiera; no a uno protegido ni al cliente.
+        let other = mock.spawn(20, "sync.exe", r"C:\sync.exe", 1);
+        client.suspend(&other).unwrap();
+        assert!(mock.is_suspended(&other).unwrap());
+        client.resume(&other).unwrap();
+        client.set_priority(&other, Priority::BelowNormal).unwrap();
+        assert_eq!(mock.priority(&other).unwrap(), Priority::BelowNormal);
+        let protected = mock.spawn(21, "protected.exe", r"C:\protected.exe", 1);
+        assert!(client.suspend(&protected).is_err());
+        assert!(!mock.is_suspended(&protected).unwrap());
+        let me_target = mock.spawn(me, "cli.exe", r"C:\cli.exe", 1);
+        assert!(client.kill(&me_target).is_err());
+        client.kill(&other).unwrap();
 
         let user = mock.read_tweak(Tweak::GameDvrOff).unwrap();
         assert!(client.apply_tweak(Tweak::GameDvrOff).is_err());

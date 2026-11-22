@@ -23,7 +23,14 @@ struct Args {
 #[cfg(windows)]
 fn main() -> Result<()> {
     let args = Args::parse();
-    framerush_platform::serve_helper(&args.pipe, args.parent, &args.sid)?;
+    // Lo protegido no se toca ni elevado: misma lista que el plan (nombre o ruta del exe).
+    let may_touch = |t: &framerush_platform::Target| {
+        let path = t.exe_path.to_string_lossy();
+        let name = t.exe_path.file_name().map(|n| n.to_string_lossy());
+        !framerush_core::is_protected(&path)
+            && !name.is_some_and(|n| framerush_core::is_protected(&n))
+    };
+    framerush_platform::serve_helper(&args.pipe, args.parent, &args.sid, may_touch)?;
     Ok(())
 }
 
