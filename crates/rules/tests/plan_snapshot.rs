@@ -15,7 +15,7 @@ fn proc(pid: u32, name: &str) -> ProcessInfo {
         name: name.into(),
         memory_bytes: 1,
         cpu_percent: None,
-        same_user: Some(true),
+        own: Some(true),
     }
 }
 

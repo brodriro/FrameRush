@@ -93,7 +93,7 @@ impl MockPlatform {
                 name: name.to_owned(),
                 memory_bytes,
                 cpu_percent: None,
-                same_user: Some(true),
+                own: Some(true),
             },
             priority: Priority::Normal,
             suspended: false,

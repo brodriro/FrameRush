@@ -14,9 +14,11 @@
 
 mod cpus;
 mod helper;
+mod integrity;
 mod registry;
 
 pub use helper::{Helper, serve_helper};
+pub(crate) use integrity::integrity_level;
 
 use registry::Hive;
 

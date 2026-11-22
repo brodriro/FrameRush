@@ -152,10 +152,16 @@ fn mib(bytes: u64) -> f64 {
 
 fn scan() -> Result<()> {
     let procs = scan_processes().context("no se pudo listar los procesos")?;
-    println!("{:>7}  {:>9}  NOMBRE", "PID", "MEMORIA");
+    println!("{:>7}  {:>9}  {:<6}  NOMBRE", "PID", "MEMORIA", "PROPIO");
     for p in &procs {
+        // P12: lo que no es propio (otro usuario, SYSTEM o elevado) pide admin.
+        let own = match p.own {
+            Some(true) => "sí",
+            Some(false) => "no",
+            None => "?",
+        };
         println!(
-            "{:>7}  {:>6.0} MB  {}",
+            "{:>7}  {:>6.0} MB  {own:<6}  {}",
             p.target.pid,
             mib(p.memory_bytes),
             p.name
@@ -630,8 +636,9 @@ fn run(op: Op<'_>) -> Result<Report> {
                 || request.game.as_ref().is_some_and(|g| g.persistent_priority)
                 || request.items.iter().any(|i| {
                     matches!(&i.subject, Subject::Processes(ps)
-                        if ps.iter().any(|p| p.same_user != Some(true)))
+                        if ps.iter().any(|p| p.own != Some(true)))
                 })
+                || foreign(request.game.iter().map(|g| &g.target))?
         }
         Op::Undo | Op::Revert => {
             let journal = store.load()?;
@@ -643,20 +650,11 @@ fn run(op: Op<'_>) -> Result<Report> {
                 .filter(|e| matches!(op, Op::Revert) || Some(e.batch) == last)
                 .map(|e| &e.change)
                 .collect();
-            // P12: un proceso que sigue vivo y no es de este usuario solo lo revierte el helper.
-            let foreign = || -> Result<bool> {
-                let running = scan_processes().context("no se pudo listar los procesos")?;
-                Ok(pending.iter().filter_map(|c| c.target()).any(|t| {
-                    running
-                        .iter()
-                        .any(|p| p.target == *t && p.same_user != Some(true))
-                }))
-            };
             pending.iter().any(|c| match c {
                 Change::Tweak { tweak, .. } => admin(*tweak),
                 Change::PersistentPriority { .. } => true,
                 _ => false,
-            }) || foreign()?
+            }) || foreign(pending.iter().filter_map(|c| c.target()))?
         }
     };
     let platform = if needs_helper {
@@ -677,6 +675,18 @@ fn run(op: Op<'_>) -> Result<Report> {
 #[cfg(not(windows))]
 fn run(_op: Op<'_>) -> Result<Report> {
     bail!("apply, undo y revert solo están implementados en Windows por ahora")
+}
+
+/// P12: alguno de `targets` sigue vivo y no es propio (otro usuario, SYSTEM o elevado), así
+/// que solo el helper puede tocarlo.
+#[cfg(windows)]
+fn foreign<'a>(mut targets: impl Iterator<Item = &'a framerush_platform::Target>) -> Result<bool> {
+    let running = scan_processes().context("no se pudo listar los procesos")?;
+    Ok(targets.any(|t| {
+        running
+            .iter()
+            .any(|p| p.target == *t && p.own != Some(true))
+    }))
 }
 
 /// `framerush-helper.exe`, junto al ejecutable de la CLI.
@@ -878,7 +888,7 @@ mod tests {
             name: name.into(),
             memory_bytes: 0,
             cpu_percent: None,
-            same_user: Some(true),
+            own: Some(true),
         }
     }
 

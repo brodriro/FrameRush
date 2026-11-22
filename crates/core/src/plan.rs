@@ -203,7 +203,7 @@ pub fn plan(
             // P12: un proceso de otro usuario o de SYSTEM pide admin aunque la regla no.
             let requires_admin = rule.requires_admin()
                 || matches!(&subject, Subject::Processes(ps)
-                    if ps.iter().any(|p| p.same_user != Some(true)));
+                    if ps.iter().any(|p| p.own != Some(true)));
             let locked = requires_admin && !options.elevated;
             Some(PlanItem {
                 rule_id: rule.id.clone(),
@@ -319,7 +319,7 @@ mod tests {
             name: name.into(),
             memory_bytes: 10,
             cpu_percent: None,
-            same_user: Some(true),
+            own: Some(true),
         }
     }
 
@@ -635,9 +635,9 @@ mod tests {
             Risk::Low,
         )];
         let mut foreign = proc(7, "sync.exe");
-        foreign.same_user = Some(false);
+        foreign.own = Some(false);
         let mut unknown = proc(8, "sync.exe");
-        unknown.same_user = None;
+        unknown.own = None;
         for p in [foreign, unknown] {
             let snap = Snapshot {
                 processes: vec![proc(6, "sync.exe"), p],

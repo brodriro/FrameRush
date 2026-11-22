@@ -28,9 +28,10 @@ pub struct ProcessInfo {
     pub memory_bytes: u64,
     /// Uso de CPU en %, si el SO lo da ya calculado.
     pub cpu_percent: Option<f32>,
-    /// Es del mismo usuario que FrameRush. `None`: el SO no deja leer su dueño (procesos de
-    /// SYSTEM o de otro usuario sin admin). Todo lo que no es `Some(true)` pide admin (P12).
-    pub same_user: Option<bool>,
+    /// Proceso propio: del mismo usuario que FrameRush y, en Windows, sin más integridad que
+    /// él (un proceso elevado no lo es). `None`: el SO no deja saberlo (procesos de SYSTEM o de
+    /// otro usuario sin admin). Todo lo que no es `Some(true)` pide admin (P12).
+    pub own: Option<bool>,
 }
 
 /// Prioridad de CPU, de menor a mayor.
