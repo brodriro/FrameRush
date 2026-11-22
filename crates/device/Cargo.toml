@@ -10,6 +10,9 @@ publish.workspace = true
 framerush-platform.workspace = true
 serde.workspace = true
 
+[dev-dependencies]
+framerush-platform = { workspace = true, features = ["mock"] }
+
 [features]
 # Perfiles de ejemplo para los tests de otros crates.
 samples = []
