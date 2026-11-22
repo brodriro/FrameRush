@@ -50,7 +50,11 @@ pub struct Apps {
 }
 
 /// Carpeta de Steam, o `None` si no está instalado (o en un SO aún sin soporte).
+/// `FRAMERUSH_STEAM_DIR` la cambia (tests: una carpeta sin juegos no detecta ninguno).
 pub fn locate() -> Result<Option<PathBuf>> {
+    if let Some(dir) = std::env::var_os("FRAMERUSH_STEAM_DIR") {
+        return Ok(Some(PathBuf::from(dir)));
+    }
     #[cfg(windows)]
     return Ok(framerush_platform::steam_root()?);
     #[cfg(not(windows))]

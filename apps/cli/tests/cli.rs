@@ -4,6 +4,11 @@ use std::process::Command;
 
 fn framerush(args: &[&str]) -> (bool, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_framerush"))
+        // Sin juegos de Steam: el juego abierto en el equipo no cambia el resultado.
+        .env(
+            "FRAMERUSH_STEAM_DIR",
+            std::env::temp_dir().join("framerush-cli-no-steam"),
+        )
         .args(args)
         .output()
         .expect("se puede lanzar el binario");
@@ -42,6 +47,8 @@ fn scan_lists_processes() {
 fn framerush_in(dir: &std::path::Path, args: &[&str]) -> (bool, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_framerush"))
         .env("FRAMERUSH_DATA_DIR", dir)
+        // Sin juegos de Steam: el juego abierto en el equipo no cambia el resultado.
+        .env("FRAMERUSH_STEAM_DIR", dir)
         .args(args)
         .output()
         .expect("se puede lanzar el binario");
