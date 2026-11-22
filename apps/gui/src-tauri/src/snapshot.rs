@@ -33,6 +33,10 @@ pub struct View {
     sensor_sources: Vec<&'static str>,
     /// Fuentes del equipo que solo se leen con el helper elevado (p. ej. el EC de Acer).
     sensor_needs_admin: Vec<&'static str>,
+    /// Juegos de Steam instalados, por nombre (`game-target`).
+    games: Vec<GameView>,
+    /// Por qué no hay juegos (Steam no instalado o ilegible); `null` si se leyó Steam.
+    games_note: Option<String>,
     /// Journal sin cerrar (restore-after-crash).
     pending_session: Option<Pending>,
     /// Hay un helper elevado abierto. La GUI sigue sin privilegios; de momento el helper solo
@@ -275,6 +279,7 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
     if windows && gpu_pref.is_some() {
         available.push("gpu-preference");
     }
+    let games = steam_games(&processes);
 
     Ok(View {
         os: match os {
@@ -297,6 +302,8 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
         sensor_needs_admin: sensors.needs_admin,
         pending_session: pending_session(),
         elevated: sensors.elevated,
+        games: games.0,
+        games_note: games.1,
         device: device_view(&device, gpu_pref.as_deref()),
     })
 }
@@ -489,6 +496,58 @@ pub(crate) fn data_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|base| PathBuf::from(base).join("framerush"))
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GameView {
+    appid: u32,
+    name: String,
+    /// Exe en ejecución o, si no lo está, la carpeta del juego.
+    exe: String,
+    /// Steam lo da como juego en marcha (`RunningAppID`) o tiene procesos bajo su carpeta.
+    running: bool,
+    /// Procesos bajo la carpeta del juego.
+    pids: Vec<u32>,
+}
+
+/// Juegos de Steam y, si no hay, el motivo. La GUI está en primer plano cuando se pide el
+/// snapshot, así que aquí solo cuenta `RunningAppID`.
+fn steam_games(processes: &[ProcessInfo]) -> (Vec<GameView>, Option<String>) {
+    let read = || -> framerush_steam::Result<Option<Vec<GameView>>> {
+        let Some(root) = framerush_steam::locate()? else {
+            return Ok(None);
+        };
+        let found = framerush_steam::installed_apps(&root)?;
+        let running = framerush_steam::running_app_id()?;
+        let detected = framerush_steam::detect(&found.apps, running, None).map(|(a, _)| a.appid);
+        let mut games: Vec<GameView> = found
+            .apps
+            .iter()
+            .map(|app| {
+                let procs = framerush_steam::game_processes(app, processes);
+                GameView {
+                    appid: app.appid,
+                    name: app.name.clone(),
+                    exe: procs
+                        .first()
+                        .map_or(&app.dir, |p| &p.target.exe_path)
+                        .display()
+                        .to_string(),
+                    running: detected == Some(app.appid) || !procs.is_empty(),
+                    pids: procs.iter().map(|p| p.target.pid).collect(),
+                }
+            })
+            .collect();
+        games.sort_by_key(|g| g.name.to_lowercase());
+        Ok(Some(games))
+    };
+    match read() {
+        Ok(Some(games)) if !games.is_empty() => (games, None),
+        Ok(Some(_)) => (vec![], Some("Steam no tiene juegos instalados".into())),
+        Ok(None) => (vec![], Some("Steam no está instalado".into())),
+        Err(e) => (vec![], Some(format!("no se pudo leer Steam: {e}"))),
+    }
+}
+
 fn pending_session() -> Option<Pending> {
     let journal = FileStore::new(data_dir()?.join("session.json"))
         .load()
@@ -627,8 +686,8 @@ mod label_tests {
 mod tests {
     use super::*;
 
-    /// El snapshot sale entero de este equipo: mismo SO, mismas GPU que la detección y ningún
-    /// juego ni dato de muestra.
+    /// El snapshot sale entero de este equipo: mismo SO, mismas GPU que la detección, los
+    /// juegos de su Steam y ningún dato de muestra.
     #[test]
     fn this_machine_builds_a_snapshot() {
         let sources = framerush_sensors::detect();
@@ -640,7 +699,9 @@ mod tests {
         .unwrap();
         assert_eq!(view.os, "win");
         let json = serde_json::to_value(&view).unwrap();
-        assert!(json.get("games").is_none());
+        // Los juegos salen de Steam de este equipo (o no hay ninguno, con su motivo).
+        let games = json["games"].as_array().unwrap();
+        assert_eq!(games.is_empty(), !json["gamesNote"].is_null());
         println!("{}", serde_json::to_string_pretty(&json).unwrap());
     }
 }

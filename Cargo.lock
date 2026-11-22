@@ -1064,6 +1064,7 @@ dependencies = [
  "framerush-platform",
  "framerush-rules",
  "framerush-sensors",
+ "framerush-steam",
  "serde",
  "serde_json",
  "tauri",

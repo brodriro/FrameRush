@@ -20,6 +20,7 @@ framerush-device.workspace = true
 framerush-platform.workspace = true
 framerush-rules.workspace = true
 framerush-sensors.workspace = true
+framerush-steam.workspace = true
 serde.workspace = true
 tauri.workspace = true
 

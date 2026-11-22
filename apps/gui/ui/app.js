@@ -50,7 +50,7 @@
     'gpu-preference', 'cpu-affinity', 'timer-resolution'];
   /* Lo que la app aún no hace: se dice en vez de simularlo. */
   const NOT_WIRED = 'aún no está conectado en la app; no se ha modificado nada.';
-  const NO_GAME = { name: 'Ningún juego detectado', exe: 'Steam y la detección del juego llegan en M4', appid: '' };
+  const NO_GAME = { name: 'Ningún juego detectado', exe: '', appid: '', pids: [] };
   const GB = 1024 ** 3, MB = 1024 ** 2;
 
   /* ---------- Estado ---------- */
@@ -58,7 +58,7 @@
   let stopStreams = [];
   const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], rt: false, alerted: false, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '' };
 
-  const game = () => D.games[S.game] || NO_GAME;
+  const game = () => D.games[S.game] || { ...NO_GAME, exe: D.gamesNote || '' };
   /* Anticheat del juego o, sin adaptador, los que están en ejecución (cuentan para cualquier juego, It1.3). */
   const antiCheat = () => game().antiCheat || (D.anticheats.length ? { name: D.anticheats.join(', '), process: D.anticheats.join(', ') } : null);
   /* SETTINGS §4.2: kill solo en Extremo y con riesgo bajo; si no, se suspende. */
@@ -178,7 +178,7 @@
     });
     setText('.fpsNote', k.fps ? FPS_SOURCE[k.fps] : 'sin medición de FPS todavía');
     setText('.gameName', g.name); setText('.gameExe', g.exe); setText('.gameId', g.appid);
-    setText('.gamePid', g.running && g.pid ? ` · PID ${g.pid}` : '');
+    setText('.gamePid', g.pids.length ? ` · PID ${g.pids.join(', ')}` : '');
     $$('.cover').forEach(e => { e.style.background = g.cover || ''; });
     $$('[data-adapter]').forEach(e => { e.hidden = !g.adapter; }); /* SETTINGS §4.11 */
     if (g.adapter) {
@@ -545,8 +545,7 @@
       $('.scroll').innerHTML = `<p class="note" role="alert">${esc(err && err.message ? err.message : err)}</p>`;
       return;
     }
-    /* Steam, adaptadores de juego, recomendaciones y perfiles llegan en M4: hoy no hay juegos. */
-    D.games = D.games || [];
+    /* Juegos de Steam del equipo; adaptadores, recomendaciones y perfiles llegan en M4. */
     D.steamRecs = D.steamRecs || [];
     Object.assign(S, { admin: D.elevated, game: Math.max(0, D.games.findIndex(g => g.running)), hist: [], rt: false, alerted: false, rb: [], turbo: false, fps: [], lastSensors: null, fanIds: '', chk: [], stc: D.steamRecs.map(s => !!s.checked) });
     $$('[data-touched]').forEach(x => { delete x.dataset.touched; });
@@ -558,7 +557,7 @@
       s.value = String(S.game);
       s.disabled = !D.games.length;
     });
-    DS('launch-game').forEach(b => { b.disabled = !D.games.length; b.title = D.games.length ? '' : NO_GAME.exe; });
+    DS('launch-game').forEach(b => { b.disabled = !D.games.length; b.title = D.games.length ? '' : D.gamesNote || ''; });
     $('#steamList').closest('details').hidden = !D.steamRecs.length;
     DS('profile').forEach(s => { s.innerHTML = '<option value="global">Global</option>'; });
     DS('restore-after-crash').forEach(e => { e.hidden = !D.pendingSession; });
