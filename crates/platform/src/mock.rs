@@ -29,6 +29,8 @@ struct State {
     services: BTreeMap<String, ServiceState>,
     plans: Vec<PowerPlan>,
     active_plan: Option<String>,
+    /// Planes creados con `create_custom_power_plan` (para darles ids distintos).
+    created_plans: u32,
     logical_cpus: usize,
     caps: CapabilitySet,
     next_start: u64,
@@ -58,6 +60,7 @@ impl MockPlatform {
             kill: true,
             services: true,
             power_plans: true,
+            custom_power_plan: true,
             affinity: true,
             memory: true,
         };
@@ -290,6 +293,34 @@ impl PowerControl for MockPlatform {
             return Err(PlatformError::NotFound(format!("plan {id}")));
         }
         s.active_plan = Some(id.to_owned());
+        Ok(())
+    }
+
+    fn create_custom_power_plan(&self, base_id: &str, name: &str) -> Result<PowerPlan> {
+        self.require(|c| c.custom_power_plan, "plan de energía propio")?;
+        let mut s = self.lock();
+        if !s.plans.iter().any(|p| p.id == base_id) {
+            return Err(PlatformError::NotFound(format!("plan {base_id}")));
+        }
+        s.created_plans += 1;
+        let plan = PowerPlan {
+            id: format!("custom-{}", s.created_plans),
+            name: name.to_owned(),
+        };
+        s.plans.push(plan.clone());
+        Ok(plan)
+    }
+
+    fn delete_power_plan(&self, id: &str) -> Result<()> {
+        let mut s = self.lock();
+        if s.active_plan.as_deref() == Some(id) {
+            return Err(PlatformError::Os(format!("el plan {id} está activo")));
+        }
+        let before = s.plans.len();
+        s.plans.retain(|p| p.id != id);
+        if s.plans.len() == before {
+            return Err(PlatformError::NotFound(format!("plan {id}")));
+        }
         Ok(())
     }
 }
@@ -599,6 +630,24 @@ mod tests {
         m.set_active_power_plan("b").unwrap();
         assert_eq!(m.active_power_plan().unwrap().id, "b");
         assert!(m.set_active_power_plan("z").is_err());
+    }
+
+    #[test]
+    fn custom_plan_is_created_and_deleted_but_not_while_active() {
+        let m = platform();
+        let base = PowerPlan {
+            id: "a".into(),
+            name: "Plan a".into(),
+        };
+        m.set_power_plans(vec![base], "a");
+        assert!(m.create_custom_power_plan("z", "Max").is_err());
+        let custom = m.create_custom_power_plan("a", "Max").unwrap();
+        assert_eq!(custom.name, "Max");
+        m.set_active_power_plan(&custom.id).unwrap();
+        assert!(m.delete_power_plan(&custom.id).is_err());
+        m.set_active_power_plan("a").unwrap();
+        m.delete_power_plan(&custom.id).unwrap();
+        assert_eq!(m.power_plans().unwrap().len(), 1);
     }
 
     #[test]

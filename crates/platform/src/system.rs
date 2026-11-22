@@ -39,6 +39,12 @@ pub trait PowerControl {
     fn power_plans(&self) -> Result<Vec<PowerPlan>>;
     fn active_power_plan(&self) -> Result<PowerPlan>;
     fn set_active_power_plan(&self, id: &str) -> Result<()>;
+    /// `custom-power-plan`: duplica `base_id` como un plan nuevo llamado `name` con los valores
+    /// de CA del plan propio (procesador al 100 %, core parking off, turbo agresivo, PCIe ASPM y
+    /// suspensión selectiva de USB off). Los de CC no se tocan. No lo activa.
+    fn create_custom_power_plan(&self, base_id: &str, name: &str) -> Result<PowerPlan>;
+    /// Borra un plan que no es el activo.
+    fn delete_power_plan(&self, id: &str) -> Result<()>;
 }
 
 /// Ajustes sobre el proceso del juego.
@@ -164,6 +170,8 @@ pub struct CapabilitySet {
     pub kill: bool,
     pub services: bool,
     pub power_plans: bool,
+    /// [`PowerControl::create_custom_power_plan`] (solo Windows).
+    pub custom_power_plan: bool,
     pub affinity: bool,
     /// `memory-trim` y `standby-purge` ([`MemoryControl`]).
     pub memory: bool,

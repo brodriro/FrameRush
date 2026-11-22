@@ -580,6 +580,14 @@ impl PowerControl for WindowsPlatform {
     fn set_active_power_plan(&self, id: &str) -> Result<()> {
         power::set_active_power_plan(id)
     }
+
+    fn create_custom_power_plan(&self, base_id: &str, name: &str) -> Result<PowerPlan> {
+        power::create_custom_power_plan(base_id, name)
+    }
+
+    fn delete_power_plan(&self, id: &str) -> Result<()> {
+        power::delete_power_plan(id)
+    }
 }
 
 const HKCU: Hive = Hive::CurrentUser;
@@ -932,6 +940,7 @@ impl Capabilities for WindowsPlatform {
             kill: true,
             services: false,
             power_plans: true,
+            custom_power_plan: true,
             affinity: true,
             memory: true,
         }

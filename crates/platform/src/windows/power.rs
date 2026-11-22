@@ -1,5 +1,8 @@
 //! Planes de energía (R5) con la API de `powrprof`: `PowerEnumerate` (`ACCESS_SCHEME`),
-//! `PowerReadFriendlyName`, `PowerGetActiveScheme` y `PowerSetActiveScheme`.
+//! `PowerReadFriendlyName`, `PowerGetActiveScheme` y `PowerSetActiveScheme`. El plan propio
+//! (`custom-power-plan`) se crea con `PowerDuplicateScheme`, `PowerWriteFriendlyName` y
+//! `PowerWriteACValueIndex`, y se borra con `PowerDeleteScheme`. Nada de esto pide elevación
+//! (probado sin admin el 2026-11-22).
 //!
 //! El id de un plan es su GUID en minúsculas y sin llaves; el nombre es el que da el SO, en el
 //! idioma del usuario.
@@ -9,8 +12,14 @@ use crate::{PlatformError, PowerPlan, Result};
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::{ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, LocalFree, WIN32_ERROR};
 use windows_sys::Win32::System::Power::{
-    ACCESS_SCHEME, PowerEnumerate, PowerGetActiveScheme, PowerReadFriendlyName,
-    PowerSetActiveScheme,
+    ACCESS_SCHEME, PowerDeleteScheme, PowerDuplicateScheme, PowerEnumerate, PowerGetActiveScheme,
+    PowerReadFriendlyName, PowerSetActiveScheme, PowerWriteACValueIndex, PowerWriteFriendlyName,
+};
+use windows_sys::Win32::System::SystemServices::{
+    GUID_PCIEXPRESS_ASPM_POLICY, GUID_PCIEXPRESS_SETTINGS_SUBGROUP,
+    GUID_PROCESSOR_CORE_PARKING_MAX_CORES, GUID_PROCESSOR_CORE_PARKING_MIN_CORES,
+    GUID_PROCESSOR_PERF_BOOST_MODE, GUID_PROCESSOR_SETTINGS_SUBGROUP,
+    GUID_PROCESSOR_THROTTLE_MAXIMUM, GUID_PROCESSOR_THROTTLE_MINIMUM,
 };
 use windows_sys::core::GUID;
 
@@ -131,6 +140,16 @@ pub(super) fn active_power_plan() -> Result<PowerPlan> {
 
 /// Solo activa un plan que existe en el equipo.
 pub(super) fn set_active_power_plan(id: &str) -> Result<()> {
+    let guid = existing_guid(id)?;
+    // SAFETY: `guid` es un local vivo durante la llamada.
+    check(
+        unsafe { PowerSetActiveScheme(null_mut(), &guid) },
+        "activar el plan de energía",
+    )
+}
+
+/// GUID de un plan que existe en el equipo.
+fn existing_guid(id: &str) -> Result<GUID> {
     let guid = parse_guid(id)
         .ok_or_else(|| PlatformError::Os(format!("id de plan de energía no válido: `{id}`")))?;
     // `GUID` de windows-sys no implementa `PartialEq`: se compara su forma de texto.
@@ -140,10 +159,116 @@ pub(super) fn set_active_power_plan(id: &str) -> Result<()> {
             "el plan de energía `{id}` no existe en este equipo"
         )));
     }
+    Ok(guid)
+}
+
+/// Subgrupo "Configuración de USB". El SDK no tiene constante: GUID y valores salen de la base
+/// de datos de energía del SO (`powercfg /qh SCHEME_CURRENT <subgrupo> <ajuste>`) y coinciden
+/// con la referencia CS2-FPS-Boost.
+const USB_SETTINGS_SUBGROUP: GUID = GUID::from_u128(0x2a737441_1930_4402_8d77_b2bebba308a3);
+/// "Suspensión selectiva de USB": 0 = deshabilitada, 1 = habilitada.
+const USB_SELECTIVE_SUSPEND: GUID = GUID::from_u128(0x48e6b7a6_50f5_4782_a5d4_53bb8f07e226);
+
+/// Valores de CA del plan propio (design/SETTINGS.md `custom-power-plan`, valores de la
+/// referencia). Significados: Microsoft Learn, "Processor power management options"
+/// (PROCTHROTTLEMIN/MAX en %, CPMINCORES = 100 % desactiva el core parking, PERFBOOSTMODE 2 =
+/// Aggressive) y `powercfg /q` (ASPM 0 = desactivado).
+const CUSTOM_AC_VALUES: &[(GUID, GUID, u32)] = &[
+    (
+        GUID_PROCESSOR_SETTINGS_SUBGROUP,
+        GUID_PROCESSOR_THROTTLE_MINIMUM,
+        100,
+    ),
+    (
+        GUID_PROCESSOR_SETTINGS_SUBGROUP,
+        GUID_PROCESSOR_THROTTLE_MAXIMUM,
+        100,
+    ),
+    (
+        GUID_PROCESSOR_SETTINGS_SUBGROUP,
+        GUID_PROCESSOR_PERF_BOOST_MODE,
+        2,
+    ),
+    (
+        GUID_PROCESSOR_SETTINGS_SUBGROUP,
+        GUID_PROCESSOR_CORE_PARKING_MIN_CORES,
+        100,
+    ),
+    (
+        GUID_PROCESSOR_SETTINGS_SUBGROUP,
+        GUID_PROCESSOR_CORE_PARKING_MAX_CORES,
+        100,
+    ),
+    (
+        GUID_PCIEXPRESS_SETTINGS_SUBGROUP,
+        GUID_PCIEXPRESS_ASPM_POLICY,
+        0,
+    ),
+    (USB_SETTINGS_SUBGROUP, USB_SELECTIVE_SUSPEND, 0),
+];
+
+/// Si falla a medias, borra el duplicado para no dejar un plan a medio configurar.
+pub(super) fn create_custom_power_plan(base_id: &str, name: &str) -> Result<PowerPlan> {
+    let base = existing_guid(base_id)?;
+    let mut raw: *mut GUID = null_mut();
+    // SAFETY: `raw` es nulo, así que el sistema reserva el GUID nuevo (se libera abajo).
+    check(
+        unsafe { PowerDuplicateScheme(null_mut(), &base, &mut raw) },
+        "duplicar el plan de energía",
+    )?;
+    // SAFETY: la llamada tuvo éxito, así que `raw` apunta a un GUID válido.
+    let guid = unsafe { *raw };
+    // SAFETY: el GUID se reservó con LocalAlloc (documentado) y ya se copió.
+    unsafe { LocalFree(raw.cast()) };
+    if let Err(e) = configure(&guid, name) {
+        // SAFETY: `guid` es un local vivo durante la llamada.
+        unsafe { PowerDeleteScheme(null_mut(), &guid) };
+        return Err(e);
+    }
+    plan(&guid)
+}
+
+fn configure(guid: &GUID, name: &str) -> Result<()> {
+    let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
+    // El tamaño incluye el NUL final (documentado) y va en bytes, como en PowerReadFriendlyName.
+    let bytes = (wide.len() * size_of::<u16>()) as u32;
+    // SAFETY: `wide` vive durante la llamada y tiene `bytes` bytes; con subgrupo y ajuste nulos
+    // se nombra el plan.
+    check(
+        unsafe {
+            PowerWriteFriendlyName(
+                null_mut(),
+                guid,
+                null(),
+                null(),
+                wide.as_ptr().cast(),
+                bytes,
+            )
+        },
+        "nombrar el plan de energía",
+    )?;
+    for (subgroup, setting, value) in CUSTOM_AC_VALUES {
+        // SAFETY: los tres GUID viven durante la llamada.
+        check(
+            unsafe { PowerWriteACValueIndex(null_mut(), guid, subgroup, setting, *value) },
+            "escribir un valor de CA del plan de energía",
+        )?;
+    }
+    Ok(())
+}
+
+/// Microsoft no documenta qué pasa al borrar el plan activo, así que se rechaza antes.
+pub(super) fn delete_power_plan(id: &str) -> Result<()> {
+    let guid = existing_guid(id)?;
+    if active_power_plan()?.id == format_guid(&guid) {
+        return Err(PlatformError::Os(format!(
+            "el plan de energía `{id}` está activo y no se borra"
+        )));
+    }
     // SAFETY: `guid` es un local vivo durante la llamada.
     check(
-        unsafe { PowerSetActiveScheme(null_mut(), &guid) },
-        "activar el plan de energía",
+        unsafe { PowerDeleteScheme(null_mut(), &guid) },
+        "borrar el plan de energía",
     )
 }
 
@@ -174,6 +299,20 @@ mod tests {
         let active = active_power_plan().unwrap();
         assert!(plans.contains(&active), "{active:?} no está en {plans:?}");
         set_active_power_plan(&active.id).unwrap();
+        assert_eq!(active_power_plan().unwrap(), active);
+    }
+
+    /// Crea un plan propio a partir del activo, comprueba que existe y lo borra. No lo activa,
+    /// así que no cambia el plan del equipo.
+    #[test]
+    fn custom_plan_is_created_and_deleted() {
+        let active = active_power_plan().unwrap();
+        let custom = create_custom_power_plan(&active.id, "FrameRush test").unwrap();
+        assert_eq!(custom.name, "FrameRush test");
+        assert!(power_plans().unwrap().contains(&custom));
+        assert!(delete_power_plan(&active.id).is_err(), "no borra el activo");
+        delete_power_plan(&custom.id).unwrap();
+        assert!(!power_plans().unwrap().contains(&custom));
         assert_eq!(active_power_plan().unwrap(), active);
     }
 
