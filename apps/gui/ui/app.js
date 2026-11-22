@@ -411,7 +411,8 @@
       toast(cr.dataset.crash === 'restore' ? `Sesión anterior restaurada: ${D.pendingSession.changes} cambios revertidos.` : 'Aviso descartado. El journal se conserva hasta el próximo Restaurar.');
       return;
     }
-    if (t.closest('[data-win]')) { if (!api.inTauri) toast('Minimizar y cerrar solo funcionan dentro de la app.'); return; } /* Pendiente: API de ventana de Tauri */
+    const wb = t.closest('[data-win]');
+    if (wb) { if (!api.inTauri) toast('Minimizar y cerrar solo funcionan dentro de la app.'); else api.win(wb.dataset.win); return; } /* La bandeja llega con el overlay (M6) */
 
     const el = t.closest('button[data-setting]'); if (!el) return;
     const id = el.dataset.setting;
@@ -432,7 +433,7 @@
     if (id === 'run-as-admin') { S.admin = true; elevateButton(); setLevel(S.level); } /* IPC futuro: elevate() */
     if (id === 'profile-save') toast(`Perfil guardado para ${game().name} (nivel, checklist, juego y energía).`);
     if (id === 'export-diagnostics') toast('Diagnóstico exportado (logs locales, sin telemetría).');
-    if (id === 'always-on-top') { const on = el.getAttribute('aria-pressed') !== 'true'; el.setAttribute('aria-pressed', on); el.classList.toggle('on', on); } /* Pendiente: setAlwaysOnTop de Tauri */
+    if (id === 'always-on-top') { const on = el.getAttribute('aria-pressed') !== 'true'; el.setAttribute('aria-pressed', on); el.classList.toggle('on', on); api.win('always-on-top', on); }
   });
 
   document.addEventListener('input', e => {
