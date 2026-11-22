@@ -14,6 +14,7 @@
 //!   cerrarse el pipe o al terminar el proceso que lo lanzó.
 #![allow(unsafe_code)]
 
+use super::AcerQuery;
 use crate::{
     GameTuning, MemoryControl, PlatformError, Priority, ProcessControl, Result, SavedValue,
     SystemTweaks, Target, Tweak,
@@ -24,7 +25,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use windows_sys::Win32::Foundation::{
     ERROR_CANCELLED, ERROR_PIPE_CONNECTED, GetLastError, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
@@ -71,6 +72,9 @@ enum Request {
     Suspend(Target),
     Resume(Target),
     Kill(Target),
+    /// Lectura de los sensores del EC de Acer (solo lectura: `AcerQuery` no admite otras
+    /// órdenes).
+    Acer(AcerQuery),
 }
 
 /// Qué procesos puede tocar el helper.
@@ -85,6 +89,8 @@ struct Policy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum Response {
     Done,
+    /// Resultado de una lectura.
+    Value(u64),
     Failed(String),
 }
 
@@ -108,9 +114,13 @@ fn owned(raw: HANDLE) -> OwnedHandle {
     unsafe { OwnedHandle::from_raw_handle(raw) }
 }
 
-/// Conexión con un helper elevado. Al soltarla se cierra el pipe y el helper termina.
+/// Conexión con un helper elevado. Las copias comparten la conexión (un solo UAC); al soltar
+/// la última se cierra el pipe y el helper termina.
+#[derive(Debug, Clone)]
+pub struct Helper(Arc<Connection>);
+
 #[derive(Debug)]
-pub struct Helper {
+struct Connection {
     conn: Mutex<BufReader<File>>,
     /// Handle del proceso del helper (mantiene válido su PID mientras dure la conexión).
     _process: Option<OwnedHandle>,
@@ -131,16 +141,16 @@ impl Helper {
         // SAFETY: `process` es un handle de proceso abierto.
         let pid = unsafe { GetProcessId(process.as_raw_handle()) };
         let file = connect(&pipe, pid, Some(&process))?;
-        Ok(Helper {
+        Ok(Helper(Arc::new(Connection {
             conn: Mutex::new(BufReader::new(file)),
             _process: Some(process),
             pid: Some(pid),
-        })
+        })))
     }
 
     /// PID del proceso del helper.
     pub(super) fn pid(&self) -> Option<u32> {
-        self.pid
+        self.0.pid
     }
 
     pub(super) fn apply_tweak(&self, tweak: Tweak) -> Result<()> {
@@ -190,8 +200,28 @@ impl Helper {
         self.call(&Request::Kill(target.clone()))
     }
 
+    pub(super) fn acer(&self, query: AcerQuery) -> Result<u64> {
+        match self.exchange(&Request::Acer(query))? {
+            Response::Value(v) => Ok(v),
+            other => Err(PlatformError::Os(format!(
+                "respuesta del helper: {other:?}"
+            ))),
+        }
+    }
+
     fn call(&self, request: &Request) -> Result<()> {
+        match self.exchange(request)? {
+            Response::Done => Ok(()),
+            other => Err(PlatformError::Os(format!(
+                "respuesta del helper: {other:?}"
+            ))),
+        }
+    }
+
+    /// Envía `request` y lee la respuesta; `Failed` pasa a error.
+    fn exchange(&self, request: &Request) -> Result<Response> {
         let mut conn = self
+            .0
             .conn
             .lock()
             .map_err(|_| PlatformError::Os("conexión con el helper rota".into()))?;
@@ -210,8 +240,8 @@ impl Helper {
             return Err(PlatformError::Os("el helper se cerró".into()));
         }
         match serde_json::from_str(&line) {
-            Ok(Response::Done) => Ok(()),
             Ok(Response::Failed(e)) => Err(PlatformError::Os(format!("helper: {e}"))),
+            Ok(response) => Ok(response),
             Err(e) => Err(PlatformError::Os(format!("respuesta del helper: {e}"))),
         }
     }
@@ -495,6 +525,12 @@ fn handle<T: ProcessControl + SystemTweaks + GameTuning + MemoryControl>(
         return Response::Failed(format!("`{}` no pide admin", t.id()));
     }
     let result = match request {
+        Request::Acer(query) => {
+            return match super::acer::query(query) {
+                Ok(v) => Response::Value(v),
+                Err(e) => Response::Failed(e.to_string()),
+            };
+        }
         Request::ApplyTweak(t) => platform.apply_tweak(t),
         Request::RestoreTweak(t, saved) => platform.restore_tweak(t, &saved),
         Request::SetPersistentPriority(exe) => platform.set_persistent_priority(&exe),
@@ -531,11 +567,11 @@ mod tests {
     }
 
     fn helper(file: File) -> Helper {
-        Helper {
+        Helper(Arc::new(Connection {
             conn: Mutex::new(BufReader::new(file)),
             _process: None,
             pid: None,
-        }
+        }))
     }
 
     #[test]

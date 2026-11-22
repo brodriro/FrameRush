@@ -12,6 +12,7 @@
 //! comprobación y la llamada al SO.
 #![allow(unsafe_code)]
 
+mod acer;
 mod cpus;
 mod display;
 mod effects;
@@ -23,6 +24,8 @@ mod power;
 mod registry;
 mod wmi;
 
+pub use acer::AcerSensor;
+pub(crate) use acer::Query as AcerQuery;
 pub use helper::{Helper, serve_helper};
 pub(crate) use integrity::integrity_level;
 pub use nvapi::Nvapi;
@@ -134,6 +137,27 @@ impl WindowsPlatform {
             ))
         } else {
             Ok(())
+        }
+    }
+}
+
+/// Sensores del EC de los portátiles gaming de Acer (ver `acer.rs`). Piden admin: sin elevar
+/// pasan por el helper si hay uno y, si no, devuelven `AccessDenied`.
+impl WindowsPlatform {
+    /// Sensores que el EC dice tener. `Os` si el equipo no tiene esa interfaz.
+    pub fn acer_sensors(&self) -> Result<Vec<AcerSensor>> {
+        self.acer_query(AcerQuery::Supported).map(acer::supported)
+    }
+
+    /// Lectura de `sensor` (°C o RPM medidas); `None` si el EC no la da.
+    pub fn acer_read(&self, sensor: AcerSensor) -> Result<Option<u16>> {
+        self.acer_query(AcerQuery::Read(sensor)).map(acer::reading)
+    }
+
+    fn acer_query(&self, query: AcerQuery) -> Result<u64> {
+        match (acer::query(query), &self.helper) {
+            (Err(PlatformError::AccessDenied(_)), Some(helper)) => helper.acer(query),
+            (result, _) => result,
         }
     }
 }
