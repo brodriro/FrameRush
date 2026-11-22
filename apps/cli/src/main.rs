@@ -76,6 +76,10 @@ enum Command {
         /// Sigue leyendo cada segundo hasta Ctrl+C.
         #[arg(long)]
         watch: bool,
+        /// Abre el helper elevado (UAC) para las fuentes que solo se leen con admin, como el
+        /// EC de los portátiles gaming de Acer (ventiladores de CPU y GPU).
+        #[arg(long)]
+        elevate: bool,
     },
     /// Planes de energía del equipo (R5). Sin subcomando, los lista.
     Power {
@@ -174,7 +178,7 @@ fn main() -> Result<()> {
         Command::Undo => undo(),
         Command::Revert => revert(),
         Command::Status { json } => status(json),
-        Command::Sensors { watch } => sensors(watch),
+        Command::Sensors { watch, elevate } => sensors(watch, elevate),
         Command::Power { command } => match command {
             None | Some(PowerCommand::Get) => power_get(),
             Some(PowerCommand::Set { id, yes }) => power_set(&id, yes),
@@ -811,7 +815,7 @@ fn power_set(id: &str, yes: bool) -> Result<()> {
 
 /// Fuentes de sensores del equipo (`framerush_sensors::detect`; el tacómetro de la GPU por
 /// NVAPI es el último recurso). Se dice cuáles se consultaron.
-fn sensor_providers() -> Vec<Box<dyn framerush_sensors::SensorProvider>> {
+fn sensor_providers(elevate: bool) -> Result<Vec<Box<dyn framerush_sensors::SensorProvider>>> {
     match framerush_sensors::NvidiaGpus::open() {
         Ok(gpus) => {
             for g in gpus.gpus() {
@@ -823,9 +827,31 @@ fn sensor_providers() -> Vec<Box<dyn framerush_sensors::SensorProvider>> {
         }
         Err(e) => println!("{e}"),
     }
-    let sources = framerush_sensors::detect();
+    let mut sources = framerush_sensors::detect();
+    if !sources.needs_admin.is_empty() {
+        let names = sources.needs_admin.join(", ");
+        if elevate {
+            sources = elevated_sources(&names)?;
+        } else {
+            println!("{names} solo se lee con admin: repite con `--elevate` (UAC).");
+        }
+    }
     println!("Fuentes consultadas: {}", sources.checked.join(", "));
-    sources.providers
+    Ok(sources.providers)
+}
+
+#[cfg(windows)]
+fn elevated_sources(names: &str) -> Result<framerush_sensors::Sources> {
+    println!("Se abre el helper elevado (UAC) para leer {names}.");
+    let helper =
+        framerush_platform::Helper::launch(&helper_exe()?).context("no se pudo abrir el helper")?;
+    Ok(framerush_sensors::detect_elevated(helper))
+}
+
+/// Fuera de Windows ninguna fuente pide admin todavía.
+#[cfg(not(windows))]
+fn elevated_sources(names: &str) -> Result<framerush_sensors::Sources> {
+    bail!("{names} pide admin y en este sistema no hay helper")
 }
 
 fn print_sensors(sensors: &[framerush_sensors::Sensor]) {
@@ -837,8 +863,8 @@ fn print_sensors(sensors: &[framerush_sensors::Sensor]) {
     }
 }
 
-fn sensors(watch: bool) -> Result<()> {
-    let mut providers = sensor_providers();
+fn sensors(watch: bool, elevate: bool) -> Result<()> {
+    let mut providers = sensor_providers(elevate)?;
     if !watch {
         let sensors: Vec<_> = providers.iter_mut().flat_map(|p| p.read()).collect();
         print_sensors(&sensors);
