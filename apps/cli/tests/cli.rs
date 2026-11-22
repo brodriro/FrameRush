@@ -90,8 +90,16 @@ fn affinity_needs_a_game_and_a_valid_list() {
     let pid = std::process::id().to_string();
     let (ok, _) = framerush_in(&dir, &["plan", "--game", &pid, "--affinity", "3-1"]);
     assert!(!ok, "rango al revés");
-    let (ok, _) = framerush_in(&dir, &["plan", "--game", &pid, "--affinity", "auto"]);
-    assert!(!ok, "sin topología no se inventa una (R8)");
+    let (ok, stdout) = framerush_in(&dir, &["plan", "--game", &pid, "--affinity", "auto"]);
+    if cfg!(windows) {
+        // Con la topología detectada, `auto` sale de ella.
+        assert!(
+            ok || stdout.contains("anticheat"),
+            "auto con topología: {stdout}"
+        );
+    } else {
+        assert!(!ok, "sin topología no se inventa una (R8)");
+    }
     let (ok, stdout) = framerush_in(&dir, &["plan", "--game", &pid, "--affinity", "0,2-3,2"]);
     if stdout.contains("anticheat") {
         return;

@@ -28,7 +28,7 @@ use framerush_core::{
     Level, MemoryOp, Outcome, Plan, PlanItem, PlanOptions, RefreshRate, Report, Scope, Snapshot,
     Subject, defaults, is_protected, persistent_priority_default, plan, status_lines, tweak_scope,
 };
-use framerush_device::DeviceProfile;
+use framerush_device::{CoreKind, DeviceProfile};
 use framerush_platform::{
     Os, PowerPlan, Priority, ProcessInfo, SavedData, SavedValue, Tweak, scan_processes,
 };
@@ -247,14 +247,7 @@ fn build_plan(
     let Some(os) = Os::current() else {
         bail!("sistema operativo no admitido");
     };
-    // La detección completa del equipo llega en M2; de momento el perfil tiene el SO, los
-    // planes de energía y los monitores.
-    let mut device = DeviceProfile::undetected(os);
-    if let Ok((plans, active)) = native_power() {
-        device.power_plans = plans;
-        device.active_power_plan = Some(active.id);
-    }
-    device.displays = native_displays();
+    let device = native_device(os);
     let rules = framerush_rules::embedded().context("las reglas embebidas no son válidas")?;
     let processes = scan_processes().context("no se pudo listar los procesos")?;
     let game = game.map(|q| find_game(&processes, q)).transpose()?;
@@ -296,7 +289,7 @@ fn game_affinity(
         let cores = defaults::affinity_cpus(device).value;
         if cores.is_empty() {
             bail!(
-                "todavía no se detecta la topología de la CPU (M2): indica las CPU, \
+                "no se pudo detectar la topología de la CPU: indica las CPU, \
                  por ejemplo --affinity 2-7"
             );
         }
@@ -450,6 +443,45 @@ fn persistent_mark(level: Level, admin: bool, args: &GameArgs, exclude: &[String
     })
 }
 
+/// Perfil de hardware detectado (R8). Lo que falta sale como "no detectado".
+fn print_device(device: &DeviceProfile) {
+    match &device.cpu {
+        Some(cpu) => {
+            let cores = cpu.physical_cores().map_or("¿?".into(), |n| n.to_string());
+            let e = cpu
+                .cores
+                .iter()
+                .filter(|c| c.kind == CoreKind::Efficiency)
+                .count();
+            let hybrid = if e > 0 {
+                format!(", {e} E-cores")
+            } else {
+                String::new()
+            };
+            println!(
+                "CPU: {} · {cores} núcleos físicos, {} lógicos{hybrid}",
+                cpu.model, cpu.logical_cpus
+            );
+        }
+        None => println!("CPU: no detectada (los valores por defecto son estimados)"),
+    }
+    for g in &device.gpus {
+        let vram = g.dedicated_vram_bytes.map_or(String::new(), |b| {
+            format!(" · {} MB dedicados", b / (1024 * 1024))
+        });
+        println!("GPU: {}{vram}", g.name);
+    }
+    if device.gpus.is_empty() {
+        println!("GPU: no detectada");
+    }
+    match device.battery {
+        Some(b) if b.discharging => println!("Batería: descargándose (desenchufado)"),
+        Some(_) => println!("Batería: enchufado"),
+        None => println!("Batería: no hay o no se pudo leer"),
+    }
+    println!();
+}
+
 fn print_game(
     game: Option<&ProcessInfo>,
     args: &GameArgs,
@@ -500,6 +532,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     let (plan, game, device) = build_plan(level, admin, args.game.as_deref())?;
     let affinity = game_affinity(args, &plan, &device)?;
     println!("Plan para el nivel {level} (dry-run: no se toca nada)");
+    print_device(&device);
     print_game(
         game.as_ref(),
         args,
@@ -624,6 +657,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     }
     if !args.yes {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
+        print_device(&device);
         print_game(game.as_ref(), &args.game, persistent, affinity.as_deref());
         print_refresh(level, &device, &refresh);
         print_power(&power, &device);
@@ -706,6 +740,18 @@ fn power_set(id: &str, yes: bool) -> Result<()> {
     Ok(())
 }
 
+/// Perfil del equipo con la plataforma nativa (R8).
+#[cfg(windows)]
+fn native_device(os: Os) -> DeviceProfile {
+    framerush_device::detect(&framerush_platform::WindowsPlatform::new(), os)
+}
+
+/// Fuera de Windows aún no hay plataforma nativa: solo el SO.
+#[cfg(not(windows))]
+fn native_device(os: Os) -> DeviceProfile {
+    DeviceProfile::undetected(os)
+}
+
 /// Planes de energía de la plataforma nativa y el activo.
 #[cfg(windows)]
 fn native_power() -> Result<(Vec<PowerPlan>, PowerPlan)> {
@@ -718,20 +764,6 @@ fn native_power() -> Result<(Vec<PowerPlan>, PowerPlan)> {
         .active_power_plan()
         .context("no se pudo leer el plan de energía activo")?;
     Ok((plans, active))
-}
-
-/// Monitores de la plataforma nativa; vacío si no se pueden leer (el ajuste se oculta).
-#[cfg(windows)]
-fn native_displays() -> Vec<framerush_platform::Display> {
-    use framerush_platform::DisplayControl;
-    framerush_platform::WindowsPlatform::new()
-        .displays()
-        .unwrap_or_default()
-}
-
-#[cfg(not(windows))]
-fn native_displays() -> Vec<framerush_platform::Display> {
-    vec![]
 }
 
 #[cfg(not(windows))]
@@ -1002,7 +1034,6 @@ fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak], memory_ops: 
             plan.anticheats.join(", ")
         );
     }
-    println!("Equipo sin detectar todavía: los valores por defecto son estimados.");
     println!("Servicios: todavía no se consultan.\n");
     if plan.items.is_empty() {
         println!("Ninguna regla coincide con lo que está en ejecución.");
