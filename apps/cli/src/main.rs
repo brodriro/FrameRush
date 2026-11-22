@@ -3,7 +3,8 @@
 //! `scan` lista procesos y `plan --level` muestra qué se haría (dry-run, PLAN.md It3.3).
 //! `apply` aplica el plan (solo con `--yes`), `undo` deshace el último apply y `revert` toda la
 //! sesión. Todo cambio pasa por el journal `%LOCALAPPDATA%/framerush/session.json`; la variable
-//! `FRAMERUSH_DATA_DIR` cambia esa carpeta (tests). `sensors` y `power` llegan en M2.
+//! `FRAMERUSH_DATA_DIR` cambia esa carpeta (tests). `power` lista los planes de energía y `power
+//! set` activa uno como un apply más (journal, `undo`). `sensors` llega en M2.
 //!
 //! Lo que pide admin lo hace `framerush-helper` (junto al ejecutable), que se abre con UAC solo
 //! cuando hace falta: `apply --admin` con ajustes que lo piden, o `undo`/`revert` de cambios
@@ -25,7 +26,9 @@ use framerush_core::{
     persistent_priority_default, plan, status_lines, tweak_scope,
 };
 use framerush_device::DeviceProfile;
-use framerush_platform::{Os, Priority, ProcessInfo, SavedData, SavedValue, Tweak, scan_processes};
+use framerush_platform::{
+    Os, PowerPlan, Priority, ProcessInfo, SavedData, SavedValue, Tweak, scan_processes,
+};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
@@ -64,6 +67,25 @@ enum Command {
         /// Salida en JSON (exportable).
         #[arg(long)]
         json: bool,
+    },
+    /// Planes de energía del equipo (R5). Sin subcomando, los lista.
+    Power {
+        #[command(subcommand)]
+        command: Option<PowerCommand>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PowerCommand {
+    /// Lista los planes y marca el activo.
+    Get,
+    /// Activa un plan durante la sesión (pasa por el journal: `undo` o `revert` lo devuelven).
+    Set {
+        /// Id del plan (GUID en Windows), como lo muestra `framerush power`.
+        id: String,
+        /// Confirma el cambio.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -143,6 +165,10 @@ fn main() -> Result<()> {
         Command::Undo => undo(),
         Command::Revert => revert(),
         Command::Status { json } => status(json),
+        Command::Power { command } => match command {
+            None | Some(PowerCommand::Get) => power_get(),
+            Some(PowerCommand::Set { id, yes }) => power_set(&id, yes),
+        },
     }
 }
 
@@ -218,8 +244,13 @@ fn build_plan(
     let Some(os) = Os::current() else {
         bail!("sistema operativo no admitido");
     };
-    // La detección del equipo llega en M2; hasta entonces el perfil solo tiene el SO.
-    let device = DeviceProfile::undetected(os);
+    // La detección completa del equipo llega en M2; de momento el perfil tiene el SO y los
+    // planes de energía.
+    let mut device = DeviceProfile::undetected(os);
+    if let Ok((plans, active)) = native_power() {
+        device.power_plans = plans;
+        device.active_power_plan = Some(active.id);
+    }
     let rules = framerush_rules::embedded().context("las reglas embebidas no son válidas")?;
     let processes = scan_processes().context("no se pudo listar los procesos")?;
     let game = game.map(|q| find_game(&processes, q)).transpose()?;
@@ -302,6 +333,33 @@ fn parse_cpus(spec: &str) -> Result<Vec<usize>> {
 
 /// Id de design/SETTINGS.md de la prioridad persistente del juego.
 const PERSISTENT_PRIORITY: &str = "game-priority-persistent";
+/// Id de design/SETTINGS.md del plan de energía del nivel.
+const POWER_PLAN: &str = "power-plan";
+
+/// Plan de energía del nivel, salvo con `--exclude power-plan`.
+fn level_power_plan(level: Level, device: &DeviceProfile, exclude: &[String]) -> Option<PowerPlan> {
+    if exclude.iter().any(|id| id == POWER_PLAN) {
+        return None;
+    }
+    defaults::power_plan_for(level, device).cloned()
+}
+
+fn print_power(plan: Option<&PowerPlan>, device: &DeviceProfile) {
+    match plan {
+        Some(p) => println!("[x] {POWER_PLAN:<32} sesión · «{}»", p.name),
+        None => {
+            let active = device
+                .active_power_plan
+                .as_deref()
+                .and_then(|id| device.power_plans.iter().find(|p| p.id == id));
+            match active {
+                Some(a) => println!("[ ] {POWER_PLAN:<32} sin cambio · «{}»", a.name),
+                None => println!("[ ] {POWER_PLAN:<32} no disponible"),
+            }
+        }
+    }
+    println!();
+}
 
 /// Cómo sale una opción en el checklist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -383,6 +441,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
         persistent_mark(level, admin, args, &[]),
         affinity.as_deref(),
     );
+    print_power(level_power_plan(level, &device, &[]).as_ref(), &device);
     let checked: Vec<&PlanItem> = plan.checked().collect();
     print_plan(&plan, &checked, &plan.tweaks, &plan.memory);
     Ok(())
@@ -468,9 +527,13 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             Some(_) => {}
         }
     }
+    if args.include.iter().any(|id| id == POWER_PLAN) {
+        bail!("`{POWER_PLAN}` lo marca el nivel; para elegir otro plan usa `framerush power set`");
+    }
+    let power = level_power_plan(level, &device, &args.exclude);
     let others = |ids: &[String]| -> Vec<String> {
         ids.iter()
-            .filter(|id| *id != PERSISTENT_PRIORITY)
+            .filter(|id| *id != PERSISTENT_PRIORITY && *id != POWER_PLAN)
             .cloned()
             .collect()
     };
@@ -481,17 +544,23 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     if !args.yes {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
         print_game(game.as_ref(), &args.game, persistent, affinity.as_deref());
+        print_power(power.as_ref(), &device);
         print_plan(&plan, &checked, &tweaks, &memory);
         println!("\nRevisa las filas y repite con --yes para aplicarlas.");
         return Ok(());
     }
-    if checked.is_empty() && tweaks.is_empty() && memory.is_empty() && game.is_none() {
+    if checked.is_empty()
+        && tweaks.is_empty()
+        && memory.is_empty()
+        && game.is_none()
+        && power.is_none()
+    {
         println!("No hay filas ni ajustes marcados ni juego: no se toca nada.");
         return Ok(());
     }
     let request = ApplyRequest {
         memory,
-        power_plan: None,
+        power_plan: power,
         items: checked,
         tweaks,
         game: game.map(|g| GameBoost {
@@ -514,6 +583,60 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn power_get() -> Result<()> {
+    let (plans, active) = native_power()?;
+    for p in &plans {
+        let mark = if p.id == active.id { "*" } else { " " };
+        println!("{mark} {}  {}", p.id, p.name);
+    }
+    println!("(* = activo)");
+    Ok(())
+}
+
+fn power_set(id: &str, yes: bool) -> Result<()> {
+    let (plans, active) = native_power()?;
+    let Some(plan) = plans.into_iter().find(|p| p.id.eq_ignore_ascii_case(id)) else {
+        bail!("no hay ningún plan `{id}` en este equipo (`framerush power` los lista)");
+    };
+    if plan.id == active.id {
+        println!("«{}» ya es el plan activo.", plan.name);
+        return Ok(());
+    }
+    if !yes {
+        println!(
+            "Se activaría «{}» en lugar de «{}» (sesión). Repite con --yes.",
+            plan.name, active.name
+        );
+        return Ok(());
+    }
+    let request = ApplyRequest {
+        power_plan: Some(plan),
+        ..ApplyRequest::default()
+    };
+    print_report(&run(Op::Apply(request))?);
+    println!("Deshacer: `framerush undo` (último apply) o `framerush revert` (toda la sesión).");
+    Ok(())
+}
+
+/// Planes de energía de la plataforma nativa y el activo.
+#[cfg(windows)]
+fn native_power() -> Result<(Vec<PowerPlan>, PowerPlan)> {
+    use framerush_platform::PowerControl;
+    let w = framerush_platform::WindowsPlatform::new();
+    let plans = w
+        .power_plans()
+        .context("no se pudo leer los planes de energía")?;
+    let active = w
+        .active_power_plan()
+        .context("no se pudo leer el plan de energía activo")?;
+    Ok((plans, active))
+}
+
+#[cfg(not(windows))]
+fn native_power() -> Result<(Vec<PowerPlan>, PowerPlan)> {
+    bail!("los planes de energía solo están implementados en Windows por ahora")
 }
 
 fn undo() -> Result<()> {
