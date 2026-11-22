@@ -20,8 +20,8 @@
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use framerush_core::{
-    ApplyRequest, Change, EntryStatus, FileStore, GameBoost, JournalStore, Level, Outcome, Plan,
-    PlanItem, PlanOptions, Report, Scope, Snapshot, Subject, defaults, is_protected,
+    ApplyRequest, Change, EntryStatus, FileStore, GameBoost, JournalStore, Level, MemoryOp,
+    Outcome, Plan, PlanItem, PlanOptions, Report, Scope, Snapshot, Subject, defaults, is_protected,
     persistent_priority_default, plan, status_lines, tweak_scope,
 };
 use framerush_device::DeviceProfile;
@@ -221,7 +221,7 @@ fn build_plan(
         game: game.as_ref().map(|g| g.target.clone()),
         tweaks,
         admin_tweaks,
-        memory: vec![],
+        memory: native_memory(),
     };
     let options = PlanOptions {
         elevated: admin,
@@ -300,17 +300,16 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
         persistent_mark(level, admin, args, &[]),
     );
     let checked: Vec<&PlanItem> = plan.checked().collect();
-    print_plan(&plan, &checked, &plan.tweaks);
+    print_plan(&plan, &checked, &plan.tweaks, &plan.memory);
     Ok(())
 }
 
-/// Filas y ajustes marcados por el nivel, más `include` y menos `exclude`. Las filas con candado
-/// no se pueden marcar.
-fn select<'a>(
-    plan: &'a Plan,
-    include: &[String],
-    exclude: &[String],
-) -> Result<(Vec<&'a PlanItem>, Vec<Tweak>)> {
+/// Lo marcado en el plan: filas, ajustes y operaciones de memoria.
+type Selection<'a> = (Vec<&'a PlanItem>, Vec<Tweak>, Vec<MemoryOp>);
+
+/// Filas, ajustes y memoria marcados por el nivel, más `include` y menos `exclude`. Lo que
+/// tiene candado no se puede marcar.
+fn select<'a>(plan: &'a Plan, include: &[String], exclude: &[String]) -> Result<Selection<'a>> {
     for id in include.iter().chain(exclude) {
         let known = plan.items.iter().any(|i| &i.rule_id == id)
             || plan
@@ -318,7 +317,12 @@ fn select<'a>(
                 .iter()
                 .chain(&plan.optional_tweaks)
                 .chain(&plan.locked_tweaks)
-                .any(|t| t.id() == id);
+                .any(|t| t.id() == id)
+            || plan
+                .memory
+                .iter()
+                .chain(&plan.locked_memory)
+                .any(|m| m.id() == id);
         if !known {
             bail!("`{id}` no está en el plan (¿no está en ejecución o no existe en este SO?)");
         }
@@ -337,6 +341,13 @@ fn select<'a>(
     {
         bail!("el ajuste `{}` requiere admin: usa --admin", t.id());
     }
+    if let Some(m) = plan
+        .locked_memory
+        .iter()
+        .find(|m| include.iter().any(|id| id == m.id()))
+    {
+        bail!("`{}` requiere admin: usa --admin", m.id());
+    }
     let items = plan
         .items
         .iter()
@@ -351,7 +362,13 @@ fn select<'a>(
         .copied()
         .filter(|t| !exclude.iter().any(|id| id == t.id()))
         .collect();
-    Ok((items, tweaks))
+    let memory = plan
+        .memory
+        .iter()
+        .copied()
+        .filter(|m| !exclude.iter().any(|id| id == m.id()))
+        .collect();
+    Ok((items, tweaks, memory))
 }
 
 fn apply(args: &ApplyArgs) -> Result<()> {
@@ -372,23 +389,23 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             .cloned()
             .collect()
     };
-    let (checked, tweaks) = select(&plan, &others(&args.include), &others(&args.exclude))?;
+    let (checked, tweaks, memory) = select(&plan, &others(&args.include), &others(&args.exclude))?;
     if args.game.game_priority == GamePriority::Realtime && !args.game.confirm_realtime {
         bail!("Tiempo real puede congelar el equipo: confírmalo con --confirm-realtime");
     }
     if !args.yes {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
         print_game(game.as_ref(), &args.game, persistent);
-        print_plan(&plan, &checked, &tweaks);
+        print_plan(&plan, &checked, &tweaks, &memory);
         println!("\nRevisa las filas y repite con --yes para aplicarlas.");
         return Ok(());
     }
-    if checked.is_empty() && tweaks.is_empty() && game.is_none() {
+    if checked.is_empty() && tweaks.is_empty() && memory.is_empty() && game.is_none() {
         println!("No hay filas ni ajustes marcados ni juego: no se toca nada.");
         return Ok(());
     }
     let request = ApplyRequest {
-        memory: vec![],
+        memory,
         items: checked,
         tweaks,
         game: game.map(|g| GameBoost {
@@ -523,6 +540,7 @@ fn run(op: Op<'_>) -> Result<Report> {
     let needs_helper = match &op {
         Op::Apply(request) => {
             request.tweaks.iter().any(|t| admin(*t))
+                || !request.memory.is_empty()
                 || request.game.as_ref().is_some_and(|g| g.persistent_priority)
         }
         Op::Undo | Op::Revert => {
@@ -593,6 +611,21 @@ fn native_tweaks() -> (Vec<Tweak>, Vec<Tweak>) {
     (vec![], vec![])
 }
 
+/// Operaciones de memoria que admite la plataforma nativa.
+fn native_memory() -> Vec<MemoryOp> {
+    #[cfg(windows)]
+    {
+        use framerush_platform::Capabilities;
+        if framerush_platform::WindowsPlatform::new()
+            .capabilities()
+            .memory
+        {
+            return MemoryOp::ALL.to_vec();
+        }
+    }
+    vec![]
+}
+
 /// Carpeta de datos: `FRAMERUSH_DATA_DIR` o `%LOCALAPPDATA%/framerush` (PLAN.md It1.1).
 fn data_dir() -> Result<PathBuf> {
     if let Some(dir) = std::env::var_os("FRAMERUSH_DATA_DIR") {
@@ -626,7 +659,7 @@ fn notify_open_session() {
     }
 }
 
-fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak]) {
+fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak], memory_ops: &[MemoryOp]) {
     if !plan.game_tuning_allowed() {
         println!(
             "Anticheat en ejecución: {}. Al juego solo se le toca la prioridad; \
@@ -661,6 +694,16 @@ fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak]) {
         }
         for t in &plan.locked_tweaks {
             println!("[ ] {:<28} {} · requiere admin", t.id(), scope_name(*t));
+        }
+    }
+    if !(plan.memory.is_empty() && plan.locked_memory.is_empty()) {
+        println!("\nMemoria (antes de todo lo demás; no hay nada que revertir):");
+        for m in &plan.memory {
+            let mark = if memory_ops.contains(m) { "x" } else { " " };
+            println!("[{mark}] {}", m.id());
+        }
+        for m in &plan.locked_memory {
+            println!("[ ] {:<28} requiere admin", m.id());
         }
     }
 }

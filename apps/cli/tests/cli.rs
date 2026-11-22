@@ -58,6 +58,30 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
     dir
 }
 
+/// Memoria: desde Agresivo, con candado sin --admin y fuera de Normal.
+#[cfg(windows)]
+#[test]
+fn memory_ops_need_agresivo_and_admin() {
+    let dir = temp_dir("memory");
+    let (ok, stdout) = framerush_in(&dir, &["plan", "--level", "normal"]);
+    assert!(ok);
+    assert!(!stdout.contains("memory-trim"), "{stdout}");
+    let (ok, stdout) = framerush_in(&dir, &["plan", "--level", "agresivo"]);
+    assert!(ok);
+    assert!(stdout.contains("[ ] memory-trim"), "{stdout}");
+    assert!(stdout.contains("requiere admin"), "{stdout}");
+    let (ok, stdout) = framerush_in(&dir, &["plan", "--level", "agresivo", "--admin"]);
+    assert!(ok);
+    assert!(stdout.contains("[x] memory-trim"), "{stdout}");
+    assert!(stdout.contains("[x] standby-purge"), "{stdout}");
+    let (ok, _) = framerush_in(
+        &dir,
+        &["apply", "--level", "agresivo", "--include", "standby-purge"],
+    );
+    assert!(!ok, "con candado no se puede incluir");
+    assert!(!dir.join("session.json").exists());
+}
+
 #[test]
 fn status_without_a_session() {
     let dir = temp_dir("status");
