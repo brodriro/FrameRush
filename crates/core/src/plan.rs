@@ -181,6 +181,8 @@ pub fn plan(
                     .processes
                     .iter()
                     .filter(|p| rule.matches_process(os, &p.name))
+                    // Ni FrameRush ni sus hijos (el WebView2 de la GUI) entran nunca.
+                    .filter(|p| !p.framerush)
                     .filter(|p| {
                         !is_protected(&p.name)
                             && !is_protected(&p.target.exe_path.to_string_lossy())
@@ -320,6 +322,7 @@ mod tests {
             memory_bytes: 10,
             cpu_percent: None,
             own: Some(true),
+            framerush: false,
         }
     }
 
@@ -441,9 +444,16 @@ mod tests {
     }
 
     #[test]
-    fn protected_processes_and_the_game_are_never_planned() {
+    fn protected_processes_the_game_and_framerush_are_never_planned() {
         let device = samples::hybrid_laptop();
-        let names = ["csrss", "dwm", "EasyAntiCheat", "game", "OneDrive"];
+        let names = [
+            "csrss",
+            "dwm",
+            "EasyAntiCheat",
+            "game",
+            "OneDrive",
+            "msedgewebview2",
+        ];
         let rules = vec![rule(
             "all",
             &names,
@@ -451,11 +461,13 @@ mod tests {
             Level::Normal,
             Risk::Low,
         )];
-        let processes: Vec<ProcessInfo> = names
+        let mut processes: Vec<ProcessInfo> = names
             .iter()
             .enumerate()
             .map(|(i, n)| proc(i as u32 + 1, &format!("{n}.exe")))
             .collect();
+        // El WebView2 de la propia GUI.
+        processes[5].framerush = true;
         let game = processes[3].target.clone();
         let snap = Snapshot {
             processes,

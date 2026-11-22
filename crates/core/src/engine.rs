@@ -288,9 +288,10 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             MemoryOp::Trim => match self.platform.processes() {
                 Err(e) => Outcome::Failed(e),
                 Ok(processes) => {
-                    // De fondo: ni el juego, ni FrameRush, ni la lista de protegidos.
+                    // De fondo: ni el juego, ni FrameRush y sus hijos, ni la lista de protegidos.
                     let background = processes.iter().filter(|p| {
                         !is_protected(&p.name)
+                            && !p.framerush
                             && p.target.pid != std::process::id()
                             && game.is_none_or(|g| g.target != p.target)
                     });

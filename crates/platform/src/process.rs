@@ -32,6 +32,9 @@ pub struct ProcessInfo {
     /// él (un proceso elevado no lo es). `None`: el SO no deja saberlo (procesos de SYSTEM o de
     /// otro usuario sin admin). Todo lo que no es `Some(true)` pide admin (P12).
     pub own: Option<bool>,
+    /// Es FrameRush: este proceso o uno que cuelga de él (el WebView2 de la GUI, el helper).
+    /// Nunca entra en el plan.
+    pub framerush: bool,
 }
 
 /// Prioridad de CPU, de menor a mayor.

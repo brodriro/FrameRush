@@ -111,6 +111,7 @@ impl MockPlatform {
                 memory_bytes,
                 cpu_percent: None,
                 own: Some(true),
+                framerush: false,
             },
             priority: Priority::Normal,
             suspended: false,

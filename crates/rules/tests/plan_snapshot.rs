@@ -16,6 +16,7 @@ fn proc(pid: u32, name: &str) -> ProcessInfo {
         memory_bytes: 1,
         cpu_percent: None,
         own: Some(true),
+        framerush: false,
     }
 }
 

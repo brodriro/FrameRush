@@ -1294,6 +1294,7 @@ mod tests {
             memory_bytes: 0,
             cpu_percent: None,
             own: Some(true),
+            framerush: false,
         }
     }
 
