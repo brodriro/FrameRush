@@ -140,6 +140,7 @@ struct BatteryView {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Power {
+    /// Nombre de cada plan; los repetidos llevan el principio de su id ([`plan_labels`]).
     plans: Vec<String>,
     /// Índice del plan activo en `plans`.
     current: Option<usize>,
@@ -267,6 +268,29 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
     })
 }
 
+/// Nombres para el selector. Si varios planes se llaman igual (copias de «Alto rendimiento»,
+/// por ejemplo), cada uno lleva los 8 primeros caracteres de su id (el GUID en Windows) o,
+/// si también coinciden, el id entero.
+fn plan_labels(plans: &[framerush_platform::PowerPlan]) -> Vec<String> {
+    const SHORT: usize = 8;
+    let short = |p: &framerush_platform::PowerPlan| p.id.chars().take(SHORT).collect::<String>();
+    plans
+        .iter()
+        .map(|p| {
+            let same_name: Vec<_> = plans.iter().filter(|q| q.name == p.name).collect();
+            if same_name.len() < 2 {
+                return p.name.clone();
+            }
+            let suffix = if same_name.iter().filter(|q| short(q) == short(p)).count() > 1 {
+                p.id.clone()
+            } else {
+                short(p)
+            };
+            format!("{} · {suffix}", p.name)
+        })
+        .collect()
+}
+
 fn device_view(d: &DeviceProfile, gpu_pref: Option<&str>) -> Device {
     let power = (!d.power_plans.is_empty()).then(|| {
         let index = |id: &str| d.power_plans.iter().position(|p| p.id == id);
@@ -277,7 +301,7 @@ fn device_view(d: &DeviceProfile, gpu_pref: Option<&str>) -> Device {
                 .or(current)
         });
         Power {
-            plans: d.power_plans.iter().map(|p| p.name.clone()).collect(),
+            plans: plan_labels(&d.power_plans),
             current,
             for_level,
         }
@@ -530,6 +554,42 @@ fn native_caps() -> (Tweaks, Tweaks, framerush_platform::CapabilitySet) {
 }
 
 /// Solo en Windows: es la única plataforma con detección nativa por ahora.
+#[cfg(test)]
+mod label_tests {
+    use super::plan_labels;
+    use framerush_platform::PowerPlan;
+
+    fn plan(id: &str, name: &str) -> PowerPlan {
+        PowerPlan {
+            id: id.into(),
+            name: name.into(),
+        }
+    }
+
+    #[test]
+    fn repeated_names_carry_their_id() {
+        let plans = [
+            plan("381b4222-f694-41f0-9685-ff5bb260df2e", "Equilibrado"),
+            plan("13a0df50-2343-4328-8946-57d564e2ad32", "Alto rendimiento"),
+            plan("3d629b31-6d59-4f68-8990-494973f173a8", "Alto rendimiento"),
+            plan("3d629b31-ffff-4f68-8990-494973f173a8", "Ahorro"),
+            plan("aaaa0000-0000-0000-0000-000000000001", "Copia"),
+            plan("aaaa0000-0000-0000-0000-000000000002", "Copia"),
+        ];
+        assert_eq!(
+            plan_labels(&plans),
+            [
+                "Equilibrado",
+                "Alto rendimiento · 13a0df50",
+                "Alto rendimiento · 3d629b31",
+                "Ahorro",
+                "Copia · aaaa0000-0000-0000-0000-000000000001",
+                "Copia · aaaa0000-0000-0000-0000-000000000002",
+            ]
+        );
+    }
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
