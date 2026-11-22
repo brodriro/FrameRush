@@ -11,8 +11,8 @@ mod protected;
 mod rule;
 
 pub use engine::{
-    ApplyRequest, Engine, EngineError, GameBoost, LOWERED_PRIORITY, Outcome, Report, ReportLine,
-    StatusLine, describe, status_lines,
+    ApplyRequest, CUSTOM_POWER_PLAN_NAME, Engine, EngineError, GameBoost, LOWERED_PRIORITY,
+    Outcome, Report, ReportLine, StatusLine, describe, status_lines,
 };
 pub use journal::{Change, Entry, EntryStatus, FileStore, Journal, JournalError, JournalStore};
 pub use model::{Action, Category, Level, ParseError, Risk, Scope};

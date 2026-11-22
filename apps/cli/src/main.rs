@@ -561,6 +561,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     let request = ApplyRequest {
         memory,
         power_plan: power,
+        custom_power_plan: None,
         items: checked,
         tweaks,
         game: game.map(|g| GameBoost {
@@ -573,7 +574,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             persistent_priority: persistent == Some(Mark::On),
         }),
     };
-    let report = run(Op::Apply(request))?;
+    let report = run(Op::Apply(Box::new(request)))?;
     print_report(&report);
     // Lo que no deja estado (memoria) no abre sesión: entonces no hay nada que deshacer.
     let journal = FileStore::new(data_dir()?.join("session.json")).load()?;
@@ -615,7 +616,7 @@ fn power_set(id: &str, yes: bool) -> Result<()> {
         power_plan: Some(plan),
         ..ApplyRequest::default()
     };
-    print_report(&run(Op::Apply(request))?);
+    print_report(&run(Op::Apply(Box::new(request)))?);
     println!("Deshacer: `framerush undo` (último apply) o `framerush revert` (toda la sesión).");
     Ok(())
 }
@@ -741,7 +742,7 @@ fn tweak_states() -> Result<Vec<(Tweak, Vec<SavedValue>)>> {
     expect(dead_code, reason = "fuera de Windows `run` todavía no ejecuta nada")
 )]
 enum Op<'a> {
-    Apply(ApplyRequest<'a>),
+    Apply(Box<ApplyRequest<'a>>),
     Undo,
     Revert,
 }

@@ -1,6 +1,6 @@
 //! Tabla de precedencia P1–P15 (PLAN.md §3): un test por regla que ya tiene código.
 //!
-//! Las reglas que dependen de piezas que aún no existen (planes de energía, Turbo,
+//! Las reglas que dependen de piezas que aún no existen (Turbo,
 //! `steamwebhelper`, VBS, GPU) se prueban en su hito; tareas.md las lista.
 
 use framerush_core::{
@@ -59,6 +59,7 @@ fn boost(m: &MockPlatform, priority: Priority, confirmed: bool) -> ApplyRequest<
     ApplyRequest {
         memory: vec![],
         power_plan: None,
+        custom_power_plan: None,
         items: vec![],
         tweaks: vec![],
         game: Some(GameBoost {
@@ -144,6 +145,7 @@ fn p5_persistent_changes_survive_the_session_revert() {
     let request = ApplyRequest {
         memory: vec![],
         power_plan: None,
+        custom_power_plan: None,
         items: p.checked().collect(),
         tweaks: vec![Tweak::GameDvrOff],
         game: None,
@@ -429,4 +431,43 @@ fn p15_rows_only_exist_for_what_the_device_has() {
         &PlanOptions::default(),
     );
     assert!(p.items.is_empty());
+}
+
+/// P3: `power-plan` elige la base y `custom-power-plan` la duplica como "FrameRush Max" y
+/// activa el duplicado; Restaurar activa el plan original y borra el duplicado.
+#[test]
+fn p3_custom_power_plan_duplicates_the_level_plan() {
+    use framerush_core::{CUSTOM_POWER_PLAN_NAME, defaults};
+    use framerush_platform::PowerControl;
+
+    let laptop = samples::hybrid_laptop();
+    let base = defaults::custom_power_plan_base(Level::Agresivo, &laptop)
+        .expect("el portátil de ejemplo tiene el plan del nivel");
+    assert_eq!(
+        Some(base),
+        defaults::power_plan_for(Level::Agresivo, &laptop),
+        "la base es el plan del nivel"
+    );
+    let original = laptop
+        .active_power_plan
+        .clone()
+        .expect("el portátil de ejemplo tiene plan activo");
+
+    let m = MockPlatform::new(4);
+    m.set_power_plans(laptop.power_plans.clone(), &original);
+    let store = store("p3");
+    let engine = Engine::new(&m, &store);
+    engine
+        .apply(&ApplyRequest {
+            power_plan: defaults::power_plan_for(Level::Agresivo, &laptop).cloned(),
+            custom_power_plan: Some(base.clone()),
+            ..ApplyRequest::default()
+        })
+        .unwrap();
+    assert_eq!(m.active_power_plan().unwrap().name, CUSTOM_POWER_PLAN_NAME);
+    assert_eq!(m.power_plans().unwrap().len(), laptop.power_plans.len() + 1);
+
+    engine.revert_all().unwrap();
+    assert_eq!(m.active_power_plan().unwrap().id, original);
+    assert_eq!(m.power_plans().unwrap(), laptop.power_plans);
 }

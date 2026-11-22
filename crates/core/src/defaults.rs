@@ -81,19 +81,41 @@ pub fn keep_alive(device: &DeviceProfile) -> Sourced<Vec<String>> {
 /// Normal no cambia el plan; Agresivo usa "Alto rendimiento" y Extremo "Máximo rendimiento"
 /// (o "Alto" si no existe). Solo se eligen planes que existen en el equipo.
 pub fn power_plan_for(level: Level, device: &DeviceProfile) -> Option<&PowerPlan> {
+    let plan = level_plan(level, device)?;
+    (device.active_power_plan.as_deref() != Some(plan.id.as_str())).then_some(plan)
+}
+
+/// El plan del nivel si existe en el equipo, esté activo o no.
+fn level_plan(level: Level, device: &DeviceProfile) -> Option<&PowerPlan> {
     let wanted: &[&str] = match (device.os, level) {
         (_, Level::Normal) | (Os::Macos, _) => &[],
         (Os::Windows, Level::Agresivo) => &[WIN_HIGH_PERFORMANCE],
         (Os::Windows, Level::Extremo) => &[WIN_ULTIMATE_PERFORMANCE, WIN_HIGH_PERFORMANCE],
         (Os::Linux, _) => &[PPD_PERFORMANCE],
     };
-    let plan = wanted.iter().find_map(|id| {
+    wanted.iter().find_map(|id| {
         device
             .power_plans
             .iter()
             .find(|p| p.id.eq_ignore_ascii_case(id))
-    })?;
-    (device.active_power_plan.as_deref() != Some(plan.id.as_str())).then_some(plan)
+    })
+}
+
+/// `custom-power-plan` (P3; Windows, desde Agresivo): el plan que se duplica como
+/// [`crate::CUSTOM_POWER_PLAN_NAME`]. Es el del nivel aunque ya esté activo y, si el equipo no
+/// tiene ninguno de los del nivel, el activo (como la referencia). Nunca un plan propio que
+/// haya quedado de antes.
+pub fn custom_power_plan_base(level: Level, device: &DeviceProfile) -> Option<&PowerPlan> {
+    if device.os != Os::Windows || level == Level::Normal {
+        return None;
+    }
+    let active = || {
+        let id = device.active_power_plan.as_deref()?;
+        device.power_plans.iter().find(|p| p.id == id)
+    };
+    level_plan(level, device)
+        .or_else(active)
+        .filter(|p| p.name != crate::CUSTOM_POWER_PLAN_NAME)
 }
 
 /// `gpu-preference`: la GPU con más VRAM dedicada, solo si hay más de una.
@@ -221,6 +243,34 @@ mod tests {
         let mut d = samples::hybrid_laptop();
         d.active_power_plan = Some(WIN_HIGH_PERFORMANCE.into());
         assert_eq!(power_plan_for(Level::Agresivo, &d), None);
+    }
+
+    #[test]
+    fn custom_plan_base_is_the_level_plan_or_the_active_one() {
+        let mut laptop = samples::hybrid_laptop();
+        assert_eq!(custom_power_plan_base(Level::Normal, &laptop), None);
+        // El plan del nivel, aunque ya sea el activo.
+        laptop.active_power_plan = Some(WIN_HIGH_PERFORMANCE.into());
+        let base = custom_power_plan_base(Level::Agresivo, &laptop).unwrap();
+        assert_eq!(base.id, WIN_HIGH_PERFORMANCE);
+        // Sin los planes del nivel, el activo.
+        let desktop = samples::desktop_without_battery();
+        assert_eq!(
+            custom_power_plan_base(Level::Extremo, &desktop).map(|p| p.id.as_str()),
+            desktop.active_power_plan.as_deref()
+        );
+        assert!(desktop.active_power_plan.is_some());
+        // Solo Windows.
+        let linux = samples::amd_desktop_linux();
+        assert_eq!(custom_power_plan_base(Level::Extremo, &linux), None);
+        // No se duplica un plan propio que quedó de antes.
+        let mut stale = DeviceProfile::undetected(Os::Windows);
+        stale.power_plans = vec![PowerPlan {
+            id: "x".into(),
+            name: crate::CUSTOM_POWER_PLAN_NAME.into(),
+        }];
+        stale.active_power_plan = Some("x".into());
+        assert_eq!(custom_power_plan_base(Level::Agresivo, &stale), None);
     }
 
     #[test]

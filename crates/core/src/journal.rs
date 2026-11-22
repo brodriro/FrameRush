@@ -64,6 +64,15 @@ pub enum Change {
         previous: PowerPlan,
         applied: PowerPlan,
     },
+    /// `custom-power-plan` (P3): duplicado de `base` llamado [`crate::CUSTOM_POWER_PLAN_NAME`]
+    /// y activado durante la sesión. La entrada se guarda antes de crearlo, con `created` a
+    /// `None`. Al revertir se activa `previous` (backup único, como en `PowerPlan`) y se borra
+    /// el duplicado; sin `created`, se borran los planes con ese nombre que hayan quedado.
+    CustomPowerPlan {
+        previous: PowerPlan,
+        base: PowerPlan,
+        created: Option<PowerPlan>,
+    },
 }
 
 impl Change {
@@ -80,7 +89,8 @@ impl Change {
             | Change::Suspend { .. }
             | Change::Kill { .. }
             | Change::StopService { .. }
-            | Change::PowerPlan { .. } => Scope::Session,
+            | Change::PowerPlan { .. }
+            | Change::CustomPowerPlan { .. } => Scope::Session,
             Change::Tweak { tweak, .. } => crate::tweak_scope(*tweak),
             Change::FullscreenOptimizationsOff { .. }
             | Change::HighPerformanceGpu { .. }
@@ -100,7 +110,8 @@ impl Change {
             | Change::FullscreenOptimizationsOff { .. }
             | Change::HighPerformanceGpu { .. }
             | Change::PersistentPriority { .. }
-            | Change::PowerPlan { .. } => None,
+            | Change::PowerPlan { .. }
+            | Change::CustomPowerPlan { .. } => None,
         }
     }
 }

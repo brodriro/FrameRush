@@ -15,6 +15,9 @@ use crate::{Action, MemoryOp, PlanItem, Scope, Subject};
 use framerush_platform::{Platform, PlatformError, PowerPlan, Priority, Target, Tweak};
 use std::path::Path;
 
+/// Nombre del plan de energía propio (`custom-power-plan`, PLAN.md P3).
+pub const CUSTOM_POWER_PLAN_NAME: &str = "FrameRush Max";
+
 /// Prioridad que se pone al bajar la de un proceso de fondo (propuesta de diseño, PLAN.md §6).
 pub const LOWERED_PRIORITY: Priority = Priority::BelowNormal;
 
@@ -48,6 +51,10 @@ pub struct ApplyRequest<'a> {
     pub memory: Vec<MemoryOp>,
     /// Plan de energía que se activa durante la sesión (R5; [`crate::power_plan_for`]).
     pub power_plan: Option<PowerPlan>,
+    /// `custom-power-plan` (P3): plan base que se duplica como [`CUSTOM_POWER_PLAN_NAME`] y se
+    /// activa ese duplicado ([`crate::defaults::custom_power_plan_base`]). Si está, sustituye a
+    /// `power_plan`.
+    pub custom_power_plan: Option<PowerPlan>,
 }
 
 /// Resultado de una acción.
@@ -125,6 +132,12 @@ pub fn describe(change: &Change) -> String {
             format!("GPU de alto rendimiento: {}", exe.display())
         }
         Change::PowerPlan { applied, .. } => format!("plan de energía «{}»", applied.name),
+        Change::CustomPowerPlan { base, .. } => {
+            format!(
+                "plan de energía «{CUSTOM_POWER_PLAN_NAME}» (sobre «{}»)",
+                base.name
+            )
+        }
     }
 }
 
@@ -185,7 +198,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         for op in &request.memory {
             self.free_memory(*op, request.game.as_ref(), &mut report);
         }
-        if let Some(plan) = &request.power_plan {
+        if let Some(base) = &request.custom_power_plan {
+            self.set_custom_power_plan(&mut journal, batch, base, &mut report)?;
+        } else if let Some(plan) = &request.power_plan {
             self.set_power_plan(&mut journal, batch, plan, &mut report)?;
         }
         for item in &request.items {
@@ -402,13 +417,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         applied: &PowerPlan,
         report: &mut Report,
     ) -> Result<(), EngineError> {
-        let original = journal.entries.iter().find_map(|e| match &e.change {
-            Change::PowerPlan { previous, .. } if e.status == EntryStatus::Done => {
-                Some(previous.clone())
-            }
-            _ => None,
-        });
-        let previous = match original {
+        let previous = match original_power_plan(journal) {
             Some(p) => p,
             None => match self.platform.active_power_plan() {
                 Ok(active) if active.id == applied.id => {
@@ -428,6 +437,104 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             applied: applied.clone(),
         };
         self.run(journal, batch, change, report)
+    }
+
+    /// Plan propio (P3): la entrada se guarda antes de crear el duplicado y se completa con su
+    /// id en cuanto existe, para que un cierre a mitad no deje un plan sin borrar.
+    fn set_custom_power_plan(
+        &self,
+        journal: &mut Journal,
+        batch: u64,
+        base: &PowerPlan,
+        report: &mut Report,
+    ) -> Result<(), EngineError> {
+        let change = Change::CustomPowerPlan {
+            previous: base.clone(),
+            base: base.clone(),
+            created: None,
+        };
+        let what = describe(&change);
+        if already_applied(journal, &change) {
+            report.push(what, Outcome::Skipped("ya aplicado en esta sesión".into()));
+            return Ok(());
+        }
+        let previous = match original_power_plan(journal) {
+            Some(p) => p,
+            None => match self.platform.active_power_plan() {
+                Ok(active) => active,
+                Err(e) => {
+                    report.push("leer el plan de energía activo".into(), Outcome::Failed(e));
+                    return Ok(());
+                }
+            },
+        };
+        let index = journal.entries.len();
+        journal.entries.push(Entry {
+            seq: journal.next_seq(),
+            batch,
+            change: Change::CustomPowerPlan {
+                previous,
+                base: base.clone(),
+                created: None,
+            },
+            status: EntryStatus::Pending,
+        });
+        self.store.save(journal)?;
+
+        let result = match self
+            .platform
+            .create_custom_power_plan(&base.id, CUSTOM_POWER_PLAN_NAME)
+        {
+            Err(e) => Err(e),
+            Ok(plan) => {
+                if let Change::CustomPowerPlan { created, .. } = &mut journal.entries[index].change
+                {
+                    *created = Some(plan.clone());
+                }
+                self.store.save(journal)?;
+                self.platform
+                    .set_active_power_plan(&plan.id)
+                    .inspect_err(|_| {
+                        // Sin activar no sirve: se borra. Si no se puede, la entrada queda
+                        // `Pending` y `revert` lo borrará.
+                        if self.platform.delete_power_plan(&plan.id).is_ok()
+                            && let Change::CustomPowerPlan { created, .. } =
+                                &mut journal.entries[index].change
+                        {
+                            *created = None;
+                        }
+                    })
+            }
+        };
+        let deleted = matches!(
+            &journal.entries[index].change,
+            Change::CustomPowerPlan { created: None, .. }
+        );
+        journal.entries[index].status = match &result {
+            Ok(()) => EntryStatus::Done,
+            Err(_) if deleted => EntryStatus::Failed,
+            Err(_) => EntryStatus::Pending,
+        };
+        self.store.save(journal)?;
+        report.push(
+            what,
+            result.map_or_else(Outcome::Failed, |()| Outcome::Done),
+        );
+        Ok(())
+    }
+
+    /// Borra el plan propio de la entrada o, si no llegó a anotarse, los que tengan su nombre.
+    /// Un plan que ya no existe no es un error.
+    fn delete_custom_power_plan(&self, created: Option<&PowerPlan>) -> Result<(), PlatformError> {
+        let plans = self.platform.power_plans()?;
+        let stale = plans.iter().filter(|p| match created {
+            Some(c) => p.id == c.id,
+            None => p.name == CUSTOM_POWER_PLAN_NAME,
+        });
+        for plan in stale {
+            self.platform.delete_power_plan(&plan.id)?;
+        }
+        Ok(())
     }
 
     /// Afinidad con backup único: la original es la de la primera vez en la sesión.
@@ -536,6 +643,11 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::PersistentPriority { exe, .. } => self.platform.set_persistent_priority(exe),
             Change::HighPerformanceGpu { exe } => self.platform.prefer_high_performance_gpu(exe),
             Change::PowerPlan { applied, .. } => self.platform.set_active_power_plan(&applied.id),
+            // Lo crea `set_custom_power_plan`; aquí solo se puede activar uno ya creado.
+            Change::CustomPowerPlan { created, .. } => match created {
+                Some(plan) => self.platform.set_active_power_plan(&plan.id),
+                None => Err(PlatformError::NotFound("plan de energía propio".into())),
+            },
         };
         journal.entries[index].status = match result {
             Ok(()) => EntryStatus::Done,
@@ -606,6 +718,12 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             }
             Change::HighPerformanceGpu { exe } => self.platform.clear_gpu_preference(exe),
             Change::PowerPlan { previous, .. } => self.platform.set_active_power_plan(&previous.id),
+            Change::CustomPowerPlan {
+                previous, created, ..
+            } => self
+                .platform
+                .set_active_power_plan(&previous.id)
+                .and_then(|()| self.delete_custom_power_plan(created.as_ref())),
         };
         result.map_or_else(Outcome::Failed, |()| Outcome::Done)
     }
@@ -658,7 +776,24 @@ fn already_applied(journal: &Journal, change: &Change) -> bool {
             (Change::PowerPlan { applied: a, .. }, Change::PowerPlan { applied: b, .. }) => {
                 a.id == b.id
             }
+            // Hay un solo plan propio por sesión.
+            (Change::CustomPowerPlan { .. }, Change::CustomPowerPlan { .. }) => true,
             _ => false,
+        })
+}
+
+/// Plan que estaba activo antes de que la sesión tocara la energía (backup único), si ya la
+/// tocó.
+fn original_power_plan(journal: &Journal) -> Option<PowerPlan> {
+    journal
+        .entries
+        .iter()
+        .filter(|e| e.status != EntryStatus::Failed)
+        .find_map(|e| match &e.change {
+            Change::PowerPlan { previous, .. } | Change::CustomPowerPlan { previous, .. } => {
+                Some(previous.clone())
+            }
+            _ => None,
         })
 }
 
@@ -668,7 +803,8 @@ mod tests {
     use crate::{Category, Level, Risk};
     use framerush_platform::mock::MockPlatform;
     use framerush_platform::{
-        GameTuning, PowerControl, ProcessControl, ProcessInfo, ServiceControl, ServiceState,
+        CapabilitySet, GameTuning, PowerControl, ProcessControl, ProcessInfo, ServiceControl,
+        ServiceState,
     };
     use std::sync::Mutex;
 
@@ -727,6 +863,7 @@ mod tests {
         ApplyRequest {
             memory: vec![],
             power_plan: None,
+            custom_power_plan: None,
             items: items.iter().collect(),
             tweaks: vec![],
             game: None,
@@ -737,6 +874,7 @@ mod tests {
         ApplyRequest {
             memory: vec![],
             power_plan: None,
+            custom_power_plan: None,
             items: vec![],
             tweaks: vec![],
             game: Some(GameBoost {
@@ -880,6 +1018,118 @@ mod tests {
         engine.revert_session().unwrap();
         assert_eq!(m.active_power_plan().unwrap().id, "a");
         assert!(store.load().unwrap().entries.is_empty());
+    }
+
+    fn plans(m: &MockPlatform) -> Vec<String> {
+        m.power_plans().unwrap().into_iter().map(|p| p.id).collect()
+    }
+
+    #[test]
+    fn custom_power_plan_round_trip() {
+        let m = MockPlatform::new(4);
+        let plan = |id: &str| PowerPlan {
+            id: id.into(),
+            name: format!("plan {id}"),
+        };
+        m.set_power_plans(vec![plan("a"), plan("b"), plan("c")], "a");
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        let req = ApplyRequest {
+            custom_power_plan: Some(plan("b")),
+            // P3: el plan propio sustituye al del nivel.
+            power_plan: Some(plan("c")),
+            ..Default::default()
+        };
+
+        engine.apply(&req).unwrap();
+        let active = m.active_power_plan().unwrap();
+        assert_eq!(active.name, CUSTOM_POWER_PLAN_NAME);
+        let journal = store.load().unwrap();
+        assert_eq!(journal.entries.len(), 1);
+        assert_eq!(journal.entries[0].status, EntryStatus::Done);
+        assert!(matches!(
+            &journal.entries[0].change,
+            Change::CustomPowerPlan { previous, created: Some(c), .. }
+                if previous.id == "a" && *c == active
+        ));
+
+        // Reaplicar no crea otro.
+        let report = engine.apply(&req).unwrap();
+        assert!(matches!(report.lines[0].outcome, Outcome::Skipped(_)));
+        assert_eq!(plans(&m).len(), 4);
+
+        // Un `power set` posterior guarda como original el de antes de la sesión.
+        engine
+            .apply(&ApplyRequest {
+                power_plan: Some(plan("c")),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(store.load().unwrap().entries.iter().all(|e| matches!(
+            &e.change,
+            Change::PowerPlan { previous, .. } | Change::CustomPowerPlan { previous, .. }
+                if previous.id == "a"
+        )));
+
+        engine.revert_session().unwrap();
+        assert_eq!(m.active_power_plan().unwrap().id, "a");
+        assert_eq!(plans(&m), ["a", "b", "c"]);
+        assert!(store.load().unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn custom_power_plan_left_by_a_crash_is_deleted_on_revert() {
+        let m = MockPlatform::new(4);
+        let base = PowerPlan {
+            id: "a".into(),
+            name: "plan a".into(),
+        };
+        m.set_power_plans(vec![base.clone()], "a");
+        // La app se cerró después de crear el plan y antes de anotar su id.
+        m.create_custom_power_plan("a", CUSTOM_POWER_PLAN_NAME)
+            .unwrap();
+        let store = MemoryStore::default();
+        let mut journal = Journal::default();
+        journal.entries.push(Entry {
+            seq: 1,
+            batch: 1,
+            change: Change::CustomPowerPlan {
+                previous: base.clone(),
+                base,
+                created: None,
+            },
+            status: EntryStatus::Pending,
+        });
+        store.save(&journal).unwrap();
+
+        Engine::new(&m, &store).revert_session().unwrap();
+        assert_eq!(plans(&m), ["a"]);
+        assert!(store.load().unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn custom_power_plan_that_cannot_be_activated_is_deleted() {
+        let m = MockPlatform::new(4);
+        let base = PowerPlan {
+            id: "a".into(),
+            name: "plan a".into(),
+        };
+        m.set_power_plans(vec![base.clone()], "a");
+        m.set_capabilities(CapabilitySet {
+            custom_power_plan: true,
+            ..CapabilitySet::default()
+        });
+        let store = MemoryStore::default();
+        let report = Engine::new(&m, &store)
+            .apply(&ApplyRequest {
+                custom_power_plan: Some(base),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(matches!(report.lines[0].outcome, Outcome::Failed(_)));
+        assert_eq!(plans(&m), ["a"]);
+        let journal = store.load().unwrap();
+        assert_eq!(journal.entries[0].status, EntryStatus::Failed);
     }
 
     #[test]
