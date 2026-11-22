@@ -29,6 +29,8 @@ pub struct View {
     anticheats: Vec<String>,
     /// Procesos protegidos que están en ejecución ahora mismo.
     protected: Vec<Protected>,
+    /// Fuentes de sensores consultadas, encontraran algo o no (para explicar lo que falta).
+    sensor_sources: Vec<&'static str>,
     /// Journal sin cerrar (restore-after-crash).
     pending_session: Option<Pending>,
     /// La GUI corre sin privilegios; lo que pide admin pasa por el helper (aún no conectado).
@@ -174,7 +176,7 @@ struct Pending {
 
 /// Lee el equipo y arma el snapshot. Tarda (WMI, NVML, escaneo de procesos): se llama fuera
 /// del hilo de la UI.
-pub fn build() -> Result<View> {
+pub fn build(sensor_sources: Vec<&'static str>) -> Result<View> {
     let Some(os) = Os::current() else {
         bail!("sistema operativo no admitido");
     };
@@ -246,6 +248,7 @@ pub fn build() -> Result<View> {
         processes: rows(&plans),
         anticheats: plans[0].anticheats.clone(),
         protected: protected(&processes),
+        sensor_sources,
         pending_session: pending_session(),
         elevated: false,
         device: device_view(&device, gpu_pref.as_deref()),
@@ -460,6 +463,7 @@ pub fn sensor_views(sensors: &[Sensor]) -> Vec<SensorView> {
                 source: match s.id.split(':').next() {
                     Some("nvml") => "NVML",
                     Some("hwmon") => "hwmon",
+                    Some("nvapi") => "NVAPI",
                     _ => "desconocida",
                 },
                 kind: match s.kind {
@@ -473,17 +477,6 @@ pub fn sensor_views(sensors: &[Sensor]) -> Vec<SensorView> {
             }
         })
         .collect()
-}
-
-/// Fuentes de sensores del equipo; las que no están (sin GPU NVIDIA, por ejemplo) se saltan.
-pub fn sensor_providers() -> Vec<Box<dyn framerush_sensors::SensorProvider>> {
-    let mut providers: Vec<Box<dyn framerush_sensors::SensorProvider>> = vec![];
-    if let Ok(gpus) = framerush_sensors::NvidiaGpus::open() {
-        providers.push(Box::new(gpus));
-    }
-    #[cfg(target_os = "linux")]
-    providers.push(Box::new(framerush_sensors::Hwmon::new()));
-    providers
 }
 
 /// Perfil del equipo con la plataforma nativa (R8), como en la CLI.
@@ -533,7 +526,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn this_machine_builds_a_snapshot() {
-        let view = build().unwrap();
+        let view = build(framerush_sensors::detect().checked).unwrap();
         assert_eq!(view.os, "win");
         let json = serde_json::to_value(&view).unwrap();
         assert!(json.get("games").is_none());

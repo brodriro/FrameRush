@@ -387,10 +387,10 @@
     });
     const src = [...new Set(list.map(s => s.source))];
     /* Sin ventiladores se dice por qué: en un portátil (PCSystemType = Mobile) ninguna fuente los expone. */
-    const where = src.length ? src.join(', ') : 'ninguna fuente disponible';
+    const where = D.sensorSources.join(', ') || 'ninguna';
     const noFans = fans.length ? ''
-      : D.device.laptop ? ` Es un portátil (según Windows) y sus ventiladores no aparecen en las fuentes que lee FrameRush (${where}).`
-        : ` No se encontró ningún ventilador en las fuentes que lee FrameRush (${where}).`;
+      : D.device.laptop ? ` Es un portátil (según Windows): ni el sistema ni la GPU exponen sus ventiladores (consultado: ${where}).`
+        : ` No se encontró ningún ventilador, tampoco en la GPU (consultado: ${where}).`;
     DS('sensor-backend-notice').forEach(e => {
       e.textContent = src.length ? `Fuentes detectadas: ${src.join(', ')}.${pick('cpu') ? '' : ' La temperatura de la CPU no tiene fuente en este equipo todavía.'}${noFans}`
         : 'No se encontró ningún sensor de CPU, GPU ni ventiladores en este equipo.' + (D.device.laptop ? ' Es un portátil (según Windows).' : '');

@@ -13,10 +13,14 @@ mod snapshot;
 
 use tauri::{Emitter, Manager};
 
+/// Fuentes de sensores que se consultaron al arrancar.
+struct SensorSources(Vec<&'static str>);
+
 /// Lee el equipo fuera del hilo de la UI: WMI, NVML y el escaneo de procesos tardan.
 #[tauri::command]
-async fn snapshot() -> Result<snapshot::View, String> {
-    tauri::async_runtime::spawn_blocking(snapshot::build)
+async fn snapshot(sources: tauri::State<'_, SensorSources>) -> Result<snapshot::View, String> {
+    let checked = sources.0.clone();
+    tauri::async_runtime::spawn_blocking(move || snapshot::build(checked))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| format!("{e:#}"))
@@ -27,8 +31,10 @@ fn main() -> anyhow::Result<()> {
         .invoke_handler(tauri::generate_handler![snapshot])
         .setup(|app| {
             let handle = app.handle().clone();
+            let sources = framerush_sensors::detect();
+            app.manage(SensorSources(sources.checked));
             let poller = framerush_sensors::Poller::spawn(
-                snapshot::sensor_providers(),
+                sources.providers,
                 framerush_sensors::POLL_INTERVAL,
                 move |sensors| {
                     // Sin ventana que escuche (al cerrar) no hay nada que hacer con el error.
