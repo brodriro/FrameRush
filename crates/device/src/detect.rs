@@ -20,7 +20,7 @@ fn is_windows_11(build: &str) -> Option<bool> {
 /// instalan ("Docker Desktop" en Apps & features según la guía de desinstalación de Docker).
 const HYPERVISOR_APPS: [&str; 1] = ["Docker Desktop"];
 
-/// Perfil del equipo con lo que la plataforma sabe leer. Todavía no rellena el antivirus.
+/// Perfil del equipo con lo que la plataforma sabe leer.
 pub fn detect<P: PowerControl + DisplayControl + Inventory>(platform: &P, os: Os) -> DeviceProfile {
     let mut device = DeviceProfile::undetected(os);
     device.os_build = platform.os_build().ok().flatten();
@@ -44,6 +44,7 @@ pub fn detect<P: PowerControl + DisplayControl + Inventory>(platform: &P, os: Os
     device.displays = platform.displays().unwrap_or_default();
     device.power_plans = platform.power_plans().unwrap_or_default();
     device.active_power_plan = platform.active_power_plan().ok().map(|p| p.id);
+    device.antivirus = platform.antivirus().unwrap_or_default();
     device
 }
 
@@ -106,9 +107,11 @@ mod tests {
         assert_eq!(d.virtualization, Vec::<String>::new());
 
         m.set_gpu_and_hypervisor(Some(true), &["VirtualMachinePlatform"]);
+        m.set_antivirus(&["Windows Defender"]);
         m.set_system(None, None, None, &["Docker Desktop", "Steam"]);
         let d = detect(&m, Os::Windows);
         assert_eq!(d.hags_supported, Some(true));
+        assert_eq!(d.antivirus, ["Windows Defender"]);
         assert_eq!(
             d.virtualization,
             ["VirtualMachinePlatform", "Docker Desktop"]

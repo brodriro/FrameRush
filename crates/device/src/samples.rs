@@ -93,7 +93,7 @@ pub fn hybrid_laptop() -> DeviceProfile {
         installed_apps: vec!["Discord".into(), "Steam".into()],
         vbs_hvci_enabled: Some(true),
         hags_supported: Some(true),
-        active_antivirus: Some("Microsoft Defender Antivirus".into()),
+        antivirus: vec!["Microsoft Defender Antivirus".into()],
         virtualization: vec!["WSL2".into()],
     }
 }
@@ -146,7 +146,7 @@ pub fn amd_desktop_linux() -> DeviceProfile {
         installed_apps: vec!["mumble".into(), "Discord".into()],
         vbs_hvci_enabled: None,
         hags_supported: None,
-        active_antivirus: None,
+        antivirus: vec![],
         virtualization: vec![],
     }
 }
@@ -188,7 +188,7 @@ pub fn apple_silicon_mac() -> DeviceProfile {
         installed_apps: vec![],
         vbs_hvci_enabled: None,
         hags_supported: None,
-        active_antivirus: None,
+        antivirus: vec![],
         virtualization: vec![],
     }
 }

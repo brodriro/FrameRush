@@ -68,8 +68,9 @@ pub struct DeviceProfile {
     pub vbs_hvci_enabled: Option<bool>,
     /// Si la GPU y el driver admiten HAGS.
     pub hags_supported: Option<bool>,
-    /// Antivirus activo según el SO (Security Center en Windows).
-    pub active_antivirus: Option<String>,
+    /// Antivirus registrados en el SO (Security Center en Windows). Solo el nombre: si hay más
+    /// de uno no se sabe cuál está activo.
+    pub antivirus: Vec<String>,
     /// Software de virtualización instalado que se rompe con el hipervisor desactivado (V6).
     pub virtualization: Vec<String>,
 }
@@ -92,7 +93,7 @@ impl DeviceProfile {
             installed_apps: vec![],
             vbs_hvci_enabled: None,
             hags_supported: None,
-            active_antivirus: None,
+            antivirus: vec![],
             virtualization: vec![],
         }
     }
