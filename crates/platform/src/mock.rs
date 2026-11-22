@@ -38,6 +38,7 @@ struct State {
     battery: Option<Battery>,
     os_build: Option<String>,
     manufacturer: Option<String>,
+    laptop: Option<bool>,
     vbs_running: Option<bool>,
     installed_apps: Vec<String>,
     hags_supported: Option<bool>,
@@ -152,6 +153,11 @@ impl MockPlatform {
         s.manufacturer = manufacturer.map(str::to_owned);
         s.vbs_running = vbs_running;
         s.installed_apps = installed_apps.iter().map(|a| (*a).to_owned()).collect();
+    }
+
+    /// Define si el equipo es un portátil ([`Inventory::laptop`]).
+    pub fn set_laptop(&self, laptop: Option<bool>) {
+        self.lock().laptop = laptop;
     }
 
     /// Define el soporte de HAGS y los componentes del hipervisor de [`Inventory`].
@@ -397,6 +403,10 @@ impl Inventory for MockPlatform {
 
     fn manufacturer(&self) -> Result<Option<String>> {
         Ok(self.lock().manufacturer.clone())
+    }
+
+    fn laptop(&self) -> Result<Option<bool>> {
+        Ok(self.lock().laptop)
     }
 
     fn vbs_running(&self) -> Result<Option<bool>> {

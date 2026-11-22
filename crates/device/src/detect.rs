@@ -28,6 +28,7 @@ pub fn detect<P: PowerControl + DisplayControl + Inventory>(platform: &P, os: Os
         device.windows_11 = device.os_build.as_deref().and_then(is_windows_11);
     }
     device.manufacturer = platform.manufacturer().ok().flatten();
+    device.laptop = platform.laptop().ok().flatten();
     device.vbs_hvci_enabled = platform.vbs_running().ok().flatten();
     device.installed_apps = platform.installed_apps().unwrap_or_default();
     device.hags_supported = platform.hags_supported().ok().flatten();
@@ -101,6 +102,7 @@ mod tests {
         assert_eq!(d.os_build.as_deref(), Some("22631"));
         assert_eq!(d.windows_11, Some(true));
         assert_eq!(d.manufacturer.as_deref(), Some("Acme"));
+        assert_eq!(d.laptop, None);
         assert_eq!(d.vbs_hvci_enabled, Some(true));
         assert_eq!(d.installed_apps, ["Discord", "Steam"]);
 
@@ -108,10 +110,12 @@ mod tests {
 
         m.set_gpu_and_hypervisor(Some(true), &["VirtualMachinePlatform"]);
         m.set_antivirus(&["Windows Defender"]);
+        m.set_laptop(Some(true));
         m.set_system(None, None, None, &["Docker Desktop", "Steam"]);
         let d = detect(&m, Os::Windows);
         assert_eq!(d.hags_supported, Some(true));
         assert_eq!(d.antivirus, ["Windows Defender"]);
+        assert_eq!(d.laptop, Some(true));
         assert_eq!(
             d.virtualization,
             ["VirtualMachinePlatform", "Docker Desktop"]

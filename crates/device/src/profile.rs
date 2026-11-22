@@ -53,6 +53,9 @@ pub struct DeviceProfile {
     pub windows_11: Option<bool>,
     /// Fabricante del equipo (WMI/DMI), para las recomendaciones manuales.
     pub manufacturer: Option<String>,
+    /// Si es un portátil (`PCSystemType` en Windows). Sin sensores de ventilador, la UI lo
+    /// usa para explicar por qué no hay RPM.
+    pub laptop: Option<bool>,
     pub cpu: Option<Cpu>,
     pub gpus: Vec<Gpu>,
     pub displays: Vec<Display>,
@@ -84,6 +87,7 @@ impl DeviceProfile {
             os_build: None,
             windows_11: None,
             manufacturer: None,
+            laptop: None,
             cpu: None,
             gpus: vec![],
             displays: vec![],

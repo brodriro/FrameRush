@@ -292,6 +292,24 @@ pub(super) fn manufacturer() -> Result<Option<String>> {
     .map(Option::flatten)
 }
 
+/// Valores de `Win32_ComputerSystem.PCSystemType` (Microsoft Learn): 0 = Unspecified,
+/// 2 = Mobile (portátil).
+const PC_SYSTEM_TYPE_UNSPECIFIED: u32 = 0;
+const PC_SYSTEM_TYPE_MOBILE: u32 = 2;
+
+/// Si es un portátil según `PCSystemType`; `None` si el firmware no lo especifica.
+pub(super) fn laptop() -> Result<Option<bool>> {
+    wmi::first(
+        CIMV2,
+        "SELECT PCSystemType FROM Win32_ComputerSystem",
+        |o| wmi::u32(o, "PCSystemType"),
+    )
+    .map(|t| match t.flatten() {
+        None | Some(PC_SYSTEM_TYPE_UNSPECIFIED) => None,
+        Some(t) => Some(t == PC_SYSTEM_TYPE_MOBILE),
+    })
+}
+
 /// Si VBS está en ejecución; `None` si el sistema no tiene la clase `Win32_DeviceGuard`.
 pub(super) fn vbs_running() -> Result<Option<bool>> {
     wmi::first(
@@ -392,6 +410,7 @@ mod tests {
         let build = os_build().unwrap().unwrap();
         assert!(build.parse::<u32>().is_ok(), "{build}");
         assert!(manufacturer().unwrap().is_some());
+        laptop().unwrap();
         vbs_running().unwrap();
         hags_supported().unwrap();
         // Windows Server (la CI) no tiene Security Center: ahí basta con que no reviente.

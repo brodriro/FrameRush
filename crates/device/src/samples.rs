@@ -37,6 +37,7 @@ pub fn hybrid_laptop() -> DeviceProfile {
         os_build: Some("10.0.26100".into()),
         windows_11: Some(true),
         manufacturer: Some("Fabricante de prueba".into()),
+        laptop: Some(true),
         cpu: Some(Cpu {
             model: "CPU de prueba 4C/8T".into(),
             cores: smt_cores(4, CoreKind::Performance, 0),
@@ -112,6 +113,7 @@ pub fn amd_desktop_linux() -> DeviceProfile {
         os_build: Some("6.12".into()),
         windows_11: None,
         manufacturer: None,
+        laptop: Some(false),
         cpu: Some(Cpu {
             model: "CPU híbrida de prueba 6P+4E".into(),
             cores,
@@ -171,6 +173,7 @@ pub fn apple_silicon_mac() -> DeviceProfile {
         os_build: Some("15.0".into()),
         windows_11: None,
         manufacturer: Some("Apple".into()),
+        laptop: Some(true),
         cpu: Some(Cpu {
             model: "SoC de prueba 8P+4E".into(),
             cores,
@@ -201,6 +204,7 @@ pub fn apple_silicon_mac() -> DeviceProfile {
 pub fn desktop_without_battery() -> DeviceProfile {
     DeviceProfile {
         battery: None,
+        laptop: Some(false),
         power_plans: vec![plan(TEST_BALANCED, "Balanced")],
         gpus: vec![hybrid_laptop().gpus.remove(1)],
         ..hybrid_laptop()

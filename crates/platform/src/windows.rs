@@ -615,6 +615,10 @@ impl Inventory for WindowsPlatform {
         inventory::manufacturer()
     }
 
+    fn laptop(&self) -> Result<Option<bool>> {
+        inventory::laptop()
+    }
+
     fn vbs_running(&self) -> Result<Option<bool>> {
         inventory::vbs_running()
     }

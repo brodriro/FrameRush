@@ -161,6 +161,8 @@ pub trait Inventory {
     fn os_build(&self) -> Result<Option<String>>;
     /// Fabricante del equipo.
     fn manufacturer(&self) -> Result<Option<String>>;
+    /// Si el equipo es un portátil; `None` si el SO no lo dice.
+    fn laptop(&self) -> Result<Option<bool>>;
     /// Si VBS (Device Guard) está en ejecución; `None` si el SO no lo tiene o no lo expone.
     fn vbs_running(&self) -> Result<Option<bool>>;
     /// Nombres de las apps instaladas, ordenados y sin repetir.
