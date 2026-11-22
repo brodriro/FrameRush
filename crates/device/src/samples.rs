@@ -50,6 +50,7 @@ pub fn hybrid_laptop() -> DeviceProfile {
                 vendor: GpuVendor::Intel,
                 dedicated_vram_bytes: None,
                 slowdown_c: None,
+                pci: None,
             },
             Gpu {
                 id: "gpu-dedicada".into(),
@@ -57,6 +58,7 @@ pub fn hybrid_laptop() -> DeviceProfile {
                 vendor: GpuVendor::Nvidia,
                 dedicated_vram_bytes: Some(4 * GIB),
                 slowdown_c: Some(98.0),
+                pci: None,
             },
         ],
         displays: vec![Display {
@@ -122,6 +124,7 @@ pub fn amd_desktop_linux() -> DeviceProfile {
             vendor: GpuVendor::Amd,
             dedicated_vram_bytes: Some(8 * GIB),
             slowdown_c: None,
+            pci: None,
         }],
         displays: vec![Display {
             id: "DP-1".into(),
@@ -180,6 +183,7 @@ pub fn apple_silicon_mac() -> DeviceProfile {
             vendor: GpuVendor::Apple,
             dedicated_vram_bytes: None,
             slowdown_c: None,
+            pci: None,
         }],
         displays: vec![],
         battery: Some(Battery { discharging: false }),
@@ -214,6 +218,7 @@ pub fn without_sensors() -> DeviceProfile {
         }),
         gpus: vec![Gpu {
             slowdown_c: None,
+            pci: None,
             ..hybrid_laptop().gpus.remove(1)
         }],
         ..desktop_without_battery()

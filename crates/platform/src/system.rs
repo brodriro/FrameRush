@@ -122,6 +122,16 @@ pub struct Gpu {
     pub dedicated_vram_bytes: Option<u64>,
     /// Umbral de *slowdown* (NVML); puede no estar disponible (V13).
     pub slowdown_c: Option<f32>,
+    /// Id PCI, para emparejar la GPU con otras fuentes (NVML). `None` si el SO no lo da.
+    pub pci: Option<PciId>,
+}
+
+/// Id PCI de una GPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PciId {
+    pub vendor: u16,
+    pub device: u16,
+    pub subsystem: u32,
 }
 
 /// Fabricante de la GPU.

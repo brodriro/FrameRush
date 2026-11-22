@@ -24,7 +24,7 @@
 use super::cpus::{CpuSet, system_cpu_sets};
 use super::registry::{self, Hive};
 use super::wmi;
-use crate::{Battery, Core, CoreKind, Cpu, Gpu, GpuVendor, PlatformError, Result};
+use crate::{Battery, Core, CoreKind, Cpu, Gpu, GpuVendor, PciId, PlatformError, Result};
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, DXGI_ADAPTER_DESC1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_ERROR_NOT_FOUND,
     IDXGIFactory1,
@@ -124,6 +124,15 @@ fn adapters() -> Result<Vec<DXGI_ADAPTER_DESC1>> {
     Ok(adapters)
 }
 
+/// Id PCI del adaptador; `None` si fabricante o dispositivo no caben en 16 bits.
+fn pci_id(desc: &DXGI_ADAPTER_DESC1) -> Option<PciId> {
+    Some(PciId {
+        vendor: u16::try_from(desc.VendorId).ok()?,
+        device: u16::try_from(desc.DeviceId).ok()?,
+        subsystem: desc.SubSysId,
+    })
+}
+
 pub(super) fn gpus() -> Result<Vec<Gpu>> {
     let mut gpus = vec![];
     for desc in adapters()? {
@@ -139,6 +148,7 @@ pub(super) fn gpus() -> Result<Vec<Gpu>> {
             vendor: vendor(desc.VendorId),
             dedicated_vram_bytes: Some(desc.DedicatedVideoMemory as u64),
             slowdown_c: None,
+            pci: pci_id(&desc),
         });
     }
     Ok(gpus)

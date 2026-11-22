@@ -10,5 +10,5 @@ pub mod samples;
 
 // Los tipos del hardware viven en `platform` porque los devuelven sus traits.
 pub use detect::detect;
-pub use framerush_platform::{Battery, Core, CoreKind, Cpu, Display, Gpu, GpuVendor, Mode};
+pub use framerush_platform::{Battery, Core, CoreKind, Cpu, Display, Gpu, GpuVendor, Mode, PciId};
 pub use profile::{DeviceProfile, Source, Sourced};
