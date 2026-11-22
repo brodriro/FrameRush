@@ -64,7 +64,7 @@ fn boost(m: &MockPlatform, priority: Priority, confirmed: bool) -> ApplyRequest<
         items: vec![],
         tweaks: vec![],
         game: Some(GameBoost {
-            target: game,
+            targets: vec![game],
             priority,
             realtime_confirmed: confirmed,
             fullscreen_optimizations_off: false,
@@ -103,7 +103,7 @@ fn p1_realtime_needs_confirmation_and_is_session_only() {
     );
 
     engine.revert_session().unwrap();
-    let game = confirmed.game.unwrap().target;
+    let game = confirmed.game.unwrap().targets.remove(0);
     assert_eq!(m.priority(&game).unwrap(), Priority::Normal);
 }
 
@@ -193,7 +193,7 @@ fn fso_off_is_persistent_and_respects_existing_flags() {
     let s = store("fso");
     let engine = Engine::new(&m, &s);
     let mut request = boost(&m, Priority::High, false);
-    let exe = request.game.as_ref().unwrap().target.exe_path.clone();
+    let exe = request.game.as_ref().unwrap().targets[0].exe_path.clone();
     if let Some(g) = request.game.as_mut() {
         g.fullscreen_optimizations_off = true;
     }
@@ -240,7 +240,7 @@ fn p1_persistent_priority_is_high_only_and_persistent() {
     let s = store("p1-ifeo");
     let engine = Engine::new(&m, &s);
     let mut request = boost(&m, Priority::High, false);
-    let exe = request.game.as_ref().unwrap().target.exe_path.clone();
+    let exe = request.game.as_ref().unwrap().targets[0].exe_path.clone();
     let loc = mock_priority_location(&exe);
     if let Some(g) = request.game.as_mut() {
         g.persistent_priority = true;
@@ -271,7 +271,7 @@ fn gpu_preference_is_persistent_and_respects_the_users() {
     let s = store("gpu");
     let engine = Engine::new(&m, &s);
     let mut request = boost(&m, Priority::High, false);
-    let exe = request.game.as_ref().unwrap().target.exe_path.clone();
+    let exe = request.game.as_ref().unwrap().targets[0].exe_path.clone();
     if let Some(g) = request.game.as_mut() {
         g.high_performance_gpu = true;
     }

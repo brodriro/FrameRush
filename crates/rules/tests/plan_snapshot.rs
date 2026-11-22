@@ -31,7 +31,11 @@ fn snapshot() -> Snapshot {
         "cs2.exe",
     ];
     let processes: Vec<ProcessInfo> = (1..).zip(names).map(|(pid, n)| proc(pid, n)).collect();
-    let game = processes.last().map(|p| p.target.clone());
+    let game: Vec<_> = processes
+        .last()
+        .map(|p| p.target.clone())
+        .into_iter()
+        .collect();
     Snapshot {
         processes,
         services: vec![

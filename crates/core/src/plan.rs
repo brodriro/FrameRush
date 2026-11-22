@@ -15,8 +15,9 @@ pub struct Snapshot {
     pub processes: Vec<ProcessInfo>,
     /// Servicios que existen y su estado.
     pub services: Vec<(String, ServiceState)>,
-    /// Proceso del juego detectado; nunca entra en el plan.
-    pub game: Option<Target>,
+    /// Procesos del juego (todos los de su carpeta, decisión del usuario 2026-11-22); nunca
+    /// entran en el plan.
+    pub game: Vec<Target>,
     /// Ajustes persistentes que admite la plataforma en este equipo (P15).
     pub tweaks: Vec<Tweak>,
     /// Los de `tweaks` que piden elevación para aplicarse.
@@ -187,7 +188,7 @@ pub fn plan(
                         !is_protected(&p.name)
                             && !is_protected(&p.target.exe_path.to_string_lossy())
                     })
-                    .filter(|p| snapshot.game.as_ref() != Some(&p.target))
+                    .filter(|p| !snapshot.game.contains(&p.target))
                     .cloned()
                     .collect();
                 (!procs.is_empty()).then_some(Subject::Processes(procs))?
@@ -471,7 +472,7 @@ mod tests {
         let game = processes[3].target.clone();
         let snap = Snapshot {
             processes,
-            game: Some(game),
+            game: vec![game],
             ..Snapshot::default()
         };
         for level in Level::ALL {

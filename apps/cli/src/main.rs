@@ -271,7 +271,7 @@ fn build_plan(
         processes,
         // Los servicios se consultan con el SCM / systemd en M5.
         services: vec![],
-        game: game.as_ref().map(|g| g.target.clone()),
+        game: game.iter().map(|g| g.target.clone()).collect(),
         tweaks,
         admin_tweaks,
         memory: native_memory(),
@@ -761,7 +761,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         items: checked,
         tweaks,
         game: game.map(|g| GameBoost {
-            target: g.target,
+            targets: vec![g.target],
             priority: args.game.game_priority.into(),
             realtime_confirmed: args.game.confirm_realtime,
             fullscreen_optimizations_off: args.game.fso_off,
@@ -1098,7 +1098,7 @@ fn run(op: Op<'_>) -> Result<Report> {
                     matches!(&i.subject, Subject::Processes(ps)
                         if ps.iter().any(|p| p.own != Some(true)))
                 })
-                || foreign(request.game.iter().map(|g| &g.target))?
+                || foreign(request.game.iter().flat_map(|g| &g.targets))?
         }
         Op::Undo | Op::Revert => {
             let journal = store.load()?;

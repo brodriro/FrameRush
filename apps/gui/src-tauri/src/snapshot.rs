@@ -214,7 +214,7 @@ pub(crate) fn inputs() -> Result<Inputs> {
         processes: processes.clone(),
         // Los servicios se consultan con el SCM / systemd en M5.
         services: vec![],
-        game: None,
+        game: vec![],
         tweaks: tweaks.clone(),
         admin_tweaks,
         memory: if caps.memory {

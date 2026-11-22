@@ -31,7 +31,9 @@ pub struct RefreshRate {
 /// Lo que se le hace al juego.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameBoost {
-    pub target: Target,
+    /// Procesos del juego: reciben prioridad y afinidad. Los ajustes por exe (FSO, GPU, IFEO)
+    /// se aplican una vez por exe distinto.
+    pub targets: Vec<Target>,
     pub priority: Priority,
     /// Confirmación explícita para Tiempo real (It1.5).
     pub realtime_confirmed: bool,
@@ -255,26 +257,49 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             self.apply_tweak(&mut journal, batch, *tweak, &mut report)?;
         }
         if let Some(g) = &request.game {
-            self.set_priority(&mut journal, batch, &g.target, g.priority, &mut report)?;
-            if let Some(cpus) = &g.affinity {
-                self.set_affinity(&mut journal, batch, &g.target, cpus, &mut report)?;
+            for target in &g.targets {
+                self.set_priority(&mut journal, batch, target, g.priority, &mut report)?;
+                if let Some(cpus) = &g.affinity {
+                    self.set_affinity(&mut journal, batch, target, cpus, &mut report)?;
+                }
             }
-            let exe = &g.target.exe_path;
-            if g.fullscreen_optimizations_off {
-                let change = Change::FullscreenOptimizationsOff { exe: exe.clone() };
-                let current = || self.platform.compat_flags(exe);
-                self.apply_if_unset(&mut journal, batch, change, current, &mut report)?;
-            }
-            if g.high_performance_gpu {
-                let change = Change::HighPerformanceGpu { exe: exe.clone() };
-                let current = || self.platform.gpu_preference(exe);
-                self.apply_if_unset(&mut journal, batch, change, current, &mut report)?;
-            }
-            if g.persistent_priority && g.priority != Priority::Normal {
-                self.persist_priority(&mut journal, batch, &g.target.exe_path, &mut report)?;
+            let mut exes: Vec<&Path> = g.targets.iter().map(|t| t.exe_path.as_path()).collect();
+            exes.sort();
+            exes.dedup();
+            for exe in exes {
+                self.apply_game_exe(&mut journal, batch, g, exe, &mut report)?;
             }
         }
         Ok(report)
+    }
+
+    /// Ajustes persistentes de un exe del juego.
+    fn apply_game_exe(
+        &self,
+        journal: &mut Journal,
+        batch: u64,
+        g: &GameBoost,
+        exe: &Path,
+        report: &mut Report,
+    ) -> Result<(), EngineError> {
+        if g.fullscreen_optimizations_off {
+            let change = Change::FullscreenOptimizationsOff {
+                exe: exe.to_path_buf(),
+            };
+            let current = || self.platform.compat_flags(exe);
+            self.apply_if_unset(journal, batch, change, current, report)?;
+        }
+        if g.high_performance_gpu {
+            let change = Change::HighPerformanceGpu {
+                exe: exe.to_path_buf(),
+            };
+            let current = || self.platform.gpu_preference(exe);
+            self.apply_if_unset(journal, batch, change, current, report)?;
+        }
+        if g.persistent_priority && g.priority != Priority::Normal {
+            self.persist_priority(journal, batch, exe, report)?;
+        }
+        Ok(())
     }
 
     /// Una operación de memoria. No hay nada que revertir, así que no pasa por el journal, y un
@@ -293,7 +318,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                         !is_protected(&p.name)
                             && !p.framerush
                             && p.target.pid != std::process::id()
-                            && game.is_none_or(|g| g.target != p.target)
+                            && game.is_none_or(|g| !g.targets.contains(&p.target))
                     });
                     let (mut done, mut failed) = (0usize, 0usize);
                     for p in background {
@@ -967,7 +992,7 @@ mod tests {
             items: vec![],
             tweaks: vec![],
             game: Some(GameBoost {
-                target: target.clone(),
+                targets: vec![target.clone()],
                 priority,
                 realtime_confirmed: confirmed,
                 fullscreen_optimizations_off: false,
@@ -1047,6 +1072,36 @@ mod tests {
                 .all(|e| matches!(e.change, Change::Priority { .. })),
             "solo la prioridad del juego"
         );
+    }
+
+    /// Todos los procesos del juego suben de prioridad; los ajustes por exe van una vez por exe
+    /// distinto.
+    #[test]
+    fn every_game_process_is_boosted_and_each_exe_once() {
+        let m = MockPlatform::new(4);
+        let main = m.spawn(9, "game.exe", "/game/game.exe", 1);
+        let second = m.spawn(10, "game.exe", "/game/game.exe", 1);
+        let helper = m.spawn(11, "helper.exe", "/game/helper.exe", 1);
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        let mut req = boost(&main, Priority::High, false);
+        if let Some(g) = req.game.as_mut() {
+            g.targets = vec![main.clone(), second.clone(), helper.clone()];
+            g.fullscreen_optimizations_off = true;
+        }
+        let report = engine.apply(&req).unwrap();
+        assert_eq!(report.failed(), 0, "{report:?}");
+        for t in [&main, &second, &helper] {
+            assert_eq!(m.priority(t).unwrap(), Priority::High);
+        }
+        let fso = store
+            .load()
+            .unwrap()
+            .entries
+            .iter()
+            .filter(|e| matches!(e.change, Change::FullscreenOptimizationsOff { .. }))
+            .count();
+        assert_eq!(fso, 2, "game.exe y helper.exe");
     }
 
     /// Afinidad del juego: se aplica, reaplicar otra no pierde la original, y revertir la
