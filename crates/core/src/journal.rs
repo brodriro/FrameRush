@@ -5,7 +5,7 @@
 //! "Restaurar sesión anterior".
 
 use crate::Scope;
-use framerush_platform::{Priority, SavedValue, Target, Tweak};
+use framerush_platform::{PowerPlan, Priority, SavedValue, Target, Tweak};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -58,6 +58,12 @@ pub enum Change {
         exe: PathBuf,
         previous: Vec<SavedValue>,
     },
+    /// Plan de energía activado durante la sesión (R5). `previous` es el que estaba activo antes
+    /// de la primera vez (backup único) y se vuelve a activar al revertir.
+    PowerPlan {
+        previous: PowerPlan,
+        applied: PowerPlan,
+    },
 }
 
 impl Change {
@@ -73,7 +79,8 @@ impl Change {
             | Change::Affinity { .. }
             | Change::Suspend { .. }
             | Change::Kill { .. }
-            | Change::StopService { .. } => Scope::Session,
+            | Change::StopService { .. }
+            | Change::PowerPlan { .. } => Scope::Session,
             Change::Tweak { tweak, .. } => crate::tweak_scope(*tweak),
             Change::FullscreenOptimizationsOff { .. }
             | Change::HighPerformanceGpu { .. }
@@ -92,7 +99,8 @@ impl Change {
             | Change::Tweak { .. }
             | Change::FullscreenOptimizationsOff { .. }
             | Change::HighPerformanceGpu { .. }
-            | Change::PersistentPriority { .. } => None,
+            | Change::PersistentPriority { .. }
+            | Change::PowerPlan { .. } => None,
         }
     }
 }

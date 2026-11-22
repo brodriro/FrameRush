@@ -12,7 +12,7 @@
 use crate::journal::{Change, Entry, EntryStatus, Journal, JournalError, JournalStore};
 use crate::protected::is_protected;
 use crate::{Action, MemoryOp, PlanItem, Scope, Subject};
-use framerush_platform::{Platform, PlatformError, Priority, Target, Tweak};
+use framerush_platform::{Platform, PlatformError, PowerPlan, Priority, Target, Tweak};
 use std::path::Path;
 
 /// Prioridad que se pone al bajar la de un proceso de fondo (propuesta de diseño, PLAN.md §6).
@@ -46,6 +46,8 @@ pub struct ApplyRequest<'a> {
     pub game: Option<GameBoost>,
     /// Se hacen antes que el resto, como en Turbo (PLAN.md §5, P9).
     pub memory: Vec<MemoryOp>,
+    /// Plan de energía que se activa durante la sesión (R5; [`crate::power_plan_for`]).
+    pub power_plan: Option<PowerPlan>,
 }
 
 /// Resultado de una acción.
@@ -122,6 +124,7 @@ pub fn describe(change: &Change) -> String {
         Change::HighPerformanceGpu { exe } => {
             format!("GPU de alto rendimiento: {}", exe.display())
         }
+        Change::PowerPlan { applied, .. } => format!("plan de energía «{}»", applied.name),
     }
 }
 
@@ -181,6 +184,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
 
         for op in &request.memory {
             self.free_memory(*op, request.game.as_ref(), &mut report);
+        }
+        if let Some(plan) = &request.power_plan {
+            self.set_power_plan(&mut journal, batch, plan, &mut report)?;
         }
         for item in &request.items {
             match &item.subject {
@@ -388,6 +394,42 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         self.run(journal, batch, change, report)
     }
 
+    /// Plan de energía con backup único: el original es el que estaba activo la primera vez.
+    fn set_power_plan(
+        &self,
+        journal: &mut Journal,
+        batch: u64,
+        applied: &PowerPlan,
+        report: &mut Report,
+    ) -> Result<(), EngineError> {
+        let original = journal.entries.iter().find_map(|e| match &e.change {
+            Change::PowerPlan { previous, .. } if e.status == EntryStatus::Done => {
+                Some(previous.clone())
+            }
+            _ => None,
+        });
+        let previous = match original {
+            Some(p) => p,
+            None => match self.platform.active_power_plan() {
+                Ok(active) if active.id == applied.id => {
+                    let what = format!("plan de energía «{}»", applied.name);
+                    report.push(what, Outcome::Skipped("ya es el plan activo".into()));
+                    return Ok(());
+                }
+                Ok(active) => active,
+                Err(e) => {
+                    report.push("leer el plan de energía activo".into(), Outcome::Failed(e));
+                    return Ok(());
+                }
+            },
+        };
+        let change = Change::PowerPlan {
+            previous,
+            applied: applied.clone(),
+        };
+        self.run(journal, batch, change, report)
+    }
+
     /// Afinidad con backup único: la original es la de la primera vez en la sesión.
     fn set_affinity(
         &self,
@@ -493,6 +535,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             }
             Change::PersistentPriority { exe, .. } => self.platform.set_persistent_priority(exe),
             Change::HighPerformanceGpu { exe } => self.platform.prefer_high_performance_gpu(exe),
+            Change::PowerPlan { applied, .. } => self.platform.set_active_power_plan(&applied.id),
         };
         journal.entries[index].status = match result {
             Ok(()) => EntryStatus::Done,
@@ -562,6 +605,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 self.platform.restore_persistent_priority(exe, previous)
             }
             Change::HighPerformanceGpu { exe } => self.platform.clear_gpu_preference(exe),
+            Change::PowerPlan { previous, .. } => self.platform.set_active_power_plan(&previous.id),
         };
         result.map_or_else(Outcome::Failed, |()| Outcome::Done)
     }
@@ -611,6 +655,9 @@ fn already_applied(journal: &Journal, change: &Change) -> bool {
             (Change::HighPerformanceGpu { exe: a }, Change::HighPerformanceGpu { exe: b }) => {
                 a == b
             }
+            (Change::PowerPlan { applied: a, .. }, Change::PowerPlan { applied: b, .. }) => {
+                a.id == b.id
+            }
             _ => false,
         })
 }
@@ -621,7 +668,7 @@ mod tests {
     use crate::{Category, Level, Risk};
     use framerush_platform::mock::MockPlatform;
     use framerush_platform::{
-        GameTuning, ProcessControl, ProcessInfo, ServiceControl, ServiceState,
+        GameTuning, PowerControl, ProcessControl, ProcessInfo, ServiceControl, ServiceState,
     };
     use std::sync::Mutex;
 
@@ -679,6 +726,7 @@ mod tests {
     fn request(items: &[PlanItem]) -> ApplyRequest<'_> {
         ApplyRequest {
             memory: vec![],
+            power_plan: None,
             items: items.iter().collect(),
             tweaks: vec![],
             game: None,
@@ -688,6 +736,7 @@ mod tests {
     fn boost(target: &Target, priority: Priority, confirmed: bool) -> ApplyRequest<'static> {
         ApplyRequest {
             memory: vec![],
+            power_plan: None,
             items: vec![],
             tweaks: vec![],
             game: Some(GameBoost {
@@ -795,6 +844,42 @@ mod tests {
         assert_eq!(m.affinity(&game).unwrap(), [4]);
         engine.revert_session().unwrap();
         assert_eq!(m.affinity(&game).unwrap(), original);
+    }
+
+    #[test]
+    fn power_plan_round_trip_keeps_the_original() {
+        let m = MockPlatform::new(4);
+        let plan = |id: &str| PowerPlan {
+            id: id.into(),
+            name: format!("plan {id}"),
+        };
+        m.set_power_plans(vec![plan("a"), plan("b"), plan("c")], "a");
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        let req = |id: &str| ApplyRequest {
+            power_plan: Some(plan(id)),
+            ..Default::default()
+        };
+
+        // El activo no se toca ni se registra.
+        let report = engine.apply(&req("a")).unwrap();
+        assert!(matches!(report.lines[0].outcome, Outcome::Skipped(_)));
+        assert!(store.load().unwrap().entries.is_empty());
+
+        engine.apply(&req("b")).unwrap();
+        engine.apply(&req("c")).unwrap();
+        assert_eq!(m.active_power_plan().unwrap().id, "c");
+        // Backup único: el original sigue siendo `a`, no `b`.
+        let journal = store.load().unwrap();
+        assert!(journal.entries.iter().all(|e| matches!(
+            &e.change,
+            Change::PowerPlan { previous, .. } if previous.id == "a"
+        )));
+        assert_eq!(journal.entries[0].change.scope(), Scope::Session);
+
+        engine.revert_session().unwrap();
+        assert_eq!(m.active_power_plan().unwrap().id, "a");
+        assert!(store.load().unwrap().entries.is_empty());
     }
 
     #[test]

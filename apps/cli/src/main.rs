@@ -491,6 +491,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     }
     let request = ApplyRequest {
         memory,
+        power_plan: None,
         items: checked,
         tweaks,
         game: game.map(|g| GameBoost {
