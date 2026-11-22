@@ -1,4 +1,11 @@
 /* FrameRush GUI: estilos del diseño final (design/v3-overlay-compact.html). */
+/* IBM Plex (OFL-1.1, fonts/LICENSE-*.txt), subconjunto latino de @fontsource 5.3.0: local por la CSP. */
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/ibm-plex-sans-400.woff2) format('woff2')}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:500;font-display:swap;src:url(fonts/ibm-plex-sans-500.woff2) format('woff2')}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:600;font-display:swap;src:url(fonts/ibm-plex-sans-600.woff2) format('woff2')}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/ibm-plex-mono-400.woff2) format('woff2')}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:500;font-display:swap;src:url(fonts/ibm-plex-mono-500.woff2) format('woff2')}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:600;font-display:swap;src:url(fonts/ibm-plex-mono-600.woff2) format('woff2')}
 :root{--glass:rgba(20,22,24,.98);--l:rgba(255,255,255,.08);--l2:rgba(255,255,255,.14);--tx:#eef0f1;--tx2:#a9b0b5;--tx3:#727a80;
 --acc:#7cc4b8;--ok:#6fcf8e;--warn:#f0b552;--bad:#f07a6a;--mono:'IBM Plex Mono',ui-monospace,Consolas,monospace;
 --menu:#1b1e21;color-scheme:dark}
