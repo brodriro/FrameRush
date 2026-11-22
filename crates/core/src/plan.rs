@@ -263,12 +263,12 @@ pub fn tweak_min_level(tweak: Tweak) -> Level {
         Tweak::GameDvrPolicyOff
         | Tweak::SchedulerForegroundBoost
         | Tweak::PowerThrottlingOff
-        | Tweak::MmcssGames => Level::Agresivo,
+        | Tweak::MmcssGames
+        | Tweak::UwpBackgroundOff => Level::Agresivo,
         Tweak::GameDvrOff
         | Tweak::WindowsGameMode
         | Tweak::NotificationsOff
-        | Tweak::VisualEffectsPerformance
-        | Tweak::UwpBackgroundOff => Level::Normal,
+        | Tweak::VisualEffectsPerformance => Level::Normal,
     }
 }
 

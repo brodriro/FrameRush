@@ -13,6 +13,7 @@
 #![allow(unsafe_code)]
 
 mod cpus;
+mod effects;
 mod helper;
 mod integrity;
 mod registry;
@@ -691,20 +692,8 @@ fn reg_values(tweak: Tweak) -> &'static [RegValue] {
             name: "NOC_GLOBAL_SETTING_TOAST_ENABLED",
             value: Dword(0),
         }],
-        Tweak::VisualEffectsPerformance => &[
-            RegValue {
-                hive: HKCU,
-                path: r"Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects",
-                name: "VisualFXSetting",
-                value: Dword(2),
-            },
-            RegValue {
-                hive: HKCU,
-                path: r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-                name: "EnableTransparency",
-                value: Dword(0),
-            },
-        ],
+        // No va por el registro: `SystemParametersInfo` (módulo `effects`, V21).
+        Tweak::VisualEffectsPerformance => &[],
         // PLAN.md V8: 0x26, quantum corto y variable con más peso para el primer plano.
         Tweak::SchedulerForegroundBoost => &[RegValue {
             hive: Hive::LocalMachine,
@@ -747,18 +736,26 @@ fn reg_values(tweak: Tweak) -> &'static [RegValue] {
                 value: Sz("High"),
             },
         ],
+        // Directiva documentada "Let Windows apps run in the background" = Force deny (V21).
+        // Microsoft la da para Pro, Enterprise, Education e IoT: en Home no se ofrece.
         Tweak::UwpBackgroundOff => &[RegValue {
-            hive: HKCU,
-            path: r"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications",
-            name: "GlobalUserDisabled",
-            value: Dword(1),
+            hive: Hive::LocalMachine,
+            path: r"Software\Policies\Microsoft\Windows\AppPrivacy",
+            name: "LetAppsRunInBackground",
+            value: Dword(2),
         }],
     }
 }
 
 impl SystemTweaks for WindowsPlatform {
+    /// Todos, salvo `uwp-background-off` en las ediciones Home, donde su directiva no aplica
+    /// (o si no se puede leer la edición, R8).
     fn supported_tweaks(&self) -> Vec<Tweak> {
-        Tweak::ALL.to_vec()
+        let home = is_home_edition().unwrap_or(true);
+        Tweak::ALL
+            .into_iter()
+            .filter(|t| !(home && *t == Tweak::UwpBackgroundOff))
+            .collect()
     }
 
     /// Pide admin todo ajuste que escribe en HKLM.
@@ -769,6 +766,9 @@ impl SystemTweaks for WindowsPlatform {
     }
 
     fn read_tweak(&self, tweak: Tweak) -> Result<Vec<SavedValue>> {
+        if tweak == Tweak::VisualEffectsPerformance {
+            return effects::read();
+        }
         reg_values(tweak)
             .iter()
             .map(|v| {
@@ -784,6 +784,9 @@ impl SystemTweaks for WindowsPlatform {
         if let Some(h) = self.helper_for(tweak) {
             return h.apply_tweak(tweak);
         }
+        if tweak == Tweak::VisualEffectsPerformance {
+            return effects::apply();
+        }
         reg_values(tweak).iter().try_for_each(RegValue::apply)
     }
 
@@ -791,6 +794,9 @@ impl SystemTweaks for WindowsPlatform {
     fn restore_tweak(&self, tweak: Tweak, saved: &[SavedValue]) -> Result<()> {
         if let Some(h) = self.helper_for(tweak) {
             return h.restore_tweak(tweak, saved);
+        }
+        if tweak == Tweak::VisualEffectsPerformance {
+            return effects::restore(saved);
         }
         for v in reg_values(tweak) {
             let location = v.location();
@@ -806,6 +812,23 @@ impl SystemTweaks for WindowsPlatform {
         }
         Ok(())
     }
+}
+
+/// Windows Home (`PRODUCT_CORE*` de `GetProductInfo`), o `None` si no se puede leer.
+fn is_home_edition() -> Option<bool> {
+    use windows_sys::Win32::System::SystemInformation::{
+        GetProductInfo, PRODUCT_CORE, PRODUCT_CORE_COUNTRYSPECIFIC, PRODUCT_CORE_N,
+        PRODUCT_CORE_SINGLELANGUAGE,
+    };
+    let mut product = 0u32;
+    // SAFETY: `product` es un local vivo que recibe el tipo de producto.
+    if unsafe { GetProductInfo(10, 0, 0, 0, &mut product) } == 0 {
+        return None;
+    }
+    Some(matches!(
+        product,
+        PRODUCT_CORE | PRODUCT_CORE_N | PRODUCT_CORE_COUNTRYSPECIFIC | PRODUCT_CORE_SINGLELANGUAGE
+    ))
 }
 
 impl MemoryControl for WindowsPlatform {
@@ -1025,7 +1048,11 @@ mod tests {
     #[test]
     fn read_tweak_reports_every_value_it_touches() {
         let w = WindowsPlatform::new();
-        for t in w.supported_tweaks() {
+        for t in w
+            .supported_tweaks()
+            .into_iter()
+            .filter(|t| *t != Tweak::VisualEffectsPerformance)
+        {
             let saved = w.read_tweak(t).unwrap();
             let expected: Vec<String> = reg_values(t).iter().map(RegValue::location).collect();
             let got: Vec<String> = saved.into_iter().map(|s| s.location).collect();
@@ -1056,6 +1083,7 @@ mod tests {
             admin,
             [
                 Tweak::GameDvrPolicyOff,
+                Tweak::UwpBackgroundOff,
                 Tweak::SchedulerForegroundBoost,
                 Tweak::PowerThrottlingOff,
                 Tweak::MmcssGames
