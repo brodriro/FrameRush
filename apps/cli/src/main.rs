@@ -820,12 +820,14 @@ fn sensor_providers() -> Vec<Box<dyn framerush_sensors::SensorProvider>> {
         }
         Err(e) => println!("{e}"),
     }
+    #[cfg(target_os = "linux")]
+    providers.push(Box::new(framerush_sensors::Hwmon::new()));
     providers
 }
 
 fn print_sensors(sensors: &[framerush_sensors::Sensor]) {
     if sensors.is_empty() {
-        println!("No hay sensores disponibles todavía (CPU y ventiladores llegan con M2).");
+        println!("No se encontró ningún sensor de CPU, GPU ni ventiladores.");
     }
     for s in sensors {
         println!("{s}");
