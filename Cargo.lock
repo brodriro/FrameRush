@@ -1049,6 +1049,13 @@ name = "framerush-gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "framerush-core",
+ "framerush-device",
+ "framerush-platform",
+ "framerush-rules",
+ "framerush-sensors",
+ "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
 ]

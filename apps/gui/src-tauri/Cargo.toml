@@ -15,7 +15,16 @@ tauri-build.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+framerush-core.workspace = true
+framerush-device.workspace = true
+framerush-platform.workspace = true
+framerush-rules.workspace = true
+framerush-sensors.workspace = true
+serde.workspace = true
 tauri.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true
