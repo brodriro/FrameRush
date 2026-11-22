@@ -49,6 +49,15 @@ pub struct GameBoost {
     pub persistent_priority: bool,
 }
 
+/// Archivo que el adaptador del juego quiere dejar así (`crates/games`, It5.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameFileWrite {
+    pub path: std::path::PathBuf,
+    pub content: String,
+    /// `game-config-lock`: de solo lectura para que el juego no lo revierta.
+    pub read_only: bool,
+}
+
 /// Qué aplicar: las filas que el usuario dejó marcadas, los ajustes persistentes marcados y,
 /// opcionalmente, la prioridad del juego.
 #[derive(Debug, Clone, Default)]
@@ -66,6 +75,8 @@ pub struct ApplyRequest<'a> {
     pub custom_power_plan: Option<PowerPlan>,
     /// Frecuencias que se ponen durante la sesión, una por monitor.
     pub refresh_rates: Vec<RefreshRate>,
+    /// Config del juego que escribe su adaptador (persistente).
+    pub game_files: Vec<GameFileWrite>,
 }
 
 /// Resultado de una acción.
@@ -142,6 +153,7 @@ pub fn describe(change: &Change) -> String {
         Change::HighPerformanceGpu { exe } => {
             format!("GPU de alto rendimiento: {}", exe.display())
         }
+        Change::GameFile { path, .. } => format!("config del juego: {}", path.display()),
         Change::PowerPlan { applied, .. } => format!("plan de energía «{}»", applied.name),
         Change::RefreshRate {
             display, applied, ..
@@ -280,7 +292,52 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 self.apply_game_exe(&mut journal, batch, g, exe, &mut report)?;
             }
         }
+        for file in &request.game_files {
+            self.write_game_file(&mut journal, batch, file, &mut report)?;
+        }
         Ok(report)
+    }
+
+    /// Un archivo del juego con backup único: si ya se escribió en esta sesión, el original es
+    /// el de la primera vez, no el que dejamos.
+    fn write_game_file(
+        &self,
+        journal: &mut Journal,
+        batch: u64,
+        file: &GameFileWrite,
+        report: &mut Report,
+    ) -> Result<(), EngineError> {
+        let original = journal.entries.iter().find_map(|e| match &e.change {
+            Change::GameFile {
+                path,
+                previous,
+                was_read_only,
+                ..
+            } if *path == file.path && e.status == EntryStatus::Done => {
+                Some((previous.clone(), *was_read_only))
+            }
+            _ => None,
+        });
+        let (previous, was_read_only) = match original {
+            Some(o) => o,
+            None => match self.platform.read_game_file(&file.path) {
+                Ok(Some((text, read_only))) => (Some(text), read_only),
+                Ok(None) => (None, false),
+                Err(e) => {
+                    let what = format!("leer {}", file.path.display());
+                    report.push(what, Outcome::Failed(e));
+                    return Ok(());
+                }
+            },
+        };
+        let change = Change::GameFile {
+            path: file.path.clone(),
+            previous,
+            was_read_only,
+            content: file.content.clone(),
+            read_only: file.read_only,
+        };
+        self.run(journal, batch, change, report)
     }
 
     /// Ajustes persistentes de un exe del juego.
@@ -750,6 +807,12 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::RefreshRate {
                 display, applied, ..
             } => self.platform.set_refresh_rate(display, *applied),
+            Change::GameFile {
+                path,
+                content,
+                read_only,
+                ..
+            } => self.platform.write_game_file(path, content, *read_only),
             // Lo crea `set_custom_power_plan`; aquí solo se puede activar uno ya creado.
             Change::CustomPowerPlan { created, .. } => match created {
                 Some(plan) => self.platform.set_active_power_plan(&plan.id),
@@ -820,6 +883,15 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::StopService { name } => self.platform.start_service(name),
             Change::Tweak { tweak, previous } => self.platform.restore_tweak(*tweak, previous),
             Change::FullscreenOptimizationsOff { exe } => self.platform.clear_compat_flags(exe),
+            Change::GameFile {
+                path,
+                previous,
+                was_read_only,
+                ..
+            } => match previous {
+                Some(text) => self.platform.write_game_file(path, text, *was_read_only),
+                None => self.platform.remove_game_file(path),
+            },
             Change::PersistentPriority { exe, previous } => {
                 self.platform.restore_persistent_priority(exe, previous)
             }
@@ -900,6 +972,20 @@ fn already_applied(journal: &Journal, change: &Change) -> bool {
             ) => a == b && x == y,
             // Hay un solo plan propio por sesión.
             (Change::CustomPowerPlan { .. }, Change::CustomPowerPlan { .. }) => true,
+            (
+                Change::GameFile {
+                    path: a,
+                    content: x,
+                    read_only: r,
+                    ..
+                },
+                Change::GameFile {
+                    path: b,
+                    content: y,
+                    read_only: s,
+                    ..
+                },
+            ) => a == b && x == y && r == s,
             _ => false,
         })
 }
@@ -928,6 +1014,7 @@ mod tests {
         CapabilitySet, DisplayControl, GameTuning, PowerControl, ProcessControl, ProcessInfo,
         ServiceControl, ServiceState,
     };
+    use std::path::PathBuf;
     use std::sync::Mutex;
 
     /// Journal en memoria; con `fail_saves` simula un disco que no se puede escribir.
@@ -987,6 +1074,7 @@ mod tests {
             power_plan: None,
             custom_power_plan: None,
             refresh_rates: vec![],
+            game_files: vec![],
             items: items.iter().collect(),
             tweaks: vec![],
             game: None,
@@ -999,6 +1087,7 @@ mod tests {
             power_plan: None,
             custom_power_plan: None,
             refresh_rates: vec![],
+            game_files: vec![],
             items: vec![],
             tweaks: vec![],
             game: Some(GameBoost {
@@ -1123,6 +1212,74 @@ mod tests {
             .filter(|e| matches!(e.change, Change::FullscreenOptimizationsOff { .. }))
             .count();
         assert_eq!(fso, 2, "game.exe y helper.exe");
+    }
+
+    fn files(writes: &[(&str, &str, bool)]) -> ApplyRequest<'static> {
+        ApplyRequest {
+            game_files: writes
+                .iter()
+                .map(|(path, content, read_only)| GameFileWrite {
+                    path: PathBuf::from(path),
+                    content: (*content).into(),
+                    read_only: *read_only,
+                })
+                .collect(),
+            ..ApplyRequest::default()
+        }
+    }
+
+    /// La config del juego se escribe, reaplicar otra no pierde la original y Restaurar la
+    /// devuelve con su atributo; un archivo que no existía se borra. Es persistente: el
+    /// watchdog no la toca.
+    #[test]
+    fn game_files_round_trip_keeps_the_original() {
+        let m = MockPlatform::new(4);
+        m.put_game_file("/cfg/video.txt", "original", false);
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        let req = files(&[
+            ("/cfg/video.txt", "tuned", true),
+            ("/cfg/own.cfg", "fps_max 0", false),
+        ]);
+        assert_eq!(engine.apply(&req).unwrap().failed(), 0);
+        assert_eq!(
+            m.game_file(Path::new("/cfg/video.txt")),
+            Some(("tuned".into(), true))
+        );
+        assert_eq!(
+            m.game_file(Path::new("/cfg/own.cfg")),
+            Some(("fps_max 0".into(), false))
+        );
+
+        // Igual: ya aplicado. Distinto: se escribe, pero el original sigue siendo el primero.
+        let again = engine.apply(&req).unwrap();
+        assert!(
+            again
+                .lines
+                .iter()
+                .all(|l| matches!(l.outcome, Outcome::Skipped(_)))
+        );
+        engine
+            .apply(&files(&[("/cfg/video.txt", "retuned", false)]))
+            .unwrap();
+        assert_eq!(
+            m.game_file(Path::new("/cfg/video.txt")),
+            Some(("retuned".into(), false))
+        );
+
+        engine.revert_session().unwrap();
+        assert_eq!(
+            m.game_file(Path::new("/cfg/video.txt")),
+            Some(("retuned".into(), false))
+        );
+
+        let report = engine.revert_all().unwrap();
+        assert_eq!(report.failed(), 0, "{report:?}");
+        assert_eq!(
+            m.game_file(Path::new("/cfg/video.txt")),
+            Some(("original".into(), false))
+        );
+        assert_eq!(m.game_file(Path::new("/cfg/own.cfg")), None);
     }
 
     /// Afinidad del juego: se aplica, reaplicar otra no pierde la original, y revertir la

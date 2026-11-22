@@ -12,8 +12,8 @@ mod rule;
 mod watchdog;
 
 pub use engine::{
-    ApplyRequest, CUSTOM_POWER_PLAN_NAME, Engine, EngineError, GameBoost, LOWERED_PRIORITY,
-    Outcome, RefreshRate, Report, ReportLine, StatusLine, describe, status_lines,
+    ApplyRequest, CUSTOM_POWER_PLAN_NAME, Engine, EngineError, GameBoost, GameFileWrite,
+    LOWERED_PRIORITY, Outcome, RefreshRate, Report, ReportLine, StatusLine, describe, status_lines,
 };
 pub use journal::{Change, Entry, EntryStatus, FileStore, Journal, JournalError, JournalStore};
 pub use model::{Action, Category, Level, ParseError, Risk, Scope};

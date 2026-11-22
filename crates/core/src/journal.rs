@@ -80,6 +80,17 @@ pub enum Change {
         previous: u32,
         applied: u32,
     },
+    /// Archivo de configuración del juego escrito por su adaptador (It5.1): `cs2_video.txt`,
+    /// el cfg propio… `previous` es el contenido de antes de la primera vez (`None`: no
+    /// existía) y `was_read_only` su atributo; los dos son backup único. Al revertir se vuelve a
+    /// escribir `previous` o se borra el archivo.
+    GameFile {
+        path: PathBuf,
+        previous: Option<String>,
+        was_read_only: bool,
+        content: String,
+        read_only: bool,
+    },
 }
 
 impl Change {
@@ -102,7 +113,8 @@ impl Change {
             Change::Tweak { tweak, .. } => crate::tweak_scope(*tweak),
             Change::FullscreenOptimizationsOff { .. }
             | Change::HighPerformanceGpu { .. }
-            | Change::PersistentPriority { .. } => Scope::Persistent,
+            | Change::PersistentPriority { .. }
+            | Change::GameFile { .. } => Scope::Persistent,
         }
     }
 
@@ -120,7 +132,8 @@ impl Change {
             | Change::PersistentPriority { .. }
             | Change::PowerPlan { .. }
             | Change::CustomPowerPlan { .. }
-            | Change::RefreshRate { .. } => None,
+            | Change::RefreshRate { .. }
+            | Change::GameFile { .. } => None,
         }
     }
 }

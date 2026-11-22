@@ -867,6 +867,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             high_performance_gpu: args.game.gpu_alto,
             persistent_priority: persistent == Some(Mark::On),
         }),
+        game_files: vec![],
     };
     let report = run(Op::Apply(Box::new(request)))?;
     print_report(&report);
