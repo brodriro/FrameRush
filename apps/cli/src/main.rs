@@ -28,7 +28,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use framerush_core::{
     ApplyRequest, CUSTOM_POWER_PLAN_NAME, Change, EntryStatus, FileStore, GameBoost, JournalStore,
     Level, MemoryOp, Outcome, Plan, PlanItem, PlanOptions, RefreshRate, Report, Scope, Snapshot,
-    Subject, defaults, is_protected, persistent_priority_default, plan, status_lines, tweak_scope,
+    Subject, defaults, is_protected, persistent_priority_default, plan, status_lines,
+    tweak_requires_reboot, tweak_scope,
 };
 use framerush_device::{CoreKind, DeviceProfile};
 use framerush_platform::{
@@ -125,6 +126,10 @@ struct ApplyArgs {
     exclude: Vec<String>,
     #[command(flatten)]
     game: GameArgs,
+    /// Confirma `vbs-hvci-off` (Extremo): baja la seguridad de Windows y, hasta restaurarlo,
+    /// dejan de funcionar WSL2, Docker, Hyper-V, Windows Sandbox y los emuladores con WHPX.
+    #[arg(long)]
+    confirm_compat: bool,
     /// Confirma que se apliquen los cambios.
     #[arg(long)]
     yes: bool,
@@ -974,7 +979,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     print_refresh(level, &device, &level_refresh(level, &device, &[]));
     print_power(&level_power(level, &device, &[]), &device);
     let checked: Vec<&PlanItem> = plan.checked().collect();
-    print_plan(&plan, &checked, &plan.tweaks, &plan.memory);
+    print_plan(&plan, &checked, &plan.tweaks, &plan.memory, &device);
     Ok(())
 }
 
@@ -991,6 +996,7 @@ fn select<'a>(plan: &'a Plan, include: &[String], exclude: &[String]) -> Result<
                 .iter()
                 .chain(&plan.optional_tweaks)
                 .chain(&plan.locked_tweaks)
+                .chain(plan.blocked_tweaks.iter().map(|(t, _)| t))
                 .any(|t| t.id() == id)
             || plan
                 .memory
@@ -1014,6 +1020,13 @@ fn select<'a>(plan: &'a Plan, include: &[String], exclude: &[String]) -> Result<
         .find(|t| include.iter().any(|id| id == t.id()))
     {
         bail!("el ajuste `{}` requiere admin: usa --admin", t.id());
+    }
+    if let Some((t, why)) = plan
+        .blocked_tweaks
+        .iter()
+        .find(|(t, _)| include.iter().any(|id| id == t.id()))
+    {
+        bail!("el ajuste `{}` está bloqueado: {why}", t.id());
     }
     if let Some(m) = plan
         .locked_memory
@@ -1100,6 +1113,12 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     if args.game.game_priority == GamePriority::Realtime && !args.game.confirm_realtime {
         bail!("Tiempo real puede congelar el equipo: confírmalo con --confirm-realtime");
     }
+    if args.yes && tweaks.contains(&Tweak::VbsHvciOff) && !args.confirm_compat {
+        bail!(
+            "`vbs-hvci-off` baja la seguridad de Windows y, hasta restaurarlo, deja sin: {}.              Confírmalo con --confirm-compat o quítalo con --exclude vbs-hvci-off",
+            compat_list(&device)
+        );
+    }
     if !args.yes {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
         print_device(&device);
@@ -1108,7 +1127,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         print_defender(&defender, args.admin);
         print_refresh(level, &device, &refresh);
         print_power(&power, &device);
-        print_plan(&plan, &checked, &tweaks, &memory);
+        print_plan(&plan, &checked, &tweaks, &memory, &device);
         println!("\nRevisa las filas y repite con --yes para aplicarlas.");
         return Ok(());
     }
@@ -1640,7 +1659,13 @@ fn notify_open_session() {
     }
 }
 
-fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak], memory_ops: &[MemoryOp]) {
+fn print_plan(
+    plan: &Plan,
+    checked: &[&PlanItem],
+    tweaks: &[Tweak],
+    memory_ops: &[MemoryOp],
+    device: &DeviceProfile,
+) {
     if !plan.game_tuning_allowed() {
         println!(
             "Anticheat en ejecución: {}. Al juego solo se le toca la prioridad; \
@@ -1662,7 +1687,10 @@ fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak], memory_ops: 
         plan.items.len(),
         mib(memory)
     );
-    if !(plan.tweaks.is_empty() && plan.optional_tweaks.is_empty() && plan.locked_tweaks.is_empty())
+    if !(plan.tweaks.is_empty()
+        && plan.optional_tweaks.is_empty()
+        && plan.locked_tweaks.is_empty()
+        && plan.blocked_tweaks.is_empty())
     {
         println!(
             "\nAjustes del sistema (sesión: vuelve al cerrar el juego; persistente: solo `revert`):"
@@ -1673,6 +1701,20 @@ fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak], memory_ops: 
         }
         for t in &plan.locked_tweaks {
             println!("[ ] {:<28} {} · requiere admin", t.id(), scope_name(*t));
+        }
+        for (t, why) in &plan.blocked_tweaks {
+            println!("[ ] {:<28} bloqueado: {why}", t.id());
+        }
+        if plan
+            .tweaks
+            .iter()
+            .chain(&plan.optional_tweaks)
+            .any(|t| *t == Tweak::VbsHvciOff)
+        {
+            println!(
+                "    vbs-hvci-off: con --yes pide --confirm-compat; deja sin {}",
+                compat_list(device)
+            );
         }
     }
     if !(plan.memory.is_empty() && plan.locked_memory.is_empty()) {
@@ -1688,9 +1730,19 @@ fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak], memory_ops: 
 }
 
 fn scope_name(tweak: Tweak) -> &'static str {
-    match tweak_scope(tweak) {
-        Scope::Session => "sesión",
-        Scope::Persistent => "persistente",
+    match (tweak_scope(tweak), tweak_requires_reboot(tweak)) {
+        (Scope::Session, _) => "sesión",
+        (Scope::Persistent, false) => "persistente",
+        (Scope::Persistent, true) => "persistente · requiere reinicio",
+    }
+}
+
+/// `compat-warning` (PLAN.md V6): lo instalado que deja de funcionar sin el hipervisor.
+fn compat_list(device: &DeviceProfile) -> String {
+    if device.virtualization.is_empty() {
+        "nada de lo detectado (WSL2, Docker, Hyper-V, Sandbox ni emuladores con WHPX)".into()
+    } else {
+        device.virtualization.join(", ")
     }
 }
 
@@ -1745,6 +1797,20 @@ fn print_report(report: &Report) {
 mod tests {
     use super::*;
     use framerush_platform::{StartTime, Target};
+
+    #[test]
+    fn reboot_and_compat_are_spelled_out() {
+        assert_eq!(
+            scope_name(Tweak::VbsHvciOff),
+            "persistente · requiere reinicio"
+        );
+        assert_eq!(scope_name(Tweak::GameDvrOff), "persistente");
+        let mut device = DeviceProfile::undetected(framerush_platform::Os::Windows);
+        device.virtualization = vec!["WSL2".into(), "Docker Desktop".into()];
+        assert_eq!(compat_list(&device), "WSL2, Docker Desktop");
+        device.virtualization.clear();
+        assert!(compat_list(&device).starts_with("nada de lo detectado"));
+    }
 
     fn proc(pid: u32, name: &str) -> ProcessInfo {
         ProcessInfo {
