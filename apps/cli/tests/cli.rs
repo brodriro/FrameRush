@@ -441,3 +441,35 @@ fn adapter_options_are_opt_in_and_need_a_steam_game() {
     assert!(!dir.join("session.json").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `--defender-exclusions` es opt-in y necesita un juego de Steam instalado y Defender activo;
+/// en el dry-run solo se muestra.
+#[test]
+fn defender_exclusions_are_opt_in_and_need_a_steam_game() {
+    let dir = temp_dir("defender");
+    let apps = dir.join("steamapps");
+    std::fs::create_dir_all(apps.join("common/Half-Life")).unwrap();
+    std::fs::write(
+        apps.join("appmanifest_70.acf"),
+        "\"AppState\"\n{\n\t\"appid\"\t\t\"70\"\n\t\"name\"\t\t\"Half-Life\"\n\t\"installdir\"\t\t\"Half-Life\"\n}\n",
+    )
+    .unwrap();
+
+    let (ok, stdout) = framerush_in(&dir, &["plan"]);
+    assert!(ok, "{stdout}");
+    assert!(!stdout.contains("Exclusiones de Defender"), "{stdout}");
+    // Sin juego de Steam (o sin Defender activo) es un error, nunca un aplicar a medias.
+    assert!(!framerush_in(&dir, &["plan", "--defender-exclusions"]).0);
+    assert!(!framerush_in(&dir, &["plan", "--appid", "999", "--defender-exclusions"]).0);
+
+    let (ok, stdout) = framerush_in(&dir, &["plan", "--appid", "70", "--defender-exclusions"]);
+    // Sin Defender activo (p. ej. Linux en la CI) es un error; con él, solo la carpeta (el juego
+    // no está en marcha) y con candado sin --admin.
+    if ok {
+        assert!(stdout.contains("Exclusiones de Defender"), "{stdout}");
+        assert!(stdout.contains("Half-Life"), "{stdout}");
+        assert!(stdout.contains("requiere --admin"), "{stdout}");
+    }
+    assert!(!dir.join("session.json").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}

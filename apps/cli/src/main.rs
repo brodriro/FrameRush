@@ -32,7 +32,8 @@ use framerush_core::{
 };
 use framerush_device::{CoreKind, DeviceProfile};
 use framerush_platform::{
-    Os, PowerPlan, Priority, ProcessInfo, SavedData, SavedValue, Tweak, scan_processes,
+    DefenderExclusion, Os, PowerPlan, Priority, ProcessInfo, SavedData, SavedValue, Tweak,
+    scan_processes,
 };
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
@@ -175,6 +176,11 @@ struct GameArgs {
     /// monitor principal. Va a la config del juego (no cambia el escritorio).
     #[arg(long, value_name = "ANCHOxALTO")]
     resolution: Option<String>,
+    /// `defender-exclusions` (opt-in, persistente, pide `--admin`): excluye de Microsoft
+    /// Defender la carpeta del juego de Steam (`--appid` o el abierto) y sus exes en marcha.
+    /// Solo con Defender como antivirus activo; nunca se desactiva Defender.
+    #[arg(long)]
+    defender_exclusions: bool,
 }
 
 impl GameArgs {
@@ -415,8 +421,10 @@ fn adapter_plan(
     device: &DeviceProfile,
 ) -> Result<Option<AdapterPlan>> {
     if !args.wants_adapter() {
-        if args.appid.is_some() {
-            bail!("--appid solo sirve con --tune, --lock, --fps-cap, --bench o --resolution");
+        if args.appid.is_some() && !args.defender_exclusions {
+            bail!(
+                "--appid solo sirve con --tune, --lock, --fps-cap, --bench, --resolution o                  --defender-exclusions"
+            );
         }
         return Ok(None);
     }
@@ -503,6 +511,70 @@ fn game_resolution(spec: &str, device: &DeviceProfile) -> Result<(u32, u32)> {
         );
     }
     Ok((width, height))
+}
+
+/// `--defender-exclusions`: la carpeta del juego de Steam y los exes en marcha que hay dentro.
+fn defender_plan(
+    args: &GameArgs,
+    game: Option<&Game>,
+    device: &DeviceProfile,
+) -> Result<Vec<DefenderExclusion>> {
+    if !args.defender_exclusions {
+        return Ok(vec![]);
+    }
+    if device.defender_active != Some(true) {
+        bail!("--defender-exclusions: Microsoft Defender no es el antivirus activo");
+    }
+    let Some(appid) = args.appid.or_else(|| game.and_then(|g| g.appid)) else {
+        bail!(
+            "--defender-exclusions necesita un juego de Steam: indica --appid              (`framerush steam` los lista) o abre el juego desde Steam"
+        );
+    };
+    let Some(root) = framerush_steam::locate().context("no se pudo buscar Steam")? else {
+        bail!("Steam no está instalado");
+    };
+    let found = framerush_steam::installed_apps(&root).context("no se pudo leer Steam")?;
+    let Some(app) = found.apps.into_iter().find(|a| a.appid == appid) else {
+        bail!("el juego {appid} no está instalado en Steam");
+    };
+    // Windows no distingue mayúsculas en las rutas; Steam y el SO pueden escribirlas distinto.
+    let dir = format!("{}\\", app.dir.to_string_lossy().to_lowercase());
+    let mut exes: Vec<PathBuf> = game
+        .filter(|g| g.appid == Some(appid))
+        .map(|g| {
+            g.processes
+                .iter()
+                .map(|p| p.target.exe_path.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    exes.retain(|e| e.to_string_lossy().to_lowercase().starts_with(&dir));
+    exes.sort();
+    exes.dedup();
+    Ok(std::iter::once(DefenderExclusion::Path(app.dir))
+        .chain(exes.into_iter().map(DefenderExclusion::Process))
+        .collect())
+}
+
+fn print_defender(exclusions: &[DefenderExclusion], admin: bool) {
+    if exclusions.is_empty() {
+        return;
+    }
+    let lock = if admin { "" } else { " · requiere --admin" };
+    println!("Exclusiones de Defender (persistentes, las quita `revert`{lock}):");
+    for e in exclusions {
+        match e {
+            DefenderExclusion::Path(p) => println!("  carpeta  {}", p.display()),
+            DefenderExclusion::Process(p) => println!("  proceso  {}", p.display()),
+        }
+    }
+    if !exclusions
+        .iter()
+        .any(|e| matches!(e, DefenderExclusion::Process(_)))
+    {
+        println!("  (el juego no está en marcha: solo se excluye su carpeta)");
+    }
+    println!();
 }
 
 fn print_adapter(adapter: Option<&AdapterPlan>, args: &GameArgs) {
@@ -875,6 +947,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     let affinity = game_affinity(args, &plan, &device)?;
     check_gpu_preference(args, &device)?;
     let adapter = adapter_plan(args, game.as_ref(), &device)?;
+    let defender = defender_plan(args, game.as_ref(), &device)?;
     println!("Plan para el nivel {level} (dry-run: no se toca nada)");
     print_device(&device);
     print_game(
@@ -884,6 +957,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
         affinity.as_deref(),
     );
     print_adapter(adapter.as_ref(), args);
+    print_defender(&defender, admin);
     print_refresh(level, &device, &level_refresh(level, &device, &[]));
     print_power(&level_power(level, &device, &[]), &device);
     let checked: Vec<&PlanItem> = plan.checked().collect();
@@ -966,6 +1040,10 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     let affinity = game_affinity(&args.game, &plan, &device)?;
     check_gpu_preference(&args.game, &device)?;
     let adapter = adapter_plan(&args.game, game.as_ref(), &device)?;
+    let defender = defender_plan(&args.game, game.as_ref(), &device)?;
+    if !defender.is_empty() && !args.admin && args.yes {
+        bail!("--defender-exclusions requiere admin: usa --admin");
+    }
     let persistent = persistent_mark(level, args.admin, &args.game, game.is_some(), &args.exclude);
     if args.include.iter().any(|id| id == PERSISTENT_PRIORITY) {
         match persistent {
@@ -1010,6 +1088,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         print_device(&device);
         print_game(game.as_ref(), &args.game, persistent, affinity.as_deref());
         print_adapter(adapter.as_ref(), &args.game);
+        print_defender(&defender, args.admin);
         print_refresh(level, &device, &refresh);
         print_power(&power, &device);
         print_plan(&plan, &checked, &tweaks, &memory);
@@ -1024,6 +1103,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         && !power.custom_checked
         && refresh.is_empty()
         && adapter.as_ref().is_none_or(|a| a.plan.writes.is_empty())
+        && defender.is_empty()
     {
         println!("No hay filas ni ajustes marcados ni juego: no se toca nada.");
         return Ok(());
@@ -1045,7 +1125,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             persistent_priority: persistent == Some(Mark::On),
         }),
         game_files: adapter.map(|a| a.plan.writes).unwrap_or_default(),
-        defender_exclusions: vec![],
+        defender_exclusions: defender,
     };
     let report = run(Op::Apply(Box::new(request)))?;
     print_report(&report);
@@ -1370,6 +1450,7 @@ fn run(op: Op<'_>) -> Result<Report> {
         Op::Apply(request) => {
             request.tweaks.iter().any(|t| admin(*t))
                 || !request.memory.is_empty()
+                || !request.defender_exclusions.is_empty()
                 || request.game.as_ref().is_some_and(|g| g.persistent_priority)
                 || request.items.iter().any(|i| match &i.subject {
                     Subject::Processes(ps) => ps.iter().any(|p| p.own != Some(true)),
@@ -1390,7 +1471,9 @@ fn run(op: Op<'_>) -> Result<Report> {
                 .collect();
             pending.iter().any(|c| match c {
                 Change::Tweak { tweak, .. } => admin(*tweak),
-                Change::PersistentPriority { .. } | Change::StopService { .. } => true,
+                Change::PersistentPriority { .. }
+                | Change::StopService { .. }
+                | Change::DefenderExclusion { .. } => true,
                 _ => false,
             }) || foreign(pending.iter().filter_map(|c| c.target()))?
         }
