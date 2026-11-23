@@ -30,7 +30,22 @@ fn main() -> Result<()> {
         !framerush_core::is_protected(&path)
             && !name.is_some_and(|n| framerush_core::is_protected(&n))
     };
-    framerush_platform::serve_helper(&args.pipe, args.parent, &args.sid, may_touch)?;
+    // Servicios: solo los que detiene alguna regla (lista blanca, PLAN.md It2.1).
+    let may_stop_service = |name: &str| {
+        framerush_rules::embedded().is_ok_and(|rules| {
+            rules.iter().any(|r| {
+                r.action == framerush_core::Action::StopService
+                    && r.matches_service(framerush_platform::Os::Windows, name)
+            })
+        })
+    };
+    framerush_platform::serve_helper(
+        &args.pipe,
+        args.parent,
+        &args.sid,
+        may_touch,
+        may_stop_service,
+    )?;
     Ok(())
 }
 

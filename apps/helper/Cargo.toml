@@ -17,6 +17,7 @@ clap.workspace = true
 [target.'cfg(windows)'.dependencies]
 framerush-core.workspace = true
 framerush-platform.workspace = true
+framerush-rules.workspace = true
 
 [lints]
 workspace = true

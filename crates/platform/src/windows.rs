@@ -651,11 +651,11 @@ impl ServiceControl for WindowsPlatform {
     }
 
     fn stop_service(&self, name: &str) -> Result<()> {
-        service::stop_service(name)
+        self.or_helper(service::stop_service(name), |h| h.stop_service(name))
     }
 
     fn start_service(&self, name: &str) -> Result<()> {
-        service::start_service(name)
+        self.or_helper(service::start_service(name), |h| h.start_service(name))
     }
 }
 

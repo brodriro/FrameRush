@@ -1087,6 +1087,7 @@ dependencies = [
  "clap",
  "framerush-core",
  "framerush-platform",
+ "framerush-rules",
 ]
 
 [[package]]

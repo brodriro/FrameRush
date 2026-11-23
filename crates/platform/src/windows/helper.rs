@@ -17,7 +17,7 @@
 use super::AcerQuery;
 use crate::{
     GameTuning, MemoryControl, PlatformError, Priority, ProcessControl, Result, SavedValue,
-    SystemTweaks, Target, Tweak,
+    ServiceControl, SystemTweaks, Target, Tweak,
 };
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -75,6 +75,9 @@ enum Request {
     /// Lectura de los sensores del EC de Acer (solo lectura: `AcerQuery` no admite otras
     /// órdenes).
     Acer(AcerQuery),
+    /// Servicios de las reglas: detener durante la sesión y volver a arrancar.
+    StopService(String),
+    StartService(String),
 }
 
 /// Qué procesos puede tocar el helper.
@@ -84,6 +87,8 @@ struct Policy {
     parent: u32,
     /// Guardia de quien lanza el helper: `false` para un proceso protegido.
     may_touch: fn(&Target) -> bool,
+    /// Lista blanca de servicios que se pueden detener y arrancar (los de las reglas).
+    may_stop_service: fn(&str) -> bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,6 +205,14 @@ impl Helper {
         self.call(&Request::Kill(target.clone()))
     }
 
+    pub(super) fn stop_service(&self, name: &str) -> Result<()> {
+        self.call(&Request::StopService(name.to_owned()))
+    }
+
+    pub(super) fn start_service(&self, name: &str) -> Result<()> {
+        self.call(&Request::StartService(name.to_owned()))
+    }
+
     pub(super) fn acer(&self, query: AcerQuery) -> Result<u64> {
         match self.exchange(&Request::Acer(query))? {
             Response::Value(v) => Ok(v),
@@ -256,10 +269,15 @@ pub fn serve_helper(
     parent: u32,
     sid: &str,
     may_touch: fn(&Target) -> bool,
+    may_stop_service: fn(&str) -> bool,
 ) -> Result<()> {
     exit_with(parent)?;
     let file = listen(pipe, parent, sid)?;
-    let policy = Policy { parent, may_touch };
+    let policy = Policy {
+        parent,
+        may_touch,
+        may_stop_service,
+    };
     serve(file, &super::WindowsPlatform::new(), policy)
 }
 
@@ -476,7 +494,10 @@ fn exit_with(parent: u32) -> Result<()> {
 }
 
 /// Atiende peticiones hasta que el cliente cierre la conexión.
-fn serve<S: Read + Write, T: ProcessControl + SystemTweaks + GameTuning + MemoryControl>(
+fn serve<
+    S: Read + Write,
+    T: ProcessControl + SystemTweaks + GameTuning + MemoryControl + ServiceControl,
+>(
     conn: S,
     platform: &T,
     policy: Policy,
@@ -506,7 +527,7 @@ fn serve<S: Read + Write, T: ProcessControl + SystemTweaks + GameTuning + Memory
 }
 
 /// Solo atiende lo que pide admin: lo demás lo hace el cliente sin elevar.
-fn handle<T: ProcessControl + SystemTweaks + GameTuning + MemoryControl>(
+fn handle<T: ProcessControl + SystemTweaks + GameTuning + MemoryControl + ServiceControl>(
     request: Request,
     platform: &T,
     policy: Policy,
@@ -518,6 +539,11 @@ fn handle<T: ProcessControl + SystemTweaks + GameTuning + MemoryControl>(
         if !(policy.may_touch)(t) {
             return Response::Failed(format!("{} está protegido", t.exe_path.display()));
         }
+    }
+    if let Request::StopService(name) | Request::StartService(name) = &request
+        && !(policy.may_stop_service)(name)
+    {
+        return Response::Failed(format!("el servicio {name} no está en las reglas"));
     }
     if let Request::ApplyTweak(t) | Request::RestoreTweak(t, _) = &request
         && !platform.tweak_requires_admin(*t)
@@ -543,6 +569,8 @@ fn handle<T: ProcessControl + SystemTweaks + GameTuning + MemoryControl>(
         Request::Suspend(target) => platform.suspend(&target),
         Request::Resume(target) => platform.resume(&target),
         Request::Kill(target) => platform.kill(&target),
+        Request::StopService(name) => platform.stop_service(&name),
+        Request::StartService(name) => platform.start_service(&name),
     };
     match result {
         Ok(()) => Response::Done,
@@ -563,6 +591,7 @@ mod tests {
         Policy {
             parent,
             may_touch: |t| !t.exe_path.ends_with("protected.exe"),
+            may_stop_service: |name| name.eq_ignore_ascii_case("WSearch"),
         }
     }
 
@@ -631,6 +660,25 @@ mod tests {
         let me_target = mock.spawn(me, "cli.exe", r"C:\cli.exe", 1);
         assert!(client.kill(&me_target).is_err());
         client.kill(&other).unwrap();
+
+        // Servicios: solo los de la lista blanca.
+        mock.add_service("WSearch", crate::ServiceState::Running);
+        mock.add_service("RpcSs", crate::ServiceState::Running);
+        client.stop_service("WSearch").unwrap();
+        assert_eq!(
+            mock.service_state("WSearch").unwrap(),
+            Some(crate::ServiceState::Stopped)
+        );
+        client.start_service("WSearch").unwrap();
+        assert_eq!(
+            mock.service_state("WSearch").unwrap(),
+            Some(crate::ServiceState::Running)
+        );
+        assert!(client.stop_service("RpcSs").is_err());
+        assert_eq!(
+            mock.service_state("RpcSs").unwrap(),
+            Some(crate::ServiceState::Running)
+        );
 
         let user = mock.read_tweak(Tweak::GameDvrOff).unwrap();
         assert!(client.apply_tweak(Tweak::GameDvrOff).is_err());
