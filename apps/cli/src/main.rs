@@ -171,12 +171,16 @@ struct GameArgs {
     /// `bench-cfg`: cfg de medición del juego.
     #[arg(long)]
     bench: bool,
+    /// `resolution-override`: resolución del juego, como `1280x960`; tiene que ser un modo del
+    /// monitor principal. Va a la config del juego (no cambia el escritorio).
+    #[arg(long, value_name = "ANCHOxALTO")]
+    resolution: Option<String>,
 }
 
 impl GameArgs {
     /// Alguna opción del adaptador del juego (todas opt-in en la CLI).
     fn wants_adapter(&self) -> bool {
-        self.tune || self.lock || self.fps_cap.is_some() || self.bench
+        self.tune || self.lock || self.fps_cap.is_some() || self.bench || self.resolution.is_some()
     }
 }
 
@@ -413,13 +417,18 @@ fn adapter_plan(
 ) -> Result<Option<AdapterPlan>> {
     if !args.wants_adapter() {
         if args.appid.is_some() {
-            bail!("--appid solo sirve con --tune, --lock, --fps-cap o --bench");
+            bail!("--appid solo sirve con --tune, --lock, --fps-cap, --bench o --resolution");
         }
         return Ok(None);
     }
-    if args.lock && !args.tune {
-        bail!("--lock bloquea la config que deja --tune: úsalo junto a --tune");
+    if args.lock && !args.tune && args.resolution.is_none() {
+        bail!("--lock bloquea la config de vídeo: úsalo junto a --tune o --resolution");
     }
+    let resolution = args
+        .resolution
+        .as_deref()
+        .map(|spec| game_resolution(spec, device))
+        .transpose()?;
     let Some(appid) = args.appid.or_else(|| game.and_then(|g| g.appid)) else {
         bail!(
             "las opciones del adaptador necesitan un juego de Steam: indica --appid \
@@ -428,7 +437,7 @@ fn adapter_plan(
     };
     let Some(adapter) = framerush_games::adapter(appid) else {
         bail!(
-            "el juego {appid} no tiene adaptador: --tune, --lock, --fps-cap y --bench no aplican"
+            "el juego {appid} no tiene adaptador: --tune, --lock, --fps-cap, --bench y --resolution no aplican"
         );
     };
     let Some(root) = framerush_steam::locate().context("no se pudo buscar Steam")? else {
@@ -447,7 +456,7 @@ fn adapter_plan(
         lock: args.lock,
         fps_cap: args.fps_cap,
         bench: args.bench,
-        resolution: None,
+        resolution,
     };
     let mut plan = adapter
         .plan(install, device, options)
@@ -468,6 +477,35 @@ fn adapter_plan(
     }))
 }
 
+/// `--resolution 1280x960`: tiene que ser un modo del monitor principal (R8).
+fn game_resolution(spec: &str, device: &DeviceProfile) -> Result<(u32, u32)> {
+    let parsed = spec
+        .split_once(['x', 'X'])
+        .and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?)));
+    let Some((width, height)) = parsed else {
+        bail!("--resolution: usa ANCHOxALTO, por ejemplo 1280x960");
+    };
+    let Some(display) = device
+        .displays
+        .iter()
+        .find(|d| d.primary)
+        .or(device.displays.first())
+    else {
+        bail!("no se detectaron los modos del monitor: --resolution no se puede comprobar");
+    };
+    if !display
+        .modes
+        .iter()
+        .any(|m| m.width == width && m.height == height)
+    {
+        bail!(
+            "el monitor principal ({}) no admite {width}x{height}",
+            display.id
+        );
+    }
+    Ok((width, height))
+}
+
 fn print_adapter(adapter: Option<&AdapterPlan>, args: &GameArgs) {
     let Some(a) = adapter else {
         return;
@@ -476,6 +514,9 @@ fn print_adapter(adapter: Option<&AdapterPlan>, args: &GameArgs) {
     for w in &a.plan.writes {
         let lock = if w.read_only { " · solo lectura" } else { "" };
         println!("[x] {}{lock}", w.path.display());
+    }
+    if let Some(r) = &args.resolution {
+        println!("    Resolución del juego: {r} (en su config; el escritorio no cambia)");
     }
     if args.fps_cap.is_some() {
         println!("    Opciones de lanzamiento en Steam: {}", a.launch_options);

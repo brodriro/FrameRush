@@ -420,6 +420,9 @@ fn adapter_options_are_opt_in_and_need_a_steam_game() {
     assert!(!framerush_in(&dir, &["plan", "--appid", "730", "--lock"]).0);
     assert!(!framerush_in(&dir, &["plan", "--bench"]).0);
     assert!(!framerush_in(&dir, &["plan", "--appid", "70", "--bench"]).0);
+    // --resolution: con formato ANCHOxALTO y un modo real del monitor principal.
+    assert!(!framerush_in(&dir, &["plan", "--appid", "730", "--resolution", "grande"]).0);
+    assert!(!framerush_in(&dir, &["plan", "--appid", "730", "--resolution", "7x3"]).0);
 
     let (ok, stdout) = framerush_in(
         &dir,
