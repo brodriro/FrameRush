@@ -1601,7 +1601,12 @@ mod tests {
         assert!(m.is_suspended(&b).unwrap());
         assert_eq!(m.priority(&game).unwrap(), Priority::High);
         let journal = store.load().unwrap();
-        assert!(journal.entries.iter().all(|e| e.change.target() != Some(&a)));
+        assert!(
+            journal
+                .entries
+                .iter()
+                .all(|e| e.change.target() != Some(&a))
+        );
 
         engine.apply(&request(&items[..1])).unwrap();
         assert!(m.is_suspended(&a).unwrap());
