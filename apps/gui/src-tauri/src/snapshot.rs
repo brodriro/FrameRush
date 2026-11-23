@@ -27,6 +27,8 @@ pub struct View {
     processes: Vec<Row>,
     /// Anticheats en ejecución (`plan.anticheats`): cuentan para cualquier juego (It1.3).
     anticheats: Vec<String>,
+    /// P10: por qué `vbs-hvci-off` está bloqueado (Vanguard o FACEIT), o `null`.
+    vbs_blocked: Option<String>,
     /// Procesos protegidos que están en ejecución ahora mismo.
     protected: Vec<Protected>,
     /// Fuentes de sensores consultadas, encontraran algo o no (para explicar lo que falta).
@@ -319,6 +321,12 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
         available,
         processes: rows(&plans, &session_targets()),
         anticheats: plans[0].anticheats.clone(),
+        vbs_blocked: plans.iter().find_map(|p| {
+            p.blocked_tweaks
+                .iter()
+                .find(|(t, _)| *t == framerush_platform::Tweak::VbsHvciOff)
+                .map(|(_, why)| why.clone())
+        }),
         protected: protected(&processes),
         sensor_sources: sensors.checked,
         sensor_needs_admin: sensors.needs_admin,

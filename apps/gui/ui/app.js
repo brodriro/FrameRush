@@ -110,12 +110,12 @@
       if (s && !ok && !s.dataset.o) s.dataset.o = s.textContent;
       if (s && s.dataset.o) s.textContent = ok ? s.dataset.o : 'Disponible desde ' + LV_NAME[LV[r.dataset.min]];
     });
-    const ac = antiCheat();
+    const ac = antiCheat(), vb = D.vbsBlocked;
     if (ac) setCheck('vbs-hvci-off', false); /* P10: desmarcado con cualquier anticheat */
     DS('vbs-hvci-off').forEach(x => {
-      if (ac && ac.mayRequireVbs) x.disabled = true; /* P10, V7: bloqueado con Vanguard/FACEIT */
+      if (vb) { x.disabled = true; x.checked = false; } /* P10, V7: bloqueado con Vanguard/FACEIT (core) */
       const n = x.closest('.row')?.querySelector('.vbsAc');
-      if (n) { n.hidden = !(ac && ac.mayRequireVbs); n.textContent = n.hidden ? '' : `Bloqueado: ${ac.name} puede exigir VBS/HVCI`; }
+      if (n) { n.hidden = !vb; n.textContent = vb ? `Bloqueado: ${vb}` : ''; }
     });
     if (priorityValue() === 'normal') setCheck('game-priority-persistent', false); /* P1 */
     renderPower(); render(); caps();
@@ -258,7 +258,7 @@
     /* compat-warning: solo lo que está instalado */
     $$('.cwList').forEach(e => {
       e.innerHTML = (d.virtualization.length ? d.virtualization.map(v => `<li>${esc(v)} (instalado)</li>`).join('') : '<li>No se detectó ningún programa instalado que use el hipervisor</li>') +
-        (ac && ac.mayRequireVbs ? `<li>${esc(ac.name)} puede exigir VBS/HVCI: la opción queda bloqueada</li>` : ac ? `<li>Anticheat ${esc(ac.name)}: comprueba que no exija VBS</li>` : '');
+        (D.vbsBlocked ? `<li>${esc(D.vbsBlocked)}: la opción queda bloqueada</li>` : ac ? `<li>Anticheat ${esc(ac.name)}: comprueba que no exija VBS</li>` : '');
     });
 
     setText('.affNote', d.affinityWarning ? `⚠ Con ${cpu.cores.length} núcleos físicos, reservar núcleos a mano suele empeorar el rendimiento` : 'Opcional en todos los niveles');
@@ -330,6 +330,10 @@
     if (r.notWired.length) msg += ` Aún no funciona en esta versión, no se aplicó: ${r.notWired.join(', ')}.`;
     if (r.notes.length) msg += ` No aplicado: ${r.notes.join('; ')}.`;
     if (!r.lines.length && !r.notWired.length && !r.needsAdmin.length && !r.notes.length) msg = `${verb}: no había nada que hacer.`;
+    /* reboot-required: lo que el backend marca como «surte efecto al reiniciar» (SETTINGS §4.7). */
+    r.lines.filter(l => l.outcome === 'done' && l.what.includes('reiniciar'))
+      .forEach(l => Object.keys(REBOOT).filter(id => l.what.includes(id) && !S.rb.includes(id)).forEach(id => S.rb.push(id)));
+    rebootBanner();
     toast(msg);
   }
 
