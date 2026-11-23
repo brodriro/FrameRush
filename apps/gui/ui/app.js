@@ -56,7 +56,7 @@
   /* ---------- Estado ---------- */
   let D = null;           /* snapshot del backend */
   let stopStreams = [];
-  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, profiles: {}, base: null, rt: false, alerted: false, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '' };
+  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, profiles: {}, base: null, rt: false, alerted: false, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '', protOpen: false };
 
   const game = () => D.games[S.game] || { ...NO_GAME, exe: D.gamesNote || '' };
   /* Anticheat del juego o, sin adaptador, los que están en ejecución (cuentan para cualquier juego, It1.3). */
@@ -128,8 +128,14 @@
       ix.forEach(i => { h += rowHTML(D.processes[i], i); });
     }
     if (!D.processes.length) h += '<p class="note">Ninguna regla coincide con lo que está en ejecución ahora mismo.</p>';
-    h += '<div class="cat">Protegidos en ejecución (inmutables)<span class="sp"></span></div>';
-    D.protected.forEach(l => { h += lockHTML({ name: l.name, why: PROT_WHY[l.reason] || l.reason }); });
+    /* Solo informativos: plegados por defecto; se recuerda si el usuario los abre (render rehace la lista). */
+    const prot = $('#rows details.prot');
+    if (prot) S.protOpen = prot.open;
+    if (D.protected.length) {
+      h += `<details class="adv prot" ${S.protOpen ? 'open' : ''}><summary>Protegidos en ejecución (inmutables) · ${D.protected.length}</summary>`;
+      D.protected.forEach(l => { h += lockHTML({ name: l.name, why: PROT_WHY[l.reason] || l.reason }); });
+      h += '</details>';
+    }
     $('#rows').innerHTML = h;
     D.steamRecs.forEach((s, i) => { if (s.dependsOn != null && !S.stc[s.dependsOn]) S.stc[i] = false; });
     $('#steamList').innerHTML = D.steamRecs.map((s, i) => stHTML(s, i, s.dependsOn != null && !S.stc[s.dependsOn])).join('');
