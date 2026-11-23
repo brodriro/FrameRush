@@ -41,8 +41,14 @@ pub trait PowerControl {
     fn set_active_power_plan(&self, id: &str) -> Result<()>;
     /// `custom-power-plan`: duplica `base_id` como un plan nuevo llamado `name` con los valores
     /// de CA del plan propio (procesador al 100 %, core parking off, turbo agresivo, PCIe ASPM y
-    /// suspensión selectiva de USB off). Los de CC no se tocan. No lo activa.
-    fn create_custom_power_plan(&self, base_id: &str, name: &str) -> Result<PowerPlan>;
+    /// suspensión selectiva de USB off). Con `cpu_idle_off` (`cstates-off`) también desactiva la
+    /// inactividad del procesador (C-states). Los de CC no se tocan. No lo activa.
+    fn create_custom_power_plan(
+        &self,
+        base_id: &str,
+        name: &str,
+        cpu_idle_off: bool,
+    ) -> Result<PowerPlan>;
     /// Borra un plan que no es el activo.
     fn delete_power_plan(&self, id: &str) -> Result<()>;
 }

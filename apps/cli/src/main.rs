@@ -1111,6 +1111,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     let request = ApplyRequest {
         memory,
         custom_power_plan: power.custom_base.filter(|_| power.custom_checked),
+        cstates_off: false,
         refresh_rates: refresh,
         power_plan: power.plan,
         items: checked,

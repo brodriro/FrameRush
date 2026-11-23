@@ -674,8 +674,13 @@ impl PowerControl for WindowsPlatform {
         power::set_active_power_plan(id)
     }
 
-    fn create_custom_power_plan(&self, base_id: &str, name: &str) -> Result<PowerPlan> {
-        power::create_custom_power_plan(base_id, name)
+    fn create_custom_power_plan(
+        &self,
+        base_id: &str,
+        name: &str,
+        cpu_idle_off: bool,
+    ) -> Result<PowerPlan> {
+        power::create_custom_power_plan(base_id, name, cpu_idle_off)
     }
 
     fn delete_power_plan(&self, id: &str) -> Result<()> {

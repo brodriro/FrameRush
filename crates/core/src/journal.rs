@@ -72,6 +72,10 @@ pub enum Change {
         previous: PowerPlan,
         base: PowerPlan,
         created: Option<PowerPlan>,
+        /// `cstates-off`: el duplicado se creó con la inactividad del procesador desactivada.
+        /// Se va con el plan, sin reinicio.
+        #[serde(default)]
+        cpu_idle_off: bool,
     },
     /// `refresh-rate-max`: frecuencia de un monitor durante la sesión. `previous` es la de antes
     /// de la primera vez (backup único).

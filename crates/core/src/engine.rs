@@ -75,6 +75,9 @@ pub struct ApplyRequest<'a> {
     /// activa ese duplicado ([`crate::defaults::custom_power_plan_base`]). Si está, sustituye a
     /// `power_plan`.
     pub custom_power_plan: Option<PowerPlan>,
+    /// `cstates-off`: el plan propio se crea con los C-states desactivados (solo CA). Sin
+    /// `custom_power_plan` no hace nada.
+    pub cstates_off: bool,
     /// Frecuencias que se ponen durante la sesión, una por monitor.
     pub refresh_rates: Vec<RefreshRate>,
     /// Config del juego que escribe su adaptador (persistente).
@@ -169,9 +172,16 @@ pub fn describe(change: &Change) -> String {
         Change::RefreshRate {
             display, applied, ..
         } => format!("refresco de {display} a {applied} Hz"),
-        Change::CustomPowerPlan { base, .. } => {
+        Change::CustomPowerPlan {
+            base, cpu_idle_off, ..
+        } => {
+            let idle = if *cpu_idle_off {
+                ", C-states desactivados"
+            } else {
+                ""
+            };
             format!(
-                "plan de energía «{CUSTOM_POWER_PLAN_NAME}» (sobre «{}»)",
+                "plan de energía «{CUSTOM_POWER_PLAN_NAME}» (sobre «{}»{idle})",
                 base.name
             )
         }
@@ -236,7 +246,13 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             self.free_memory(*op, request.game.as_ref(), &mut report);
         }
         if let Some(base) = &request.custom_power_plan {
-            self.set_custom_power_plan(&mut journal, batch, base, &mut report)?;
+            self.set_custom_power_plan(
+                &mut journal,
+                batch,
+                base,
+                request.cstates_off,
+                &mut report,
+            )?;
         } else if let Some(plan) = &request.power_plan {
             self.set_power_plan(&mut journal, batch, plan, &mut report)?;
         }
@@ -609,12 +625,14 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         journal: &mut Journal,
         batch: u64,
         base: &PowerPlan,
+        cpu_idle_off: bool,
         report: &mut Report,
     ) -> Result<(), EngineError> {
         let change = Change::CustomPowerPlan {
             previous: base.clone(),
             base: base.clone(),
             created: None,
+            cpu_idle_off,
         };
         let what = describe(&change);
         if already_applied(journal, &change) {
@@ -639,15 +657,17 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 previous,
                 base: base.clone(),
                 created: None,
+                cpu_idle_off,
             },
             status: EntryStatus::Pending,
         });
         self.store.save(journal)?;
 
-        let result = match self
-            .platform
-            .create_custom_power_plan(&base.id, CUSTOM_POWER_PLAN_NAME)
-        {
+        let result = match self.platform.create_custom_power_plan(
+            &base.id,
+            CUSTOM_POWER_PLAN_NAME,
+            cpu_idle_off,
+        ) {
             Err(e) => Err(e),
             Ok(plan) => {
                 if let Change::CustomPowerPlan { created, .. } = &mut journal.entries[index].change
@@ -1138,6 +1158,7 @@ mod tests {
             memory: vec![],
             power_plan: None,
             custom_power_plan: None,
+            cstates_off: false,
             refresh_rates: vec![],
             game_files: vec![],
             defender_exclusions: vec![],
@@ -1152,6 +1173,7 @@ mod tests {
             memory: vec![],
             power_plan: None,
             custom_power_plan: None,
+            cstates_off: false,
             refresh_rates: vec![],
             game_files: vec![],
             defender_exclusions: vec![],
@@ -1507,12 +1529,15 @@ mod tests {
             custom_power_plan: Some(plan("b")),
             // P3: el plan propio sustituye al del nivel.
             power_plan: Some(plan("c")),
+            cstates_off: true,
             ..Default::default()
         };
 
-        engine.apply(&req).unwrap();
+        let report = engine.apply(&req).unwrap();
+        assert!(report.lines[0].what.contains("C-states"), "{report:?}");
         let active = m.active_power_plan().unwrap();
         assert_eq!(active.name, CUSTOM_POWER_PLAN_NAME);
+        assert!(m.cpu_idle_off(&active.id));
         let journal = store.load().unwrap();
         assert_eq!(journal.entries.len(), 1);
         assert_eq!(journal.entries[0].status, EntryStatus::Done);
@@ -1555,7 +1580,7 @@ mod tests {
         };
         m.set_power_plans(vec![base.clone()], "a");
         // La app se cerró después de crear el plan y antes de anotar su id.
-        m.create_custom_power_plan("a", CUSTOM_POWER_PLAN_NAME)
+        m.create_custom_power_plan("a", CUSTOM_POWER_PLAN_NAME, false)
             .unwrap();
         let store = MemoryStore::default();
         let mut journal = Journal::default();
@@ -1566,6 +1591,7 @@ mod tests {
                 previous: base.clone(),
                 base,
                 created: None,
+                cpu_idle_off: false,
             },
             status: EntryStatus::Pending,
         });

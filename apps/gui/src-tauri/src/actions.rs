@@ -388,6 +388,7 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         memory,
         power_plan,
         custom_power_plan,
+        cstates_off: false,
         refresh_rates,
         game_files,
         defender_exclusions,

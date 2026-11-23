@@ -18,7 +18,7 @@ use windows_sys::Win32::System::Power::{
 use windows_sys::Win32::System::SystemServices::{
     GUID_PCIEXPRESS_ASPM_POLICY, GUID_PCIEXPRESS_SETTINGS_SUBGROUP,
     GUID_PROCESSOR_CORE_PARKING_MAX_CORES, GUID_PROCESSOR_CORE_PARKING_MIN_CORES,
-    GUID_PROCESSOR_PERF_BOOST_MODE, GUID_PROCESSOR_SETTINGS_SUBGROUP,
+    GUID_PROCESSOR_IDLE_DISABLE, GUID_PROCESSOR_PERF_BOOST_MODE, GUID_PROCESSOR_SETTINGS_SUBGROUP,
     GUID_PROCESSOR_THROTTLE_MAXIMUM, GUID_PROCESSOR_THROTTLE_MINIMUM,
 };
 use windows_sys::core::GUID;
@@ -207,8 +207,22 @@ const CUSTOM_AC_VALUES: &[(GUID, GUID, u32)] = &[
     (USB_SETTINGS_SUBGROUP, USB_SELECTIVE_SUSPEND, 0),
 ];
 
+/// `cstates-off`: "Inactividad de procesador deshabilitada" (`IDLEDISABLE`, 1 = deshabilitar la
+/// inactividad, es decir, los C-states). Microsoft lo usa así en "How to set up a Device for
+/// Real-Time Performance" (learn.microsoft.com/windows/iot/iot-enterprise/soft-real-time),
+/// sin reinicio; la referencia CS2-FPS-Boost lo pone en su plan propio en Extremo.
+const CPU_IDLE_OFF: (GUID, GUID, u32) = (
+    GUID_PROCESSOR_SETTINGS_SUBGROUP,
+    GUID_PROCESSOR_IDLE_DISABLE,
+    1,
+);
+
 /// Si falla a medias, borra el duplicado para no dejar un plan a medio configurar.
-pub(super) fn create_custom_power_plan(base_id: &str, name: &str) -> Result<PowerPlan> {
+pub(super) fn create_custom_power_plan(
+    base_id: &str,
+    name: &str,
+    cpu_idle_off: bool,
+) -> Result<PowerPlan> {
     let base = existing_guid(base_id)?;
     let mut raw: *mut GUID = null_mut();
     // SAFETY: `raw` es nulo, así que el sistema reserva el GUID nuevo (se libera abajo).
@@ -220,7 +234,7 @@ pub(super) fn create_custom_power_plan(base_id: &str, name: &str) -> Result<Powe
     let guid = unsafe { *raw };
     // SAFETY: el GUID se reservó con LocalAlloc (documentado) y ya se copió.
     unsafe { LocalFree(raw.cast()) };
-    if let Err(e) = configure(&guid, name) {
+    if let Err(e) = configure(&guid, name, cpu_idle_off) {
         // SAFETY: `guid` es un local vivo durante la llamada.
         unsafe { PowerDeleteScheme(null_mut(), &guid) };
         return Err(e);
@@ -228,7 +242,7 @@ pub(super) fn create_custom_power_plan(base_id: &str, name: &str) -> Result<Powe
     plan(&guid)
 }
 
-fn configure(guid: &GUID, name: &str) -> Result<()> {
+fn configure(guid: &GUID, name: &str, cpu_idle_off: bool) -> Result<()> {
     let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
     // El tamaño incluye el NUL final (documentado) y va en bytes, como en PowerReadFriendlyName.
     let bytes = (wide.len() * size_of::<u16>()) as u32;
@@ -247,7 +261,8 @@ fn configure(guid: &GUID, name: &str) -> Result<()> {
         },
         "nombrar el plan de energía",
     )?;
-    for (subgroup, setting, value) in CUSTOM_AC_VALUES {
+    let idle = cpu_idle_off.then_some(&CPU_IDLE_OFF);
+    for (subgroup, setting, value) in CUSTOM_AC_VALUES.iter().chain(idle) {
         // SAFETY: los tres GUID viven durante la llamada.
         check(
             unsafe { PowerWriteACValueIndex(null_mut(), guid, subgroup, setting, *value) },
@@ -317,8 +332,23 @@ mod tests {
     fn custom_plan_is_created_and_deleted() {
         let _lock = system_plans();
         let active = active_power_plan().unwrap();
-        let custom = create_custom_power_plan(&active.id, "FrameRush test").unwrap();
+        let custom = create_custom_power_plan(&active.id, "FrameRush test", true).unwrap();
         assert_eq!(custom.name, "FrameRush test");
+        let (subgroup, setting, value) = CPU_IDLE_OFF;
+        let guid = parse_guid(&custom.id).unwrap();
+        let mut read = u32::MAX;
+        // SAFETY: los GUID y `read` viven durante la llamada.
+        let code = unsafe {
+            windows_sys::Win32::System::Power::PowerReadACValueIndex(
+                null_mut(),
+                &guid,
+                &subgroup,
+                &setting,
+                &mut read,
+            )
+        };
+        assert_eq!(code, ERROR_SUCCESS);
+        assert_eq!(read, value, "C-states desactivados en CA");
         assert!(power_plans().unwrap().contains(&custom));
         assert!(delete_power_plan(&active.id).is_err(), "no borra el activo");
         delete_power_plan(&custom.id).unwrap();

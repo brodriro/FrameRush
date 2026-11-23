@@ -32,6 +32,8 @@ struct State {
     active_plan: Option<String>,
     /// Planes creados con `create_custom_power_plan` (para darles ids distintos).
     created_plans: u32,
+    /// Planes propios creados con los C-states desactivados (`cpu_idle_off`).
+    idle_off_plans: Vec<String>,
     displays: Vec<Display>,
     cpu: Option<Cpu>,
     gpus: Vec<Gpu>,
@@ -138,6 +140,11 @@ impl MockPlatform {
         let mut s = self.lock();
         s.plans = plans;
         s.active_plan = Some(active_id.to_owned());
+    }
+
+    /// Si el plan `id` se creó con los C-states desactivados.
+    pub fn cpu_idle_off(&self, id: &str) -> bool {
+        self.lock().idle_off_plans.iter().any(|p| p == id)
     }
 
     /// Define el hardware que devuelve [`Inventory`].
@@ -373,7 +380,12 @@ impl PowerControl for MockPlatform {
         Ok(())
     }
 
-    fn create_custom_power_plan(&self, base_id: &str, name: &str) -> Result<PowerPlan> {
+    fn create_custom_power_plan(
+        &self,
+        base_id: &str,
+        name: &str,
+        cpu_idle_off: bool,
+    ) -> Result<PowerPlan> {
         self.require(|c| c.custom_power_plan, "plan de energía propio")?;
         let mut s = self.lock();
         if !s.plans.iter().any(|p| p.id == base_id) {
@@ -384,6 +396,9 @@ impl PowerControl for MockPlatform {
             id: format!("custom-{}", s.created_plans),
             name: name.to_owned(),
         };
+        if cpu_idle_off {
+            s.idle_off_plans.push(plan.id.clone());
+        }
         s.plans.push(plan.clone());
         Ok(plan)
     }
@@ -880,9 +895,10 @@ mod tests {
             name: "Plan a".into(),
         };
         m.set_power_plans(vec![base], "a");
-        assert!(m.create_custom_power_plan("z", "Max").is_err());
-        let custom = m.create_custom_power_plan("a", "Max").unwrap();
+        assert!(m.create_custom_power_plan("z", "Max", false).is_err());
+        let custom = m.create_custom_power_plan("a", "Max", true).unwrap();
         assert_eq!(custom.name, "Max");
+        assert!(m.cpu_idle_off(&custom.id));
         m.set_active_power_plan(&custom.id).unwrap();
         assert!(m.delete_power_plan(&custom.id).is_err());
         m.set_active_power_plan("a").unwrap();
