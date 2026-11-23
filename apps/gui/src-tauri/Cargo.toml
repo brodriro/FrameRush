@@ -17,6 +17,7 @@ tauri-build.workspace = true
 anyhow.workspace = true
 framerush-core.workspace = true
 framerush-device.workspace = true
+framerush-games.workspace = true
 framerush-platform.workspace = true
 framerush-rules.workspace = true
 framerush-sensors.workspace = true

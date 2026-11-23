@@ -5,7 +5,7 @@
 //! UI marca y aún no está conectado (juego, Turbo, ajustes sin backend) vuelve en `not_wired`
 //! para que la UI lo diga en vez de darlo por hecho.
 
-use crate::snapshot::{Inputs, data_dir, game_targets, inputs};
+use crate::snapshot::{Inputs, data_dir, game_targets, inputs, steam_install};
 use anyhow::{Context, Result};
 use framerush_core::{
     ApplyRequest, FileStore, GameBoost, Level, Outcome, PlanOptions, RefreshRate, Report, defaults,
@@ -21,6 +21,8 @@ const REFRESH_RATE_MAX: &str = "refresh-rate-max";
 /// Ajustes del exe del juego que llegan como ids de `settings`.
 const PERSISTENT_PRIORITY: &str = "game-priority-persistent";
 const FSO_OFF: &str = "fullscreen-optimizations-off";
+/// `game-config-lock` llega en `settings` (es del nivel); lo aplica el adaptador.
+const GAME_CONFIG_LOCK: &str = "game-config-lock";
 
 /// Lo que el usuario dejó marcado en la UI.
 #[derive(Debug, Deserialize)]
@@ -52,6 +54,20 @@ pub struct GameSelection {
     affinity: Option<Vec<usize>>,
     /// `gpu-preference = alto`.
     high_performance_gpu: bool,
+    /// Panel del adaptador (It5.1); `null` si el juego no tiene.
+    adapter: Option<AdapterSelection>,
+}
+
+/// Panel del adaptador del juego. `game-config-lock` va en `settings`.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdapterSelection {
+    /// `game-config-tune` (opt-in).
+    tune: bool,
+    /// `fps-cap`: 0 = sin tope.
+    fps_cap: u32,
+    /// `bench-cfg`.
+    bench: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -250,8 +266,32 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         }
     }
 
+    let game_files = match selection
+        .game
+        .as_ref()
+        .zip(selection.game.as_ref().and_then(|g| g.adapter))
+    {
+        Some((g, a)) => {
+            let options = framerush_games::GameOptions {
+                tune: a.tune,
+                lock: wanted(GAME_CONFIG_LOCK),
+                fps_cap: a.fps_cap,
+                bench: a.bench,
+            };
+            adapter_files(
+                g.appid,
+                &device,
+                options,
+                !game_targets.is_empty(),
+                &mut notes,
+            )?
+        }
+        None => vec![],
+    };
+
     let handled = |id: &str| {
         id == POWER_PLAN
+            || id == GAME_CONFIG_LOCK
             || id == CUSTOM_POWER_PLAN
             || id == REFRESH_RATE_MAX
             || id == FSO_OFF
@@ -275,7 +315,7 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         power_plan,
         custom_power_plan,
         refresh_rates,
-        game_files: vec![],
+        game_files,
     };
     let report = run(helper, Op::Apply(Box::new(request)))?;
     let mut out = outcomes(report, not_wired, needs_admin, notes)?;
@@ -284,6 +324,39 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         out.watch = game_targets;
     }
     Ok(out)
+}
+
+/// Lo que el adaptador del juego quiere escribir. Sin adaptador o sin Steam, nada.
+fn adapter_files(
+    appid: u32,
+    device: &framerush_device::DeviceProfile,
+    options: framerush_games::GameOptions,
+    running: bool,
+    notes: &mut Vec<String>,
+) -> Result<Vec<framerush_core::GameFileWrite>> {
+    let Some(adapter) = framerush_games::adapter(appid) else {
+        return Ok(vec![]);
+    };
+    let Some((root, app)) = steam_install(appid)? else {
+        notes.push(format!("{}: no está instalado en Steam", adapter.name()));
+        return Ok(vec![]);
+    };
+    let install = framerush_games::Install {
+        dir: &app.dir,
+        steam_root: &root,
+    };
+    let plan = adapter
+        .plan(install, device, options)
+        .with_context(|| format!("no se pudo leer la config de {}", adapter.name()))?;
+    notes.extend(plan.notes);
+    // El juego reescribe su config al salir (referencia CS2-FPS-Boost): sin bloqueo se pierde.
+    if running && options.tune && !options.lock {
+        notes.push(format!(
+            "{} está abierto: al cerrarse puede reescribir su config de vídeo (ciérralo antes o marca «Bloquear config»)",
+            adapter.name()
+        ));
+    }
+    Ok(plan.writes)
 }
 
 /// Watchdog: el juego se cerró y se deshace lo de sesión (lo persistente queda hasta

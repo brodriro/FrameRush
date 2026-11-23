@@ -378,12 +378,19 @@
     const cores = $$('[data-setting="cpu-affinity-cores"] input:checked').map(x => +x.id.replace('core', ''));
     const affOn = aff && aff.checked && !aff.disabled && shown(aff) && cores.length;
     const gpu = first('gpu-preference');
+    const on = id => { const x = first(id); return !!x && x.checked && !x.disabled && shown(x); };
     return {
       appid: g.appid,
       priority: priorityValue() || 'alta',
       realtimeConfirmed: S.rt,
       affinity: affOn ? cores : null,
       highPerformanceGpu: !!(gpu && !gpu.disabled && shown(gpu) && gpu.value === 'alto'),
+      /* Panel del adaptador (It5.1); game-config-lock va en settings con el nivel. */
+      adapter: g.adapter ? {
+        tune: on('game-config-tune'),
+        fpsCap: Math.max(0, Math.round(+(first('fps-cap')?.value || 0))),
+        bench: on('bench-cfg'),
+      } : null,
     };
   }
 
@@ -417,6 +424,17 @@
     caps();
     useProfile(e.appid, true);
     apply(false, `${p.name} iniciado, perfil aplicado`);
+  }
+
+  async function copyLaunchOptions() {
+    const a = game().adapter;
+    if (!a) return;
+    try {
+      await navigator.clipboard.writeText(a.launchOptions);
+      toast(`Copiado al portapapeles: ${a.launchOptions} (opciones de lanzamiento de ${game().name} en Steam).`);
+    } catch (err) {
+      toast(`No se pudo copiar (${err && err.message ? err.message : err}): ${a.launchOptions}`);
+    }
   }
 
   function launchGame() {
@@ -632,6 +650,7 @@
     }
     if (id === 'run-as-admin') elevate();
     if (id === 'profile-save') saveProfile();
+    if (id === 'launch-options-copy') copyLaunchOptions();
     if (id === 'export-diagnostics') toast(`Exportar el diagnóstico ${NOT_WIRED}`);
     if (id === 'always-on-top') { const on = el.getAttribute('aria-pressed') !== 'true'; el.setAttribute('aria-pressed', on); el.classList.toggle('on', on); api.win('always-on-top', on); }
   });

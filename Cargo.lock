@@ -1067,6 +1067,7 @@ dependencies = [
  "anyhow",
  "framerush-core",
  "framerush-device",
+ "framerush-games",
  "framerush-platform",
  "framerush-rules",
  "framerush-sensors",

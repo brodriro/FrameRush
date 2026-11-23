@@ -507,14 +507,79 @@ struct GameView {
     running: bool,
     /// Procesos bajo la carpeta del juego.
     pids: Vec<u32>,
+    /// Adaptador del juego (It5.1); sin él, sus ajustes se ocultan (SETTINGS.md §4.11).
+    adapter: Option<AdapterView>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdapterView {
+    name: &'static str,
+    /// Archivos de config que toca, de este equipo.
+    cfg: String,
+    bench: String,
+    launch_options: &'static str,
+}
+
+fn adapter_view(root: &std::path::Path, app: &framerush_steam::App) -> Option<AdapterView> {
+    let adapter = framerush_games::adapter(app.appid)?;
+    let files = adapter.config_files(framerush_games::Install {
+        dir: &app.dir,
+        steam_root: root,
+    });
+    // Un nombre por archivo; los que se repiten (uno por cuenta de Steam) con cuántos hay.
+    let mut names: Vec<(String, usize)> = vec![];
+    for f in &files {
+        let name = f
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        match names.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, count)) => *count += 1,
+            None => names.push((name, 1)),
+        }
+    }
+    let cfg = names
+        .iter()
+        .map(|(n, c)| {
+            if *c > 1 {
+                format!("{n} ×{c}")
+            } else {
+                n.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" · ");
+    Some(AdapterView {
+        name: adapter.name(),
+        cfg,
+        bench: format!("{} en la consola", adapter.bench_command()),
+        launch_options: adapter.launch_options(),
+    })
 }
 
 /// Juegos instalados en Steam, o `None` si Steam no está instalado.
 fn steam_apps() -> framerush_steam::Result<Option<Vec<framerush_steam::App>>> {
+    Ok(steam_library()?.map(|(_, apps)| apps))
+}
+
+/// Carpeta de Steam y sus juegos.
+fn steam_library() -> framerush_steam::Result<Option<(PathBuf, Vec<framerush_steam::App>)>> {
     let Some(root) = framerush_steam::locate()? else {
         return Ok(None);
     };
-    Ok(Some(framerush_steam::installed_apps(&root)?.apps))
+    let apps = framerush_steam::installed_apps(&root)?.apps;
+    Ok(Some((root, apps)))
+}
+
+/// Carpeta de Steam y el juego `appid`, para su adaptador.
+pub(crate) fn steam_install(appid: u32) -> Result<Option<(PathBuf, framerush_steam::App)>> {
+    let Some((root, apps)) = steam_library().context("no se pudo leer Steam")? else {
+        return Ok(None);
+    };
+    Ok(apps
+        .into_iter()
+        .find(|a| a.appid == appid)
+        .map(|app| (root, app)))
 }
 
 /// Procesos de la carpeta del juego, salvo los protegidos (su anticheat puede vivir ahí).
@@ -588,7 +653,7 @@ pub(crate) fn game_targets(appid: u32, processes: &[ProcessInfo]) -> Result<Vec<
 /// snapshot, así que aquí solo cuenta `RunningAppID`.
 fn steam_games(processes: &[ProcessInfo]) -> (Vec<GameView>, Option<String>) {
     let read = || -> framerush_steam::Result<Option<Vec<GameView>>> {
-        let Some(apps) = steam_apps()? else {
+        let Some((root, apps)) = steam_library()? else {
             return Ok(None);
         };
         let running = framerush_steam::running_app_id()?;
@@ -607,6 +672,7 @@ fn steam_games(processes: &[ProcessInfo]) -> (Vec<GameView>, Option<String>) {
                         .to_string(),
                     running: detected == Some(app.appid) || !procs.is_empty(),
                     pids: procs.iter().map(|p| p.target.pid).collect(),
+                    adapter: adapter_view(&root, app),
                 }
             })
             .collect();
