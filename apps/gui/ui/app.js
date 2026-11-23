@@ -435,6 +435,7 @@
   /* Watchdog (It1.4, P5): el juego se cerró y el backend revirtió lo de sesión. */
   function onGameExited(e) {
     S.watching = false;
+    if (D.games[S.game]) D.games[S.game].running = false;
     const resumedOnly = S.turbo && !first('auto-revert-on-exit')?.checked;
     S.turbo = false;
     if (e.error) toast(`Juego cerrado, pero no se pudieron deshacer los cambios: ${e.error}`);
@@ -490,13 +491,21 @@
     if (!g) { toast('Elige un juego de Steam en «Juego».'); return; }
     if (!api.inTauri) { toast('Jugar ahora solo funciona dentro de la app.'); return; }
     const dry = !!first('dry-run')?.checked;
-    if (g.running && !dry) { startTurbo(S.game); return; }
+    /* Se marca antes de lanzar: game-launched puede llegar antes de que vuelva la llamada. */
     S.turboPending = dry ? null : g.appid;
+    let running;
     try {
-      await api.launchGame(g.appid);
+      running = await api.launchGame(g.appid);
     } catch (err) {
       S.turboPending = null;
       toast(`No se pudo lanzar ${g.name}: ${err && err.message ? err.message : err}`);
+      return;
+    }
+    g.running = running;
+    if (running) {
+      S.turboPending = null;
+      if (dry) toast(`Simulación: ${g.name} ya está abierto; Turbo no pausaría nada en este modo.`);
+      else startTurbo(S.game);
       return;
     }
     toast(dry

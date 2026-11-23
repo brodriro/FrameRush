@@ -251,9 +251,10 @@ async fn undo(sensors: tauri::State<'_, Sensors>) -> Result<actions::Outcomes, S
     blocking(move || actions::undo(helper)).await
 }
 
-/// «Jugar ahora» (Turbo): pide a Steam que lance el juego `appid`.
+/// «Jugar ahora» (Turbo): pide a Steam que lance el juego `appid`, salvo que ya esté en marcha
+/// (`true`).
 #[tauri::command]
-async fn launch_game(appid: u32) -> Result<(), String> {
+async fn launch_game(appid: u32) -> Result<bool, String> {
     blocking(move || actions::launch_game(appid)).await
 }
 

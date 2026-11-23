@@ -55,7 +55,8 @@
      * { appid, pids }.
      */
     /*
-     * Turbo (It5.2): launchGame pide a Steam que lance el juego (steam://rungameid). El evento
+     * Turbo (It5.2): launchGame pide a Steam que lance el juego (steam://rungameid) y devuelve
+     * true si ya estaba en marcha (entonces no lo lanza). El evento
      * `turbo-rescan` llega en cada re-escaneo con { outcomes | null, error | null }.
      */
     launchGame(appid) { return T.core.invoke('launch_game', { appid }); },

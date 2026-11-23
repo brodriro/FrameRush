@@ -435,15 +435,27 @@ pub fn resume_frozen(helper: Option<Elevated>) -> Result<Outcomes> {
     outcomes(report, vec![], vec![], vec![])
 }
 
-/// «Jugar ahora»: pide a Steam que lance el juego. Turbo se aplica cuando arranca (la UI
-/// espera el evento `game-launched`).
+/// «Jugar ahora»: si el juego ya está en marcha devuelve `true` y no lo lanza (Turbo se aplica
+/// ya); si no, pide a Steam que lo lance y devuelve `false` (Turbo se aplica cuando arranca: la
+/// UI espera el evento `game-launched`). Se mira ahora, no con el dato del snapshot, que puede
+/// haberse quedado viejo.
+pub fn launch_game(appid: u32) -> Result<bool> {
+    let processes =
+        framerush_platform::scan_processes().context("no se pudo listar los procesos")?;
+    if !game_targets(appid, &processes)?.is_empty() {
+        return Ok(true);
+    }
+    steam_launch(appid)?;
+    Ok(false)
+}
+
 #[cfg(windows)]
-pub fn launch_game(appid: u32) -> Result<()> {
+fn steam_launch(appid: u32) -> Result<()> {
     framerush_platform::steam_launch(appid).context("no se pudo lanzar el juego desde Steam")
 }
 
 #[cfg(not(windows))]
-pub fn launch_game(_appid: u32) -> Result<()> {
+fn steam_launch(_appid: u32) -> Result<()> {
     anyhow::bail!("lanzar juegos de Steam solo está implementado en Windows por ahora")
 }
 
