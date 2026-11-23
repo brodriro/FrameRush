@@ -373,6 +373,7 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         custom_power_plan,
         refresh_rates,
         game_files,
+        defender_exclusions: vec![],
     };
     let report = run(helper, Op::Apply(Box::new(request)))?;
     let mut out = outcomes(report, not_wired, needs_admin, notes)?;

@@ -12,7 +12,9 @@
 use crate::journal::{Change, Entry, EntryStatus, Journal, JournalError, JournalStore};
 use crate::protected::is_protected;
 use crate::{Action, MemoryOp, PlanItem, Scope, Subject};
-use framerush_platform::{Platform, PlatformError, PowerPlan, Priority, Target, Tweak};
+use framerush_platform::{
+    DefenderExclusion, Platform, PlatformError, PowerPlan, Priority, Target, Tweak,
+};
 use std::path::Path;
 
 /// Nombre del plan de energía propio (`custom-power-plan`, PLAN.md P3).
@@ -77,6 +79,9 @@ pub struct ApplyRequest<'a> {
     pub refresh_rates: Vec<RefreshRate>,
     /// Config del juego que escribe su adaptador (persistente).
     pub game_files: Vec<GameFileWrite>,
+    /// `defender-exclusions` (It5.9, persistente): carpeta y exe del juego. Una que ya estaba
+    /// no se toca, ni al aplicar ni al restaurar.
+    pub defender_exclusions: Vec<DefenderExclusion>,
 }
 
 /// Resultado de una acción.
@@ -154,6 +159,12 @@ pub fn describe(change: &Change) -> String {
             format!("GPU de alto rendimiento: {}", exe.display())
         }
         Change::GameFile { path, .. } => format!("config del juego: {}", path.display()),
+        Change::DefenderExclusion { exclusion } => match exclusion {
+            DefenderExclusion::Path(p) => format!("exclusión de Defender: carpeta {}", p.display()),
+            DefenderExclusion::Process(p) => {
+                format!("exclusión de Defender: proceso {}", p.display())
+            }
+        },
         Change::PowerPlan { applied, .. } => format!("plan de energía «{}»", applied.name),
         Change::RefreshRate {
             display, applied, ..
@@ -295,7 +306,39 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         for file in &request.game_files {
             self.write_game_file(&mut journal, batch, file, &mut report)?;
         }
+        for exclusion in &request.defender_exclusions {
+            self.exclude_from_defender(&mut journal, batch, exclusion, &mut report)?;
+        }
         Ok(report)
+    }
+
+    /// Exclusión de Defender solo si no estaba: una del usuario no entra en el journal, así que
+    /// Restaurar no la quita.
+    fn exclude_from_defender(
+        &self,
+        journal: &mut Journal,
+        batch: u64,
+        exclusion: &DefenderExclusion,
+        report: &mut Report,
+    ) -> Result<(), EngineError> {
+        let change = Change::DefenderExclusion {
+            exclusion: exclusion.clone(),
+        };
+        if !already_applied(journal, &change) {
+            match self.platform.has_defender_exclusion(exclusion) {
+                Ok(false) => {}
+                Ok(true) => {
+                    let why = "ya estaba en Defender (no la puso FrameRush)".to_owned();
+                    report.push(describe(&change), Outcome::Skipped(why));
+                    return Ok(());
+                }
+                Err(e) => {
+                    report.push(describe(&change), Outcome::Failed(e));
+                    return Ok(());
+                }
+            }
+        }
+        self.run(journal, batch, change, report)
     }
 
     /// Un archivo del juego con backup único: si ya se escribió en esta sesión, el original es
@@ -815,6 +858,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             }
             Change::PersistentPriority { exe, .. } => self.platform.set_persistent_priority(exe),
             Change::HighPerformanceGpu { exe } => self.platform.prefer_high_performance_gpu(exe),
+            Change::DefenderExclusion { exclusion } => {
+                self.platform.add_defender_exclusion(exclusion)
+            }
             Change::PowerPlan { applied, .. } => self.platform.set_active_power_plan(&applied.id),
             Change::RefreshRate {
                 display, applied, ..
@@ -908,6 +954,9 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 self.platform.restore_persistent_priority(exe, previous)
             }
             Change::HighPerformanceGpu { exe } => self.platform.clear_gpu_preference(exe),
+            Change::DefenderExclusion { exclusion } => {
+                self.platform.remove_defender_exclusion(exclusion)
+            }
             Change::PowerPlan { previous, .. } => self.platform.set_active_power_plan(&previous.id),
             Change::RefreshRate {
                 display, previous, ..
@@ -967,6 +1016,10 @@ fn already_applied(journal: &Journal, change: &Change) -> bool {
             (Change::HighPerformanceGpu { exe: a }, Change::HighPerformanceGpu { exe: b }) => {
                 a == b
             }
+            (
+                Change::DefenderExclusion { exclusion: a },
+                Change::DefenderExclusion { exclusion: b },
+            ) => a == b,
             (Change::PowerPlan { applied: a, .. }, Change::PowerPlan { applied: b, .. }) => {
                 a.id == b.id
             }
@@ -1087,6 +1140,7 @@ mod tests {
             custom_power_plan: None,
             refresh_rates: vec![],
             game_files: vec![],
+            defender_exclusions: vec![],
             items: items.iter().collect(),
             tweaks: vec![],
             game: None,
@@ -1100,6 +1154,7 @@ mod tests {
             custom_power_plan: None,
             refresh_rates: vec![],
             game_files: vec![],
+            defender_exclusions: vec![],
             items: vec![],
             tweaks: vec![],
             game: Some(GameBoost {
@@ -1243,6 +1298,34 @@ mod tests {
     /// La config del juego se escribe, reaplicar otra no pierde la original y Restaurar la
     /// devuelve con su atributo; un archivo que no existía se borra. Es persistente: el
     /// watchdog no la toca.
+    /// `defender-exclusions`: se añade lo que falta y Restaurar lo quita; una exclusión que ya
+    /// tenía el usuario ni se registra ni se quita. Es persistente: el watchdog no la toca.
+    #[test]
+    fn defender_exclusions_leave_the_users_own() {
+        use framerush_platform::SecurityTweaks;
+        let m = MockPlatform::new(4);
+        let folder = DefenderExclusion::Path("/games/cs2".into());
+        let exe = DefenderExclusion::Process("/games/cs2/cs2.exe".into());
+        m.add_defender_exclusion(&folder).unwrap();
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        let req = ApplyRequest {
+            defender_exclusions: vec![folder.clone(), exe.clone()],
+            ..request(&[])
+        };
+        let report = engine.apply(&req).unwrap();
+        assert!(matches!(report.lines[0].outcome, Outcome::Skipped(_)));
+        assert_eq!(report.lines[1].outcome, Outcome::Done);
+        assert!(m.has_defender_exclusion(&exe).unwrap());
+
+        engine.revert_session().unwrap();
+        assert!(m.has_defender_exclusion(&exe).unwrap());
+        assert_eq!(engine.revert_all().unwrap().failed(), 0);
+        assert!(!m.has_defender_exclusion(&exe).unwrap());
+        assert!(m.has_defender_exclusion(&folder).unwrap());
+        assert!(!engine.has_open_session().unwrap());
+    }
+
     #[test]
     fn game_files_round_trip_keeps_the_original() {
         let m = MockPlatform::new(4);

@@ -1040,6 +1040,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             persistent_priority: persistent == Some(Mark::On),
         }),
         game_files: adapter.map(|a| a.plan.writes).unwrap_or_default(),
+        defender_exclusions: vec![],
     };
     let report = run(Op::Apply(Box::new(request)))?;
     print_report(&report);

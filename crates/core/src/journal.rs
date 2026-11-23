@@ -5,7 +5,7 @@
 //! "Restaurar sesión anterior".
 
 use crate::Scope;
-use framerush_platform::{PowerPlan, Priority, SavedValue, Target, Tweak};
+use framerush_platform::{DefenderExclusion, PowerPlan, Priority, SavedValue, Target, Tweak};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -91,6 +91,11 @@ pub enum Change {
         content: String,
         read_only: bool,
     },
+    /// `defender-exclusions` (It5.9): exclusión del juego añadida a Defender. Solo se aplica
+    /// si no estaba, así que deshacerlo es quitarla (como `HighPerformanceGpu`).
+    DefenderExclusion {
+        exclusion: DefenderExclusion,
+    },
 }
 
 impl Change {
@@ -114,7 +119,8 @@ impl Change {
             Change::FullscreenOptimizationsOff { .. }
             | Change::HighPerformanceGpu { .. }
             | Change::PersistentPriority { .. }
-            | Change::GameFile { .. } => Scope::Persistent,
+            | Change::GameFile { .. }
+            | Change::DefenderExclusion { .. } => Scope::Persistent,
         }
     }
 
@@ -133,7 +139,8 @@ impl Change {
             | Change::PowerPlan { .. }
             | Change::CustomPowerPlan { .. }
             | Change::RefreshRate { .. }
-            | Change::GameFile { .. } => None,
+            | Change::GameFile { .. }
+            | Change::DefenderExclusion { .. } => None,
         }
     }
 }
