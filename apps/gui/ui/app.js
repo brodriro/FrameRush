@@ -455,7 +455,7 @@
     if (i < 0) return; /* instalado después de abrir la app: no hay datos de él */
     Object.assign(D.games[i], { running: true, pids: e.pids });
     /* Lanzado con «Jugar ahora»: Turbo aplica el perfil una sola vez (P4). */
-    if (S.turboPending === e.appid) { S.turboPending = null; startTurbo(i); return; }
+    if (S.turboPending === e.appid) { const first = !S.turboRetried; S.turboPending = null; S.turboRetried = true; startTurbo(i, first); return; }
     const p = S.profiles[e.appid];
     if (!p || !first('profile-auto-apply')?.checked) {
       if (S.game === i) caps();
@@ -493,6 +493,7 @@
     const dry = !!first('dry-run')?.checked;
     /* Se marca antes de lanzar: game-launched puede llegar antes de que vuelva la llamada. */
     S.turboPending = dry ? null : g.appid;
+    S.turboRetried = false;
     let running;
     try {
       running = await api.launchGame(g.appid);
@@ -513,13 +514,19 @@
       : `Lanzando ${g.name} con Steam… Turbo se aplica en cuanto arranque.`);
   }
 
-  function startTurbo(i) {
+  /*
+   * retry: algunos juegos (CS2) arrancan un primer proceso que se cierra enseguida y luego el
+   * definitivo. Si al aplicar el juego ya no estaba (sin watchdog), Turbo queda pendiente para
+   * el siguiente arranque, una sola vez.
+   */
+  async function startTurbo(i, retry = false) {
     const g = D.games[i];
     S.game = i;
     DS('game-target').forEach(s => { s.value = String(i); });
     caps();
     if (S.profiles[g.appid]) useProfile(g.appid, true);
-    apply(false, `Turbo · ${g.name}`, true);
+    await apply(false, `Turbo · ${g.name}`, true);
+    if (!S.turbo && retry) S.turboPending = g.appid;
   }
 
   /* Re-escaneo de Turbo: solo avisa si congeló algo nuevo. */
