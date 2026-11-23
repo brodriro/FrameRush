@@ -16,8 +16,8 @@
 
 use super::AcerQuery;
 use crate::{
-    GameTuning, MemoryControl, PlatformError, Priority, ProcessControl, Result, SavedValue,
-    ServiceControl, SystemTweaks, Target, Tweak,
+    DefenderExclusion, GameTuning, MemoryControl, PlatformError, Priority, ProcessControl, Result,
+    SavedValue, SecurityTweaks, ServiceControl, SystemTweaks, Target, Tweak,
 };
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -78,6 +78,10 @@ enum Request {
     /// Servicios de las reglas: detener durante la sesión y volver a arrancar.
     StopService(String),
     StartService(String),
+    /// Exclusiones de Defender del juego (lista blanca: `may_exclude`).
+    HasDefenderExclusion(DefenderExclusion),
+    AddDefenderExclusion(DefenderExclusion),
+    RemoveDefenderExclusion(DefenderExclusion),
 }
 
 /// Qué procesos puede tocar el helper.
@@ -89,6 +93,8 @@ struct Policy {
     may_touch: fn(&Target) -> bool,
     /// Lista blanca de servicios que se pueden detener y arrancar (los de las reglas).
     may_stop_service: fn(&str) -> bool,
+    /// Lista blanca de exclusiones de Defender: solo carpetas y exes de juegos instalados.
+    may_exclude: fn(&DefenderExclusion) -> bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,6 +219,23 @@ impl Helper {
         self.call(&Request::StartService(name.to_owned()))
     }
 
+    pub(super) fn has_defender_exclusion(&self, exclusion: &DefenderExclusion) -> Result<bool> {
+        match self.exchange(&Request::HasDefenderExclusion(exclusion.clone()))? {
+            Response::Value(v) => Ok(v != 0),
+            other => Err(PlatformError::Os(format!(
+                "respuesta del helper: {other:?}"
+            ))),
+        }
+    }
+
+    pub(super) fn add_defender_exclusion(&self, exclusion: &DefenderExclusion) -> Result<()> {
+        self.call(&Request::AddDefenderExclusion(exclusion.clone()))
+    }
+
+    pub(super) fn remove_defender_exclusion(&self, exclusion: &DefenderExclusion) -> Result<()> {
+        self.call(&Request::RemoveDefenderExclusion(exclusion.clone()))
+    }
+
     pub(super) fn acer(&self, query: AcerQuery) -> Result<u64> {
         match self.exchange(&Request::Acer(query))? {
             Response::Value(v) => Ok(v),
@@ -270,6 +293,7 @@ pub fn serve_helper(
     sid: &str,
     may_touch: fn(&Target) -> bool,
     may_stop_service: fn(&str) -> bool,
+    may_exclude: fn(&DefenderExclusion) -> bool,
 ) -> Result<()> {
     exit_with(parent)?;
     let file = listen(pipe, parent, sid)?;
@@ -277,6 +301,7 @@ pub fn serve_helper(
         parent,
         may_touch,
         may_stop_service,
+        may_exclude,
     };
     serve(file, &super::WindowsPlatform::new(), policy)
 }
@@ -496,7 +521,7 @@ fn exit_with(parent: u32) -> Result<()> {
 /// Atiende peticiones hasta que el cliente cierre la conexión.
 fn serve<
     S: Read + Write,
-    T: ProcessControl + SystemTweaks + GameTuning + MemoryControl + ServiceControl,
+    T: ProcessControl + SystemTweaks + GameTuning + MemoryControl + ServiceControl + SecurityTweaks,
 >(
     conn: S,
     platform: &T,
@@ -527,7 +552,9 @@ fn serve<
 }
 
 /// Solo atiende lo que pide admin: lo demás lo hace el cliente sin elevar.
-fn handle<T: ProcessControl + SystemTweaks + GameTuning + MemoryControl + ServiceControl>(
+fn handle<
+    T: ProcessControl + SystemTweaks + GameTuning + MemoryControl + ServiceControl + SecurityTweaks,
+>(
     request: Request,
     platform: &T,
     policy: Policy,
@@ -545,12 +572,25 @@ fn handle<T: ProcessControl + SystemTweaks + GameTuning + MemoryControl + Servic
     {
         return Response::Failed(format!("el servicio {name} no está en las reglas"));
     }
+    if let Request::HasDefenderExclusion(ex)
+    | Request::AddDefenderExclusion(ex)
+    | Request::RemoveDefenderExclusion(ex) = &request
+        && !(policy.may_exclude)(ex)
+    {
+        return Response::Failed(format!("{ex:?} no es de un juego instalado"));
+    }
     if let Request::ApplyTweak(t) | Request::RestoreTweak(t, _) = &request
         && !platform.tweak_requires_admin(*t)
     {
         return Response::Failed(format!("`{}` no pide admin", t.id()));
     }
     let result = match request {
+        Request::HasDefenderExclusion(ex) => {
+            return match platform.has_defender_exclusion(&ex) {
+                Ok(has) => Response::Value(u64::from(has)),
+                Err(e) => Response::Failed(e.to_string()),
+            };
+        }
         Request::Acer(query) => {
             return match super::acer::query(query) {
                 Ok(v) => Response::Value(v),
@@ -571,6 +611,8 @@ fn handle<T: ProcessControl + SystemTweaks + GameTuning + MemoryControl + Servic
         Request::Kill(target) => platform.kill(&target),
         Request::StopService(name) => platform.stop_service(&name),
         Request::StartService(name) => platform.start_service(&name),
+        Request::AddDefenderExclusion(ex) => platform.add_defender_exclusion(&ex),
+        Request::RemoveDefenderExclusion(ex) => platform.remove_defender_exclusion(&ex),
     };
     match result {
         Ok(()) => Response::Done,
@@ -592,6 +634,11 @@ mod tests {
             parent,
             may_touch: |t| !t.exe_path.ends_with("protected.exe"),
             may_stop_service: |name| name.eq_ignore_ascii_case("WSearch"),
+            may_exclude: |ex| match ex {
+                DefenderExclusion::Path(p) | DefenderExclusion::Process(p) => {
+                    p.starts_with(r"C:\Steam\steamapps\common")
+                }
+            },
         }
     }
 
@@ -679,6 +726,18 @@ mod tests {
             mock.service_state("RpcSs").unwrap(),
             Some(crate::ServiceState::Running)
         );
+
+        // Defender: solo lo que deja la lista blanca.
+        let game = DefenderExclusion::Path(PathBuf::from(r"C:\Steam\steamapps\common\Game"));
+        assert!(!client.has_defender_exclusion(&game).unwrap());
+        client.add_defender_exclusion(&game).unwrap();
+        assert!(client.has_defender_exclusion(&game).unwrap());
+        client.remove_defender_exclusion(&game).unwrap();
+        assert!(!mock.has_defender_exclusion(&game).unwrap());
+        let windows = DefenderExclusion::Path(PathBuf::from(r"C:\Windows"));
+        assert!(client.add_defender_exclusion(&windows).is_err());
+        assert!(client.has_defender_exclusion(&windows).is_err());
+        assert!(!mock.has_defender_exclusion(&windows).unwrap());
 
         let user = mock.read_tweak(Tweak::GameDvrOff).unwrap();
         assert!(client.apply_tweak(Tweak::GameDvrOff).is_err());

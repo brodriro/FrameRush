@@ -3,8 +3,9 @@
 //! `ConnectServer`, `CoSetProxyBlanket`, `ExecQuery` y `Next` + `Get`.
 //!
 //! Las clases que se consultan se pueden leer sin elevación (comprobado en Windows 11 el
-//! 2026-11-22). [`call_u32`] ejecuta un método de una instancia (`GetObject`, `GetMethod`,
-//! `SpawnInstance`, `Put` y `ExecMethod`); los de `root\WMI` suelen pedir admin.
+//! 2026-11-22). [`call`] ejecuta un método de una instancia o estático (`GetObject`,
+//! `GetMethod`, `SpawnInstance`, `Put` y `ExecMethod`); los de `root\WMI` y Defender piden
+//! admin.
 #![allow(unsafe_code)]
 
 use crate::{PlatformError, Result};
@@ -16,13 +17,14 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::System::Rpc::{RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE};
 use windows::Win32::System::Variant::{
-    VARIANT, VT_I4, VariantClear, VariantToStringAlloc, VariantToUInt32,
+    InitVariantFromStringArray, VARIANT, VT_I4, VariantClear, VariantToStringAlloc,
+    VariantToStringArrayAlloc, VariantToUInt32,
 };
 use windows::Win32::System::Wmi::{
     IWbemClassObject, IWbemLocator, IWbemServices, WBEM_E_ACCESS_DENIED, WBEM_FLAG_FORWARD_ONLY,
     WBEM_FLAG_RETURN_IMMEDIATELY, WBEM_GENERIC_FLAG_TYPE, WBEM_INFINITE, WbemLocator,
 };
-use windows::core::{BSTR, HSTRING};
+use windows::core::{BSTR, HSTRING, PCWSTR, PWSTR};
 
 /// `WBEM_E_ACCESS_DENIED` pasa a `AccessDenied` para que la plataforma delegue en el helper.
 fn os(e: windows::core::Error) -> PlatformError {
@@ -203,9 +205,50 @@ pub(super) fn rows<T>(
     }
 }
 
-/// Llama a `method` de la primera instancia de `class` con un único argumento `uint32`
-/// (`input`) y devuelve el argumento de salida `output` como texto (WMI da los `uint64` como
-/// cadena). `AccessDenied` si el SO no deja llamarlo sin elevación.
+/// Argumento de entrada de un método WMI.
+pub(super) enum Arg<'a> {
+    U32(u32),
+    /// `string[]` de WMI.
+    Strings(&'a [String]),
+}
+
+/// Sobre qué se llama el método.
+pub(super) enum On<'a> {
+    /// La primera instancia de la clase.
+    FirstInstance,
+    /// La clase: métodos estáticos (`MSFT_MpPreference.Add`, como `Add-MpPreference`).
+    Class(&'a str),
+}
+
+/// Lista de cadenas de la propiedad (`string[]`); vacía si es nula.
+pub(super) fn strings(obj: &IWbemClassObject, name: &str) -> Result<Vec<String>> {
+    let v = get(obj, name)?;
+    let mut raw: *mut PWSTR = std::ptr::null_mut();
+    let mut count = 0u32;
+    // SAFETY: `v.0` es un VARIANT válido; el sistema reserva el vector y cada cadena con
+    // CoTaskMemAlloc (documentado) y aquí se liberan después de copiarlas.
+    if unsafe { VariantToStringArrayAlloc(&v.0, &mut raw, &mut count) }.is_err() {
+        return Ok(vec![]);
+    }
+    let mut out = Vec::with_capacity(count as usize);
+    for i in 0..count as usize {
+        // SAFETY: `raw` tiene `count` cadenas terminadas en NUL.
+        let item = unsafe { *raw.add(i) };
+        // SAFETY: `item` es una de esas cadenas.
+        if let Ok(text) = unsafe { item.to_string() } {
+            out.push(text);
+        }
+        // SAFETY: cada cadena se reservó con CoTaskMemAlloc y ya se copió.
+        unsafe { CoTaskMemFree(Some(item.0.cast())) };
+    }
+    // SAFETY: el vector se reservó con CoTaskMemAlloc y ya no se usa.
+    unsafe { CoTaskMemFree(Some(raw.cast())) };
+    Ok(out)
+}
+
+/// Llama a `method` de `class` con un único argumento `uint32` (`input`) y devuelve el
+/// argumento de salida `output` como texto (WMI da los `uint64` como cadena). `AccessDenied`
+/// si el SO no deja llamarlo sin elevación.
 pub(super) fn call_u32(
     namespace: &str,
     class: &str,
@@ -214,14 +257,38 @@ pub(super) fn call_u32(
     output: &str,
 ) -> Result<Option<String>> {
     let _com = Com::init()?;
+    match call(
+        namespace,
+        class,
+        On::FirstInstance,
+        method,
+        &[(input, Arg::U32(value))],
+    )? {
+        Some(out) => string(&out, output),
+        None => Ok(None),
+    }
+}
+
+/// Llama a `method` de `class` con `args` (los que no se pasan van nulos) y devuelve los
+/// argumentos de salida. Necesita COM inicializado en el hilo ([`Com::init`]).
+pub(super) fn call(
+    namespace: &str,
+    class: &str,
+    on: On<'_>,
+    method: &str,
+    args: &[(&str, Arg<'_>)],
+) -> Result<Option<IWbemClassObject>> {
     let services = services(namespace)?;
-    let path = rows(namespace, &format!("SELECT __PATH FROM {class}"), |o| {
-        string(o, "__PATH")
-    })?
-    .into_iter()
-    .flatten()
-    .next()
-    .ok_or_else(|| PlatformError::NotFound(format!("instancia de {class}")))?;
+    let path = match on {
+        On::Class(path) => path.to_owned(),
+        On::FirstInstance => rows(namespace, &format!("SELECT __PATH FROM {class}"), |o| {
+            string(o, "__PATH")
+        })?
+        .into_iter()
+        .flatten()
+        .next()
+        .ok_or_else(|| PlatformError::NotFound(format!("instancia de {class}")))?,
+    };
     let mut class_obj = None;
     // SAFETY: `services` es válido y `class_obj` recibe la definición de la clase.
     unsafe {
@@ -249,35 +316,46 @@ pub(super) fn call_u32(
     let signature =
         signature.ok_or_else(|| PlatformError::NotFound(format!("{class}.{method}")))?;
     // SAFETY: `signature` es la clase de los argumentos de entrada.
-    let args = unsafe { signature.SpawnInstance(0) }.map_err(os)?;
-    let mut arg = Value(VARIANT::default());
-    // SAFETY: un `uint32` de WMI va en un VARIANT VT_I4 (mismos 32 bits); `arg.0` es un
-    // VARIANT vacío y propio.
-    unsafe {
-        let v = &mut *arg.0.Anonymous.Anonymous;
-        v.vt = VT_I4;
-        v.Anonymous.lVal = value as i32;
+    let input = unsafe { signature.SpawnInstance(0) }.map_err(os)?;
+    for (name, arg) in args {
+        let value = match arg {
+            Arg::U32(n) => {
+                let mut v = Value(VARIANT::default());
+                // SAFETY: un `uint32` de WMI va en un VARIANT VT_I4 (mismos 32 bits); `v.0` es
+                // un VARIANT vacío y propio.
+                unsafe {
+                    let inner = &mut *v.0.Anonymous.Anonymous;
+                    inner.vt = VT_I4;
+                    inner.Anonymous.lVal = *n as i32;
+                }
+                v
+            }
+            Arg::Strings(items) => {
+                let wide: Vec<HSTRING> = items.iter().map(HSTRING::from).collect();
+                let ptrs: Vec<PCWSTR> = wide.iter().map(|w| PCWSTR(w.as_ptr())).collect();
+                // SAFETY: `ptrs` apunta a cadenas de `wide`, vivas durante la llamada; el
+                // VARIANT resultante copia las cadenas (VT_ARRAY | VT_BSTR).
+                Value(unsafe { InitVariantFromStringArray(&ptrs) }.map_err(os)?)
+            }
+        };
+        // SAFETY: `input` es válido y `value.0` vive durante la llamada (Put lo copia).
+        unsafe { input.Put(&HSTRING::from(*name), 0, &value.0, 0) }.map_err(os)?;
     }
-    // SAFETY: `args` es válido y `arg.0` vive durante la llamada (Put lo copia).
-    unsafe { args.Put(&HSTRING::from(input), 0, &arg.0, 0) }.map_err(os)?;
     let mut out = None;
-    // SAFETY: `services`, la ruta, el método y `args` son válidos; `out` recibe la salida.
+    // SAFETY: `services`, la ruta, el método e `input` son válidos; `out` recibe la salida.
     unsafe {
         services.ExecMethod(
             &BSTR::from(path),
             &BSTR::from(method),
             WBEM_GENERIC_FLAG_TYPE(0),
             None,
-            &args,
+            &input,
             Some(&mut out),
             None,
         )
     }
     .map_err(os)?;
-    match out {
-        Some(out) => string(&out, output),
-        None => Ok(None),
-    }
+    Ok(out)
 }
 
 #[cfg(test)]

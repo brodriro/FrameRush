@@ -45,8 +45,76 @@ fn main() -> Result<()> {
         &args.sid,
         may_touch,
         may_stop_service,
+        may_exclude,
     )?;
     Ok(())
+}
+
+/// Exclusiones de Defender: solo las de un juego instalado de Steam (PLAN.md It5.9).
+#[cfg(windows)]
+fn may_exclude(exclusion: &framerush_platform::DefenderExclusion) -> bool {
+    let games: Vec<std::path::PathBuf> = framerush_steam::locate()
+        .ok()
+        .flatten()
+        .and_then(|root| framerush_steam::installed_apps(&root).ok())
+        .map(|apps| apps.apps.into_iter().map(|a| a.dir).collect())
+        .unwrap_or_default();
+    exclusion_allowed(exclusion, &games)
+}
+
+/// La carpeta de uno de `games` o un `.exe` dentro de ella, con ruta absoluta y sin `..`.
+#[cfg(windows)]
+fn exclusion_allowed(
+    exclusion: &framerush_platform::DefenderExclusion,
+    games: &[std::path::PathBuf],
+) -> bool {
+    use framerush_platform::DefenderExclusion;
+    use std::path::{Component, Path};
+    let plain =
+        |p: &Path| p.is_absolute() && !p.components().any(|c| matches!(c, Component::ParentDir));
+    let lower = |p: &Path| p.to_string_lossy().to_lowercase();
+    match exclusion {
+        DefenderExclusion::Path(p) => plain(p) && games.iter().any(|g| lower(g) == lower(p)),
+        DefenderExclusion::Process(p) => {
+            plain(p)
+                && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+                && games
+                    .iter()
+                    .any(|g| lower(p).starts_with(&format!("{}\\", lower(g))))
+        }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use framerush_platform::DefenderExclusion::{Path, Process};
+    use std::path::PathBuf;
+
+    #[test]
+    fn only_installed_game_folders_and_their_exes() {
+        let game =
+            PathBuf::from(r"D:\SteamLibrary\steamapps\common\Counter-Strike Global Offensive");
+        let games = [game.clone()];
+        let ok = |e| exclusion_allowed(&e, &games);
+        assert!(ok(Path(game.clone())));
+        assert!(ok(Path(PathBuf::from(
+            r"d:\steamlibrary\steamapps\common\counter-strike global offensive"
+        ))));
+        assert!(ok(Process(game.join(r"game\bin\win64\cs2.exe"))));
+        // Ni otra carpeta, ni la biblioteca, ni salir con `..`, ni algo que no sea un exe, ni
+        // otra carpeta que empieza igual.
+        assert!(!ok(Path(PathBuf::from(r"C:\Windows"))));
+        assert!(!ok(Path(PathBuf::from(
+            r"D:\SteamLibrary\steamapps\common"
+        ))));
+        assert!(!ok(Process(game.join(r"..\..\..\..\Windows\evil.exe"))));
+        assert!(!ok(Process(game.join("cs2.dll"))));
+        assert!(!ok(Process(PathBuf::from(
+            r"D:\SteamLibrary\steamapps\common\Counter-Strike Global Offensive2\x.exe"
+        ))));
+        assert!(!ok(Path(PathBuf::from("relativa"))));
+    }
 }
 
 #[cfg(not(windows))]

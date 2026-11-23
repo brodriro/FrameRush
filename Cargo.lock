@@ -1088,6 +1088,7 @@ dependencies = [
  "framerush-core",
  "framerush-platform",
  "framerush-rules",
+ "framerush-steam",
 ]
 
 [[package]]

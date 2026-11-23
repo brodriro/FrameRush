@@ -18,6 +18,7 @@ clap.workspace = true
 framerush-core.workspace = true
 framerush-platform.workspace = true
 framerush-rules.workspace = true
+framerush-steam.workspace = true
 
 [lints]
 workspace = true

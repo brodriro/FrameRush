@@ -5,10 +5,10 @@
 //! Los valores de los tests los pone cada test; aquí no hay datos de ningún equipo.
 
 use crate::{
-    Battery, Capabilities, CapabilitySet, Cpu, Display, DisplayControl, GameFiles, GameTuning, Gpu,
-    Inventory, MemoryControl, PlatformError, PowerControl, PowerPlan, Priority, ProcessControl,
-    ProcessInfo, Result, SavedData, SavedValue, ServiceControl, ServiceState, StartTime,
-    SystemTweaks, Target, Tweak,
+    Battery, Capabilities, CapabilitySet, Cpu, DefenderExclusion, Display, DisplayControl,
+    GameFiles, GameTuning, Gpu, Inventory, MemoryControl, PlatformError, PowerControl, PowerPlan,
+    Priority, ProcessControl, ProcessInfo, Result, SavedData, SavedValue, SecurityTweaks,
+    ServiceControl, ServiceState, StartTime, SystemTweaks, Target, Tweak,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -45,6 +45,9 @@ struct State {
     hags_supported: Option<bool>,
     hypervisor_features: Vec<String>,
     antivirus: Vec<String>,
+    defender_active: Option<bool>,
+    /// Exclusiones de Defender, en el orden en que se añadieron.
+    exclusions: Vec<DefenderExclusion>,
     logical_cpus: usize,
     caps: CapabilitySet,
     next_start: u64,
@@ -80,6 +83,7 @@ impl MockPlatform {
             refresh_rate: true,
             affinity: true,
             memory: true,
+            defender_exclusions: true,
         };
         Self {
             state: Mutex::new(State {
@@ -174,6 +178,11 @@ impl MockPlatform {
         let mut s = self.lock();
         s.hags_supported = hags_supported;
         s.hypervisor_features = features.iter().map(|f| (*f).to_owned()).collect();
+    }
+
+    /// Define si Defender es el antivirus activo ([`Inventory::defender_active`]).
+    pub fn set_defender_active(&self, active: Option<bool>) {
+        self.lock().defender_active = active;
     }
 
     /// Define los antivirus registrados de [`Inventory`].
@@ -440,6 +449,41 @@ impl Inventory for MockPlatform {
 
     fn antivirus(&self) -> Result<Vec<String>> {
         Ok(self.lock().antivirus.clone())
+    }
+
+    fn defender_active(&self) -> Result<Option<bool>> {
+        Ok(self.lock().defender_active)
+    }
+}
+
+impl SecurityTweaks for MockPlatform {
+    fn has_defender_exclusion(&self, exclusion: &DefenderExclusion) -> Result<bool> {
+        self.require(
+            |c| c.defender_exclusions,
+            "leer las exclusiones de Defender",
+        )?;
+        Ok(self.lock().exclusions.contains(exclusion))
+    }
+
+    fn add_defender_exclusion(&self, exclusion: &DefenderExclusion) -> Result<()> {
+        self.require(
+            |c| c.defender_exclusions,
+            "añadir una exclusión de Defender",
+        )?;
+        let mut s = self.lock();
+        if !s.exclusions.contains(exclusion) {
+            s.exclusions.push(exclusion.clone());
+        }
+        Ok(())
+    }
+
+    fn remove_defender_exclusion(&self, exclusion: &DefenderExclusion) -> Result<()> {
+        self.require(
+            |c| c.defender_exclusions,
+            "quitar una exclusión de Defender",
+        )?;
+        self.lock().exclusions.retain(|e| e != exclusion);
+        Ok(())
     }
 }
 

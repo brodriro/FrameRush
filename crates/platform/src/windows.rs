@@ -5,7 +5,8 @@
 //! pasan por el helper elevado si hay uno (módulo `helper`).
 //!
 //! Planes de energía con `powrprof` (módulo `power`). Servicios con el SCM (módulo `service`):
-//! detener y arrancar piden admin y, sin él, pasan al helper si hay uno.
+//! detener y arrancar piden admin y, sin él, pasan al helper si hay uno. Exclusiones de
+//! Defender con WMI (módulo `defender`), también por el helper.
 //!
 //! Antes de cada operación se revalida el `Target` (PID, arranque y ruta) con `sysinfo`, la
 //! misma fuente del scan, para no tocar un PID reutilizado. Queda una ventana mínima entre la
@@ -14,6 +15,7 @@
 
 mod acer;
 mod cpus;
+mod defender;
 mod display;
 mod effects;
 mod helper;
@@ -34,10 +36,10 @@ pub use nvapi::Nvapi;
 use registry::Hive;
 
 use crate::{
-    Battery, Capabilities, CapabilitySet, Cpu, Display, DisplayControl, GameFiles, GameTuning, Gpu,
-    Inventory, MemoryControl, PlatformError, PowerControl, PowerPlan, Priority, ProcessControl,
-    ProcessInfo, Result, SavedData, SavedValue, ServiceControl, ServiceState, StartTime,
-    SystemTweaks, Target, Tweak, scan_processes,
+    Battery, Capabilities, CapabilitySet, Cpu, DefenderExclusion, Display, DisplayControl,
+    GameFiles, GameTuning, Gpu, Inventory, MemoryControl, PlatformError, PowerControl, PowerPlan,
+    Priority, ProcessControl, ProcessInfo, Result, SavedData, SavedValue, SecurityTweaks,
+    ServiceControl, ServiceState, StartTime, SystemTweaks, Target, Tweak, scan_processes,
 };
 use std::ffi::c_void;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -732,6 +734,31 @@ impl Inventory for WindowsPlatform {
     fn antivirus(&self) -> Result<Vec<String>> {
         inventory::antivirus()
     }
+
+    fn defender_active(&self) -> Result<Option<bool>> {
+        defender::active()
+    }
+}
+
+impl SecurityTweaks for WindowsPlatform {
+    fn has_defender_exclusion(&self, exclusion: &DefenderExclusion) -> Result<bool> {
+        match (defender::has(exclusion), &self.helper) {
+            (Err(PlatformError::AccessDenied(_)), Some(h)) => h.has_defender_exclusion(exclusion),
+            (result, _) => result,
+        }
+    }
+
+    fn add_defender_exclusion(&self, exclusion: &DefenderExclusion) -> Result<()> {
+        self.or_helper(defender::add(exclusion), |h| {
+            h.add_defender_exclusion(exclusion)
+        })
+    }
+
+    fn remove_defender_exclusion(&self, exclusion: &DefenderExclusion) -> Result<()> {
+        self.or_helper(defender::remove(exclusion), |h| {
+            h.remove_defender_exclusion(exclusion)
+        })
+    }
 }
 
 impl DisplayControl for WindowsPlatform {
@@ -1144,6 +1171,7 @@ impl Capabilities for WindowsPlatform {
             refresh_rate: true,
             affinity: true,
             memory: true,
+            defender_exclusions: true,
         }
     }
 }

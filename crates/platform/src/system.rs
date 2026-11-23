@@ -1,6 +1,6 @@
 use crate::{ProcessControl, Result, Target};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Estado de un servicio del sistema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -181,6 +181,9 @@ pub trait Inventory {
     /// Nombres de los antivirus registrados en el SO (Security Center en Windows), ordenados.
     /// Solo el nombre: no dice cuál está activo.
     fn antivirus(&self) -> Result<Vec<String>>;
+    /// `Some(true)` si Microsoft Defender es el antivirus activo (no en modo pasivo); `None` si
+    /// no se sabe. Las exclusiones solo se ofrecen entonces (`defender-exclusions`, P15).
+    fn defender_active(&self) -> Result<Option<bool>>;
 }
 
 /// Pantallas: modos y frecuencia de refresco (`refresh-rate-max`).
@@ -322,6 +325,8 @@ pub struct CapabilitySet {
     pub affinity: bool,
     /// `memory-trim` y `standby-purge` ([`MemoryControl`]).
     pub memory: bool,
+    /// Exclusiones de Defender ([`SecurityTweaks`]).
+    pub defender_exclusions: bool,
 }
 
 /// Informa de lo que admite la plataforma.
@@ -351,6 +356,25 @@ pub trait GameFiles {
     fn remove_game_file(&self, path: &Path) -> Result<()>;
 }
 
+/// Una exclusión de Microsoft Defender (`defender-exclusions`, It5.9).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DefenderExclusion {
+    /// Carpeta: Defender no analiza lo que hay dentro (`ExclusionPath`).
+    Path(PathBuf),
+    /// Proceso, por su ruta completa: no se analiza lo que abre (`ExclusionProcess`).
+    Process(PathBuf),
+}
+
+/// Exclusiones de Defender, solo las del juego y opt-in (It5.9). Nunca se desactiva Defender.
+/// Leerlas y cambiarlas pide admin (lo hace el helper).
+pub trait SecurityTweaks {
+    /// `true` si ya está en la lista de Defender (puesta por el usuario o por FrameRush).
+    fn has_defender_exclusion(&self, exclusion: &DefenderExclusion) -> Result<bool>;
+    fn add_defender_exclusion(&self, exclusion: &DefenderExclusion) -> Result<()>;
+    fn remove_defender_exclusion(&self, exclusion: &DefenderExclusion) -> Result<()>;
+}
+
 /// Todo lo que `core` necesita del SO.
 pub trait Platform:
     ProcessControl
@@ -362,6 +386,7 @@ pub trait Platform:
     + GameFiles
     + SystemTweaks
     + MemoryControl
+    + SecurityTweaks
     + Capabilities
 {
 }
@@ -376,6 +401,7 @@ impl<T> Platform for T where
         + GameFiles
         + SystemTweaks
         + MemoryControl
+        + SecurityTweaks
         + Capabilities
 {
 }
