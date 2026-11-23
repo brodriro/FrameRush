@@ -327,7 +327,8 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
             let options = framerush_games::GameOptions {
                 tune: a.tune,
                 lock: wanted(GAME_CONFIG_LOCK),
-                fps_cap: a.fps_cap,
+                // La GUI siempre deja el cfg propio (`+exec framerush`); 0 = sin tope.
+                fps_cap: Some(a.fps_cap),
                 bench: a.bench,
             };
             adapter_files(

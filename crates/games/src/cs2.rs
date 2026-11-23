@@ -216,11 +216,13 @@ impl GameAdapter for Cs2 {
             }
         }
         let cfg = cfg_dir(install.dir);
-        plan.writes.push(GameFileWrite {
-            path: cfg.join("framerush.cfg"),
-            content: own_cfg(options.fps_cap),
-            read_only: false,
-        });
+        if let Some(cap) = options.fps_cap {
+            plan.writes.push(GameFileWrite {
+                path: cfg.join("framerush.cfg"),
+                content: own_cfg(cap),
+                read_only: false,
+            });
+        }
         if options.bench {
             plan.writes.push(GameFileWrite {
                 path: cfg.join("fpsbench.cfg"),
@@ -289,14 +291,24 @@ mod tests {
         };
         let device = samples::hybrid_laptop();
 
-        let off = Cs2.plan(install, &device, GameOptions::default()).unwrap();
+        let none = Cs2.plan(install, &device, GameOptions::default()).unwrap();
+        assert!(
+            none.writes.is_empty(),
+            "sin nada marcado no se escribe nada"
+        );
+
+        let cap_only = GameOptions {
+            fps_cap: Some(0),
+            ..GameOptions::default()
+        };
+        let off = Cs2.plan(install, &device, cap_only).unwrap();
         assert_eq!(off.writes.len(), 1, "sin tune ni bench: solo framerush.cfg");
         assert!(off.writes[0].content.contains("fps_max 0"));
 
         let on = GameOptions {
             tune: true,
             lock: true,
-            fps_cap: 240,
+            fps_cap: Some(240),
             bench: true,
         };
         let p = Cs2.plan(install, &device, on).unwrap();

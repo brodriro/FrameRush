@@ -40,8 +40,8 @@ pub struct GameOptions {
     pub tune: bool,
     /// `game-config-lock`: la config de vídeo queda de solo lectura. Sin `tune` no hace nada.
     pub lock: bool,
-    /// `fps-cap`: 0 = sin tope.
-    pub fps_cap: u32,
+    /// `fps-cap` en el cfg propio: 0 = sin tope; `None` = no se escribe el cfg propio.
+    pub fps_cap: Option<u32>,
     /// `bench-cfg`: cfg de medición.
     pub bench: bool,
 }
