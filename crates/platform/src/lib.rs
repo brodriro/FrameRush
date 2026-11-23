@@ -23,5 +23,6 @@ pub use system::{
 };
 #[cfg(windows)]
 pub use windows::{
-    AcerSensor, Helper, Nvapi, WindowsPlatform, serve_helper, steam_root, steam_running_app,
+    AcerSensor, Helper, Nvapi, WindowsPlatform, serve_helper, steam_launch, steam_root,
+    steam_running_app,
 };

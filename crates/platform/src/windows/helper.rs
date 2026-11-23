@@ -97,7 +97,7 @@ enum Response {
 /// Cuánto se espera a que el helper cree el pipe una vez aceptado el UAC.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn wide(s: &str) -> Vec<u16> {
+pub(super) fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 

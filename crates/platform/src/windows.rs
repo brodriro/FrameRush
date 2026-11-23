@@ -754,6 +754,39 @@ pub fn steam_root() -> Result<Option<PathBuf>> {
     Ok(registry::read_string(HKCU, STEAM, "SteamPath")?.map(PathBuf::from))
 }
 
+/// Pide a Steam que lance el juego `appid` (`steam://rungameid/<appid>`, como el
+/// `Start-Process` de la referencia CS2-FPS-Boost). Vuelve en cuanto el shell entrega la URL:
+/// que el juego arranque se ve después en `RunningAppID` o en sus procesos.
+pub fn steam_launch(appid: u32) -> Result<()> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let (verb, url) = (
+        helper::wide("open"),
+        helper::wide(&format!("steam://rungameid/{appid}")),
+    );
+    // SAFETY: las cadenas terminan en nulo y viven durante la llamada; los punteros opcionales
+    // son nulos.
+    let code = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            url.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    // Documentado: un valor mayor que 32 es éxito; si no, el propio valor es el código de error.
+    let code = code as isize;
+    if code > 32 {
+        Ok(())
+    } else {
+        Err(PlatformError::Os(format!(
+            "abrir steam://rungameid/{appid}: ShellExecute devolvió {code}"
+        )))
+    }
+}
+
 /// `appid` del juego que Steam tiene en marcha (`RunningAppID`; 0 = ninguno), o `None`.
 pub fn steam_running_app() -> Result<Option<u32>> {
     Ok(registry::read_dword(HKCU, STEAM, "RunningAppID")?.filter(|&id| id != 0))
