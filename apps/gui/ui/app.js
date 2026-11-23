@@ -500,7 +500,7 @@
       return;
     }
     toast(dry
-      ? `Simulación: lanzando ${g.name} sin congelar nada (${S.chk.filter(Boolean).length} fila(s) marcada(s)).`
+      ? `Simulación: lanzando ${g.name} sin pausar nada (${S.chk.filter(Boolean).length} fila(s) marcada(s)).`
       : `Lanzando ${g.name} con Steam… Turbo se aplica en cuanto arranque.`);
   }
 
@@ -516,7 +516,7 @@
   /* Re-escaneo de Turbo: solo avisa si congeló algo nuevo. */
   function onTurboRescan(e) {
     if (e.error) { toast(`Turbo: no se pudo re-escanear (${e.error}).`); return; }
-    if (e.outcomes && e.outcomes.done) { toast(`Turbo: ${e.outcomes.done} proceso(s) nuevo(s) congelado(s).`); syncLimited(); }
+    if (e.outcomes && e.outcomes.done) { toast(`Turbo: ${e.outcomes.done} programa(s) nuevo(s) en pausa.`); syncLimited(); }
   }
 
   /* ---------- Perfiles por juego (It3.2) ---------- */
