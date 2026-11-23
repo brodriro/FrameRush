@@ -19,7 +19,9 @@
 //! `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`.
 //!
 //! El juego se indica con `--game <exe|pid>`: desde una terminal, la ventana en primer plano es
-//! la propia terminal. El reconocimiento automático por la biblioteca de Steam llega en M3.
+//! la propia terminal. Sin `--game` se usa el juego de Steam en marcha (`RunningAppID`).
+//! Las opciones del adaptador del juego (`--tune`, `--lock`, `--fps-cap`, `--bench`) son opt-in
+//! y van al juego de `--appid` (aunque esté cerrado) o al de Steam en marcha.
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -151,6 +153,31 @@ struct GameArgs {
     /// para `cpu-affinity-cores` del equipo. Con anticheat se rechaza (P2).
     #[arg(long, value_name = "CPUS|auto")]
     affinity: Option<String>,
+    /// Juego de Steam para las opciones del adaptador (`--tune`, `--lock`, `--fps-cap`,
+    /// `--bench`), aunque esté cerrado. Sin él, el juego de Steam en marcha.
+    #[arg(long)]
+    appid: Option<u32>,
+    /// `game-config-tune` (opt-in, persistente): ajustes de vídeo recomendados según el equipo.
+    /// Mejor con el juego cerrado: al salir puede reescribir su config.
+    #[arg(long)]
+    tune: bool,
+    /// `game-config-lock`: con `--tune`, la config de vídeo queda de solo lectura.
+    #[arg(long)]
+    lock: bool,
+    /// `fps-cap`: escribe el cfg propio del juego con este tope (0 = sin tope). Se carga con
+    /// las opciones de lanzamiento que muestra `plan`.
+    #[arg(long, value_name = "FPS")]
+    fps_cap: Option<u32>,
+    /// `bench-cfg`: cfg de medición del juego.
+    #[arg(long)]
+    bench: bool,
+}
+
+impl GameArgs {
+    /// Alguna opción del adaptador del juego (todas opt-in en la CLI).
+    fn wants_adapter(&self) -> bool {
+        self.tune || self.lock || self.fps_cap.is_some() || self.bench
+    }
 }
 
 /// Valores de `game-priority` (design/SETTINGS.md).
@@ -261,6 +288,8 @@ struct Game {
     /// Cómo se muestra: `cs2.exe (pid 123)` o `Counter-Strike 2 (730, Steam) · pid 123, 124`.
     label: String,
     processes: Vec<ProcessInfo>,
+    /// `appid` si el juego salió de Steam.
+    appid: Option<u32>,
 }
 
 fn resolve_game(processes: &[ProcessInfo], query: Option<&str>) -> Result<Option<Game>> {
@@ -271,6 +300,7 @@ fn resolve_game(processes: &[ProcessInfo], query: Option<&str>) -> Result<Option
     Ok(Some(Game {
         label: format!("{} (pid {})", p.name, p.target.pid),
         processes: vec![p],
+        appid: None,
     }))
 }
 
@@ -313,6 +343,7 @@ fn steam_game(processes: &[ProcessInfo]) -> Option<Game> {
                     pids.join(", ")
                 ),
                 processes: procs,
+                appid: Some(app.appid),
             })
         }
         Ok(None) => None,
@@ -363,6 +394,101 @@ fn build_plan(
     };
     let plan = plan(level, &snapshot, &rules, &device, &options);
     Ok((plan, game, device))
+}
+
+/// Lo que escribe el adaptador del juego (persistente) y cómo mostrarlo.
+struct AdapterPlan {
+    name: &'static str,
+    launch_options: &'static str,
+    bench_command: &'static str,
+    plan: framerush_games::GamePlan,
+}
+
+/// Opciones del adaptador: `None` si no se pidió ninguna. El juego es `--appid` o el de Steam
+/// en marcha; sin adaptador o sin instalar en Steam es un error, no se ignora.
+fn adapter_plan(
+    args: &GameArgs,
+    game: Option<&Game>,
+    device: &DeviceProfile,
+) -> Result<Option<AdapterPlan>> {
+    if !args.wants_adapter() {
+        if args.appid.is_some() {
+            bail!("--appid solo sirve con --tune, --lock, --fps-cap o --bench");
+        }
+        return Ok(None);
+    }
+    if args.lock && !args.tune {
+        bail!("--lock bloquea la config que deja --tune: úsalo junto a --tune");
+    }
+    let Some(appid) = args.appid.or_else(|| game.and_then(|g| g.appid)) else {
+        bail!(
+            "las opciones del adaptador necesitan un juego de Steam: indica --appid \
+             (`framerush steam` los lista) o abre el juego desde Steam"
+        );
+    };
+    let Some(adapter) = framerush_games::adapter(appid) else {
+        bail!(
+            "el juego {appid} no tiene adaptador: --tune, --lock, --fps-cap y --bench no aplican"
+        );
+    };
+    let Some(root) = framerush_steam::locate().context("no se pudo buscar Steam")? else {
+        bail!("Steam no está instalado");
+    };
+    let found = framerush_steam::installed_apps(&root).context("no se pudo leer Steam")?;
+    let Some(app) = found.apps.iter().find(|a| a.appid == appid) else {
+        bail!("{} ({appid}) no está instalado en Steam", adapter.name());
+    };
+    let install = framerush_games::Install {
+        dir: &app.dir,
+        steam_root: &root,
+    };
+    let options = framerush_games::GameOptions {
+        tune: args.tune,
+        lock: args.lock,
+        fps_cap: args.fps_cap,
+        bench: args.bench,
+    };
+    let mut plan = adapter
+        .plan(install, device, options)
+        .with_context(|| format!("no se pudo leer la config de {}", adapter.name()))?;
+    // El juego reescribe su config al salir (referencia CS2-FPS-Boost): sin bloqueo se pierde.
+    let running = game.is_some_and(|g| g.appid == Some(appid) && !g.processes.is_empty());
+    if running && args.tune && !args.lock {
+        plan.notes.push(format!(
+            "{} está abierto: al cerrarse puede reescribir su config de vídeo (ciérralo antes o usa --lock)",
+            adapter.name()
+        ));
+    }
+    Ok(Some(AdapterPlan {
+        name: adapter.name(),
+        launch_options: adapter.launch_options(),
+        bench_command: adapter.bench_command(),
+        plan,
+    }))
+}
+
+fn print_adapter(adapter: Option<&AdapterPlan>, args: &GameArgs) {
+    let Some(a) = adapter else {
+        return;
+    };
+    println!("Config de {} (persistente, la deshace `revert`):", a.name);
+    for w in &a.plan.writes {
+        let lock = if w.read_only { " · solo lectura" } else { "" };
+        println!("[x] {}{lock}", w.path.display());
+    }
+    if args.fps_cap.is_some() {
+        println!("    Opciones de lanzamiento en Steam: {}", a.launch_options);
+    }
+    if args.bench {
+        println!(
+            "    Para medir, en la consola del juego: {}",
+            a.bench_command
+        );
+    }
+    for n in &a.plan.notes {
+        println!("Aviso: {n}");
+    }
+    println!();
 }
 
 /// `--gpu-alto` solo se ofrece si el equipo tiene más de una GPU (PLAN.md It6: con una sola no
@@ -702,6 +828,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     require_game(args, game.as_ref())?;
     let affinity = game_affinity(args, &plan, &device)?;
     check_gpu_preference(args, &device)?;
+    let adapter = adapter_plan(args, game.as_ref(), &device)?;
     println!("Plan para el nivel {level} (dry-run: no se toca nada)");
     print_device(&device);
     print_game(
@@ -710,6 +837,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
         persistent_mark(level, admin, args, game.is_some(), &[]),
         affinity.as_deref(),
     );
+    print_adapter(adapter.as_ref(), args);
     print_refresh(level, &device, &level_refresh(level, &device, &[]));
     print_power(&level_power(level, &device, &[]), &device);
     let checked: Vec<&PlanItem> = plan.checked().collect();
@@ -791,6 +919,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     require_game(&args.game, game.as_ref())?;
     let affinity = game_affinity(&args.game, &plan, &device)?;
     check_gpu_preference(&args.game, &device)?;
+    let adapter = adapter_plan(&args.game, game.as_ref(), &device)?;
     let persistent = persistent_mark(level, args.admin, &args.game, game.is_some(), &args.exclude);
     if args.include.iter().any(|id| id == PERSISTENT_PRIORITY) {
         match persistent {
@@ -834,6 +963,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
         print_device(&device);
         print_game(game.as_ref(), &args.game, persistent, affinity.as_deref());
+        print_adapter(adapter.as_ref(), &args.game);
         print_refresh(level, &device, &refresh);
         print_power(&power, &device);
         print_plan(&plan, &checked, &tweaks, &memory);
@@ -847,6 +977,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         && power.plan.is_none()
         && !power.custom_checked
         && refresh.is_empty()
+        && adapter.as_ref().is_none_or(|a| a.plan.writes.is_empty())
     {
         println!("No hay filas ni ajustes marcados ni juego: no se toca nada.");
         return Ok(());
@@ -867,7 +998,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             high_performance_gpu: args.game.gpu_alto,
             persistent_priority: persistent == Some(Mark::On),
         }),
-        game_files: vec![],
+        game_files: adapter.map(|a| a.plan.writes).unwrap_or_default(),
     };
     let report = run(Op::Apply(Box::new(request)))?;
     print_report(&report);

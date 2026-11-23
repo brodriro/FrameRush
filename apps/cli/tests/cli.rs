@@ -396,3 +396,45 @@ fn sensors_reads_once_and_never_fills_with_zero() {
     assert!(ok, "{stdout}");
     assert!(!stdout.contains(": 0 °C"), "{stdout}");
 }
+
+/// Opciones del adaptador: todas opt-in, con `--appid` aunque el juego esté cerrado; sin
+/// `--yes` solo se muestra lo que se escribiría.
+#[test]
+fn adapter_options_are_opt_in_and_need_a_steam_game() {
+    let dir = temp_dir("adapter");
+    let apps = dir.join("steamapps");
+    std::fs::create_dir_all(apps.join("common/Counter-Strike Global Offensive")).unwrap();
+    std::fs::write(
+        apps.join("appmanifest_730.acf"),
+        "\"AppState\"\n{\n\t\"appid\"\t\t\"730\"\n\t\"name\"\t\t\"Counter-Strike 2\"\n\t\"installdir\"\t\t\"Counter-Strike Global Offensive\"\n}\n",
+    )
+    .unwrap();
+
+    // Sin opciones del adaptador no se habla de la config del juego.
+    let (ok, stdout) = framerush_in(&dir, &["plan"]);
+    assert!(ok, "{stdout}");
+    assert!(!stdout.contains("framerush.cfg"), "{stdout}");
+
+    // --appid solo, --lock sin --tune, sin juego, o un juego sin adaptador: error.
+    assert!(!framerush_in(&dir, &["plan", "--appid", "730"]).0);
+    assert!(!framerush_in(&dir, &["plan", "--appid", "730", "--lock"]).0);
+    assert!(!framerush_in(&dir, &["plan", "--bench"]).0);
+    assert!(!framerush_in(&dir, &["plan", "--appid", "70", "--bench"]).0);
+
+    let (ok, stdout) = framerush_in(
+        &dir,
+        &["apply", "--appid", "730", "--fps-cap", "144", "--bench"],
+    );
+    assert!(ok, "{stdout}");
+    assert!(stdout.contains("framerush.cfg"), "{stdout}");
+    assert!(stdout.contains("fpsbench.cfg"), "{stdout}");
+    assert!(stdout.contains("+exec framerush"), "{stdout}");
+    // Sin --yes no se escribe nada.
+    assert!(
+        !apps
+            .join("common/Counter-Strike Global Offensive/game")
+            .exists()
+    );
+    assert!(!dir.join("session.json").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
