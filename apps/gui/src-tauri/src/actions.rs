@@ -330,6 +330,7 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
                 // La GUI siempre deja el cfg propio (`+exec framerush`); 0 = sin tope.
                 fps_cap: Some(a.fps_cap),
                 bench: a.bench,
+                resolution: None,
             };
             adapter_files(
                 g.appid,

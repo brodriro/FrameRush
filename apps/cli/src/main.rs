@@ -447,6 +447,7 @@ fn adapter_plan(
         lock: args.lock,
         fps_cap: args.fps_cap,
         bench: args.bench,
+        resolution: None,
     };
     let mut plan = adapter
         .plan(install, device, options)

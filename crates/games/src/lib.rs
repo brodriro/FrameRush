@@ -38,12 +38,15 @@ pub struct Install<'a> {
 pub struct GameOptions {
     /// `game-config-tune` (opt-in): ajustes de vídeo recomendados según el equipo.
     pub tune: bool,
-    /// `game-config-lock`: la config de vídeo queda de solo lectura. Sin `tune` no hace nada.
+    /// `game-config-lock`: la config de vídeo queda de solo lectura. Sin `tune` ni
+    /// `resolution` no hace nada.
     pub lock: bool,
     /// `fps-cap` en el cfg propio: 0 = sin tope; `None` = no se escribe el cfg propio.
     pub fps_cap: Option<u32>,
     /// `bench-cfg`: cfg de medición.
     pub bench: bool,
+    /// `resolution-override`: resolución del juego (ancho, alto); `None` = nativa, no se toca.
+    pub resolution: Option<(u32, u32)>,
 }
 
 /// Lo que se le hará al juego y lo que no se pudo.

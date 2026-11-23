@@ -79,6 +79,20 @@ pub fn video_settings(device: &DeviceProfile) -> Vec<(&'static str, &'static str
     out
 }
 
+/// `resolution-override` con las claves de la referencia: `aspectratiomode` 0 (4:3) si
+/// ancho/alto < 1,4 y 1 si no. Estirado o con bandas lo decide el escalado del driver.
+pub fn resolution_settings(width: u32, height: u32) -> [(&'static str, String); 3] {
+    let narrow = f64::from(width) < 1.4 * f64::from(height);
+    [
+        ("setting.defaultres", width.to_string()),
+        ("setting.defaultresheight", height.to_string()),
+        (
+            "setting.aspectratiomode",
+            if narrow { "0" } else { "1" }.into(),
+        ),
+    ]
+}
+
 /// Cambia o añade cada clave en el texto de `cs2_video.txt` sin tocar el resto: la línea de
 /// la clave se sustituye y, si no está, se añade antes de la última `}`. Mantiene los saltos
 /// de línea del archivo.
@@ -195,14 +209,26 @@ impl GameAdapter for Cs2 {
         options: GameOptions,
     ) -> Result<GamePlan> {
         let mut plan = GamePlan::default();
+        let mut settings: Vec<(&str, String)> = vec![];
         if options.tune {
+            settings.extend(
+                video_settings(device)
+                    .into_iter()
+                    .map(|(k, v)| (k, v.to_owned())),
+            );
+        }
+        if let Some((width, height)) = options.resolution {
+            settings.extend(resolution_settings(width, height));
+        }
+        if !settings.is_empty() {
             let videos = video_files(install.steam_root);
             if videos.is_empty() {
                 plan.notes.push(
                     "no hay cs2_video.txt: abre CS2 una vez, ciérralo y vuelve a aplicar".into(),
                 );
             }
-            let settings = video_settings(device);
+            let settings: Vec<(&str, &str)> =
+                settings.iter().map(|(k, v)| (*k, v.as_str())).collect();
             for path in videos {
                 let text = std::fs::read_to_string(&path).map_err(|source| GameError::Io {
                     path: path.clone(),
@@ -277,6 +303,15 @@ mod tests {
     }
 
     #[test]
+    fn aspect_ratio_mode_follows_the_reference() {
+        let mode = |w, h| resolution_settings(w, h)[2].1.clone();
+        assert_eq!(mode(1280, 960), "0");
+        assert_eq!(mode(1440, 1080), "0");
+        assert_eq!(mode(1920, 1080), "1");
+        assert_eq!(mode(1280, 720), "1");
+    }
+
+    #[test]
     fn plan_writes_the_tuned_video_of_each_account_and_our_cfgs() {
         let base = std::env::temp_dir().join(format!("framerush-cs2-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
@@ -310,6 +345,7 @@ mod tests {
             lock: true,
             fps_cap: Some(240),
             bench: true,
+            resolution: None,
         };
         let p = Cs2.plan(install, &device, on).unwrap();
         assert_eq!(p.writes.len(), 3);
@@ -323,6 +359,32 @@ mod tests {
         assert!(p.writes[1].content.contains("fps_max 240"));
         assert!(p.writes[2].path.ends_with("fpsbench.cfg"));
         assert!(p.notes.is_empty());
+
+        // Solo la resolución: se escriben sus 3 claves y nada de `tune`.
+        let res = GameOptions {
+            resolution: Some((1280, 960)),
+            ..GameOptions::default()
+        };
+        let p = Cs2.plan(install, &device, res).unwrap();
+        assert_eq!(p.writes.len(), 1);
+        assert!(!p.writes[0].read_only);
+        let text = &p.writes[0].content;
+        assert!(
+            text.contains("\"setting.defaultres\"\t\t\"1280\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("\"setting.defaultresheight\"\t\t\"960\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("\"setting.aspectratiomode\"\t\t\"0\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("\"setting.mat_vsync\"\t\t\"1\""),
+            "sin tune no cambia: {text}"
+        );
 
         std::fs::remove_dir_all(steam.join("userdata")).unwrap();
         let p = Cs2.plan(install, &device, on).unwrap();
