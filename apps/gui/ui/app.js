@@ -389,6 +389,8 @@
     const n = S.chk.filter(Boolean).length + S.stc.filter(Boolean).length + levelToggles().length;
     if (first('dry-run')?.checked) { toast(`Simulación: se aplicarían ${n} cambios. No se ha modificado nada.`); return; }
     if (!force && active('vbs-hvci-off')) { /* SETTINGS §4.8 */
+      /* La confirmación vuelve a aplicar igual: con Turbo si esto era Turbo. */
+      S.cwRetry = { verb, turbo };
       DS('compat-warning').forEach(e => { e.hidden = false; });
       toast('Lee y confirma el aviso de compatibilidad de arriba para aplicar.');
       return;
@@ -405,6 +407,7 @@
     }));
     if (r) S.watching = !!r.watching;
     if (r) S.turbo = turbo && !!r.watching;
+    if (S.turbo) S.turboPending = null; /* ya vigila el juego: no hace falta el reintento */
     if (r && r.done) S.hist.push(r.done);
     sess(); syncLimited();
   }
@@ -729,9 +732,11 @@
     if (sg && !sg.disabled) { const g = sg.parentElement; [...g.children].forEach(x => x.classList.toggle('on', x === sg)); onSeg(g.dataset.setting, sg); }
     if (t.closest('[data-cwok]')) {
       if (!$('#cwAck').checked) { toast('Marca «Entiendo lo que deja de funcionar».'); return; }
-      DS('compat-warning').forEach(x => { x.hidden = true; }); $('#cwAck').checked = false; apply(true); return;
+      DS('compat-warning').forEach(x => { x.hidden = true; }); $('#cwAck').checked = false;
+      const cw = S.cwRetry || { verb: 'Aplicar', turbo: false }; S.cwRetry = null;
+      apply(true, cw.verb, cw.turbo); return;
     }
-    if (t.closest('[data-cw]')) { DS('compat-warning').forEach(x => { x.hidden = true; }); return; }
+    if (t.closest('[data-cw]')) { S.cwRetry = null; DS('compat-warning').forEach(x => { x.hidden = true; }); return; }
     if (t.closest('[data-rb]')) { DS('reboot-required').forEach(x => { x.hidden = true; }); return; }
     const cr = t.closest('[data-crash]');
     if (cr) {
