@@ -1371,9 +1371,10 @@ fn run(op: Op<'_>) -> Result<Report> {
             request.tweaks.iter().any(|t| admin(*t))
                 || !request.memory.is_empty()
                 || request.game.as_ref().is_some_and(|g| g.persistent_priority)
-                || request.items.iter().any(|i| {
-                    matches!(&i.subject, Subject::Processes(ps)
-                        if ps.iter().any(|p| p.own != Some(true)))
+                || request.items.iter().any(|i| match &i.subject {
+                    Subject::Processes(ps) => ps.iter().any(|p| p.own != Some(true)),
+                    // Detener un servicio siempre pide admin.
+                    Subject::Services(names) => !names.is_empty(),
                 })
                 || foreign(request.game.iter().flat_map(|g| &g.targets))?
         }
@@ -1389,7 +1390,7 @@ fn run(op: Op<'_>) -> Result<Report> {
                 .collect();
             pending.iter().any(|c| match c {
                 Change::Tweak { tweak, .. } => admin(*tweak),
-                Change::PersistentPriority { .. } => true,
+                Change::PersistentPriority { .. } | Change::StopService { .. } => true,
                 _ => false,
             }) || foreign(pending.iter().filter_map(|c| c.target()))?
         }
