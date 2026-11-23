@@ -683,6 +683,9 @@ const POWER_PLAN: &str = "power-plan";
 /// Id de design/SETTINGS.md del plan propio "FrameRush Max".
 const CUSTOM_POWER_PLAN: &str = "custom-power-plan";
 
+/// Id de design/SETTINGS.md de los C-states desactivados (dentro del plan propio).
+const CSTATES_OFF: &str = "cstates-off";
+
 /// Id de design/SETTINGS.md del refresco al máximo.
 const REFRESH_RATE_MAX: &str = "refresh-rate-max";
 
@@ -723,6 +726,8 @@ struct LevelPower {
     /// `Some` si el plan propio se ofrece en este equipo y nivel.
     custom_base: Option<PowerPlan>,
     custom_checked: bool,
+    /// `cstates-off`: `Some` si se ofrece (Extremo con el plan propio marcado) y si está marcado.
+    cstates_off: Option<bool>,
 }
 
 /// `--exclude power-plan` quita los dos (no hay base); `--exclude custom-power-plan` deja solo
@@ -733,9 +738,11 @@ fn level_power(level: Level, device: &DeviceProfile, exclude: &[String]) -> Leve
         return LevelPower::default();
     }
     let custom_base = defaults::custom_power_plan_base(level, device).cloned();
+    let custom_checked = custom_base.is_some() && !excluded(CUSTOM_POWER_PLAN);
     LevelPower {
         plan: defaults::power_plan_for(level, device).cloned(),
-        custom_checked: custom_base.is_some() && !excluded(CUSTOM_POWER_PLAN),
+        cstates_off: (custom_checked && level == Level::Extremo).then(|| !excluded(CSTATES_OFF)),
+        custom_checked,
         custom_base,
     }
 }
@@ -762,6 +769,12 @@ fn print_power(power: &LevelPower, device: &DeviceProfile) {
         println!(
             "[{mark}] {CUSTOM_POWER_PLAN:<32} sesión · «{CUSTOM_POWER_PLAN_NAME}» (solo CA; se borra al restaurar)"
         );
+        if let Some(checked) = power.cstates_off {
+            let mark = if checked { "x" } else { " " };
+            println!(
+                "[{mark}] {CSTATES_OFF:<32} sesión · dentro de «{CUSTOM_POWER_PLAN_NAME}» (más calor; vigila la temperatura)"
+            );
+        }
     }
     println!();
 }
@@ -1060,6 +1073,9 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     if args.include.iter().any(|id| id == CUSTOM_POWER_PLAN) {
         bail!("`{CUSTOM_POWER_PLAN}` lo marca el nivel (agresivo o extremo, solo Windows)");
     }
+    if args.include.iter().any(|id| id == CSTATES_OFF) {
+        bail!("`{CSTATES_OFF}` lo marca el nivel extremo con `{CUSTOM_POWER_PLAN}` (solo Windows)");
+    }
     if args.include.iter().any(|id| id == REFRESH_RATE_MAX) {
         bail!("`{REFRESH_RATE_MAX}` lo marca el nivel (agresivo o extremo, solo Windows)");
     }
@@ -1072,6 +1088,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
                     PERSISTENT_PRIORITY,
                     POWER_PLAN,
                     CUSTOM_POWER_PLAN,
+                    CSTATES_OFF,
                     REFRESH_RATE_MAX,
                 ]
                 .contains(&id.as_str())
@@ -1111,7 +1128,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
     let request = ApplyRequest {
         memory,
         custom_power_plan: power.custom_base.filter(|_| power.custom_checked),
-        cstates_off: false,
+        cstates_off: power.cstates_off == Some(true),
         refresh_rates: refresh,
         power_plan: power.plan,
         items: checked,

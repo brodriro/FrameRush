@@ -366,6 +366,36 @@ fn custom_power_plan_from_agresivo() {
     assert!(!framerush_in(&dir, &args).0);
 }
 
+/// `cstates-off` va dentro del plan propio: marcado en Extremo, nunca en Agresivo, y sin plan
+/// propio no se ofrece.
+#[cfg(windows)]
+#[test]
+fn cstates_off_rides_on_the_custom_plan_at_extremo() {
+    let dir = temp_dir("cstates-off");
+    let (ok, stdout) = framerush_in(&dir, &["plan", "--level", "agresivo"]);
+    assert!(ok);
+    assert!(!stdout.contains("cstates-off"), "{stdout}");
+    let (ok, stdout) = framerush_in(&dir, &["plan", "--level", "extremo"]);
+    assert!(ok);
+    assert!(stdout.contains("[x] cstates-off"), "{stdout}");
+    let args = ["apply", "--level", "extremo", "--exclude", "cstates-off"];
+    let (ok, stdout) = framerush_in(&dir, &args);
+    assert!(ok);
+    assert!(stdout.contains("[ ] cstates-off"), "{stdout}");
+    let args = [
+        "apply",
+        "--level",
+        "extremo",
+        "--exclude",
+        "custom-power-plan",
+    ];
+    let (ok, stdout) = framerush_in(&dir, &args);
+    assert!(ok);
+    assert!(!stdout.contains("cstates-off"), "{stdout}");
+    let args = ["apply", "--level", "agresivo", "--include", "cstates-off"];
+    assert!(!framerush_in(&dir, &args).0);
+}
+
 /// `refresh-rate-max` lo marca el nivel: no se puede añadir con `--include`.
 #[test]
 fn refresh_rate_max_is_set_by_the_level() {
