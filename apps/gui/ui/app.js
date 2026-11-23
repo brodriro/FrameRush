@@ -352,6 +352,30 @@
     } catch (err) { toast(`No se pudo leer qué procesos están limitados: ${err && err.message ? err.message : err}`); }
   }
 
+  /*
+   * process-refresh: vuelve a leer qué hay abierto sin tocar nivel, ajustes, perfil ni sesión.
+   * Las filas que siguen conservan lo marcado; las nuevas llegan con lo que marca el nivel (core).
+   */
+  async function refreshList(btn) {
+    btn.disabled = true;
+    try {
+      const fresh = await api.load();
+      const was = new Map(D.processes.map((p, i) => [p.id, !!S.chk[i]]));
+      const added = fresh.processes.filter(p => !was.has(p.id)).length;
+      const gone = D.processes.filter(p => !fresh.processes.some(q => q.id === p.id)).length;
+      D.processes = fresh.processes;
+      D.protected = fresh.protected;
+      S.chk = D.processes.map(p => !locked(p) && (was.has(p.id) ? was.get(p.id) : p.checked[S.level - 1]));
+      S.released = S.released.filter(id => D.processes.some(p => p.id === id));
+      render();
+      toast(added || gone ? `Lista actualizada: ${added} nueva(s), ${gone} ya cerrada(s).` : 'Lista actualizada: no hay cambios.');
+    } catch (err) {
+      toast(`No se pudo actualizar la lista: ${err && err.message ? err.message : err}`);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   async function releaseRow(id) {
     const r = await run('Reanudar', () => api.releaseRow(id));
     if (!r) return;
@@ -761,6 +785,7 @@
       $('#rtBox').hidden = true; $('#rtAck').checked = false; toast('Prioridad Tiempo real confirmada: se usará al aplicar.');
     }
     if (id === 'run-as-admin') elevate();
+    if (id === 'process-refresh') refreshList(el);
     if (id === 'profile-save') saveProfile();
     if (id === 'launch-options-copy') copyLaunchOptions();
     if (id === 'export-diagnostics') toast(`Exportar el diagnóstico ${NOT_WIRED}`);
