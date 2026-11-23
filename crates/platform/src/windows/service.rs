@@ -9,7 +9,8 @@
 //! (learn.microsoft.com/windows/win32/services/stopping-a-service): se espera una décima parte
 //! de `dwWaitHint`, entre 1 y 10 s, hasta un máximo total. Un servicio con dependientes en
 //! marcha no se detiene (`ERROR_DEPENDENT_SERVICES_RUNNING`): no se paran otros servicios que
-//! el usuario no ha marcado.
+//! el usuario no ha marcado. Tampoco uno que no se podría volver a arrancar (sin
+//! `SERVICE_START` para quien lo pide): la parada sería irreversible.
 #![allow(unsafe_code)]
 
 use super::helper::wide;
@@ -100,6 +101,17 @@ pub(super) fn service_state(name: &str) -> Result<Option<ServiceState>> {
 pub(super) fn stop_service(name: &str) -> Result<()> {
     let service = open(name, SERVICE_STOP | SERVICE_QUERY_STATUS)?
         .ok_or_else(|| PlatformError::NotFound(format!("servicio {name}")))?;
+    // Solo se detiene lo que se podrá volver a arrancar: hay servicios que un administrador
+    // puede parar pero no arrancar (el descriptor solo da SERVICE_START a SYSTEM o a otro
+    // servicio, como WdiSystemHost con DPS). Pararlos no tendría vuelta atrás.
+    if let Err(e) = open(name, SERVICE_START) {
+        return Err(match e {
+            PlatformError::AccessDenied(_) => PlatformError::Os(format!(
+                "{name}: Windows no deja volver a arrancarlo, así que no se detiene"
+            )),
+            e => e,
+        });
+    }
     let mut st = SERVICE_STATUS::default();
     // SAFETY: `service` es válido y `st` vive durante la llamada.
     if unsafe { ControlService(service.0, SERVICE_CONTROL_STOP, &mut st) } == 0 {
