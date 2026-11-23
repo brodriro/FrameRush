@@ -11,8 +11,9 @@ use framerush_core::{
     Action, ApplyRequest, FileStore, GameBoost, Level, Outcome, PlanItem, PlanOptions, RefreshRate,
     Report, Subject, defaults, persistent_priority_default, plan,
 };
-use framerush_platform::{Priority, Target};
+use framerush_platform::{DefenderExclusion, Priority, Target};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::time::Duration;
 
 /// Ids de design/SETTINGS.md que no son reglas ni ajustes de `Tweak`/`MemoryOp`.
@@ -22,6 +23,8 @@ const REFRESH_RATE_MAX: &str = "refresh-rate-max";
 /// Ajustes del exe del juego que llegan como ids de `settings`.
 const PERSISTENT_PRIORITY: &str = "game-priority-persistent";
 const FSO_OFF: &str = "fullscreen-optimizations-off";
+/// `defender-exclusions`: opt-in, carpeta y exe del juego (It5.9).
+const DEFENDER_EXCLUSIONS: &str = "defender-exclusions";
 /// `game-config-lock` llega en `settings` (es del nivel); lo aplica el adaptador.
 const GAME_CONFIG_LOCK: &str = "game-config-lock";
 
@@ -346,8 +349,22 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         None => vec![],
     };
 
+    let defender_exclusions = if wanted(DEFENDER_EXCLUSIONS) {
+        defender_exclusions(
+            selection.game.as_ref().map(|g| g.appid),
+            &game_targets,
+            &device,
+            helper.is_some(),
+            &mut needs_admin,
+            &mut notes,
+        )?
+    } else {
+        vec![]
+    };
+
     let handled = |id: &str| {
         id == POWER_PLAN
+            || id == DEFENDER_EXCLUSIONS
             || id == GAME_CONFIG_LOCK
             || id == CUSTOM_POWER_PLAN
             || id == REFRESH_RATE_MAX
@@ -373,7 +390,7 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         custom_power_plan,
         refresh_rates,
         game_files,
-        defender_exclusions: vec![],
+        defender_exclusions,
     };
     let report = run(helper, Op::Apply(Box::new(request)))?;
     let mut out = outcomes(report, not_wired, needs_admin, notes)?;
@@ -401,6 +418,54 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         });
     }
     Ok(out)
+}
+
+/// `defender-exclusions` (It5.9): la carpeta del juego de Steam y los exes en marcha que hay
+/// dentro. Pide admin (sin helper va a `needs_admin`) y Defender como antivirus activo.
+fn defender_exclusions(
+    appid: Option<u32>,
+    game_targets: &[Target],
+    device: &framerush_device::DeviceProfile,
+    elevated: bool,
+    needs_admin: &mut Vec<String>,
+    notes: &mut Vec<String>,
+) -> Result<Vec<DefenderExclusion>> {
+    if device.defender_active != Some(true) {
+        notes.push(format!(
+            "{DEFENDER_EXCLUSIONS}: Microsoft Defender no es el antivirus activo"
+        ));
+        return Ok(vec![]);
+    }
+    let Some((_, app)) = appid.map(steam_install).transpose()?.flatten() else {
+        notes.push(format!(
+            "{DEFENDER_EXCLUSIONS}: elige un juego de Steam instalado"
+        ));
+        return Ok(vec![]);
+    };
+    if !elevated {
+        needs_admin.push(DEFENDER_EXCLUSIONS.to_owned());
+        return Ok(vec![]);
+    }
+    // Windows no distingue mayúsculas en las rutas; Steam y el SO pueden escribirlas distinto.
+    let dir = format!("{}\\", app.dir.to_string_lossy().to_lowercase());
+    let mut exes: Vec<&Path> = game_targets
+        .iter()
+        .map(|t| t.exe_path.as_path())
+        .filter(|exe| exe.to_string_lossy().to_lowercase().starts_with(&dir))
+        .collect();
+    exes.sort();
+    exes.dedup();
+    if exes.is_empty() {
+        notes.push(format!(
+            "{DEFENDER_EXCLUSIONS}: el juego no está en marcha; solo se excluye su carpeta"
+        ));
+    }
+    Ok(std::iter::once(DefenderExclusion::Path(app.dir))
+        .chain(
+            exes.into_iter()
+                .map(|e| DefenderExclusion::Process(e.to_path_buf())),
+        )
+        .collect())
 }
 
 /// En Turbo, cerrar pasa a congelar (P6): se reanuda al salir y cerrar no se deshace.
@@ -703,6 +768,24 @@ fn run(_helper: Option<Elevated>, _op: Op<'_>) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sin Defender activo o sin juego de Steam no se pide nada, y se dice por qué.
+    #[test]
+    fn defender_exclusions_need_defender_and_a_game() {
+        let mut device =
+            framerush_device::DeviceProfile::undetected(framerush_platform::Os::Windows);
+        let (mut admin, mut notes) = (vec![], vec![]);
+        let none = defender_exclusions(Some(730), &[], &device, true, &mut admin, &mut notes);
+        assert!(none.unwrap().is_empty());
+        assert!(notes[0].contains("no es el antivirus activo"), "{notes:?}");
+
+        device.defender_active = Some(true);
+        notes.clear();
+        let none = defender_exclusions(None, &[], &device, true, &mut admin, &mut notes);
+        assert!(none.unwrap().is_empty());
+        assert!(notes[0].contains("juego de Steam"), "{notes:?}");
+        assert!(admin.is_empty());
+    }
 
     /// El JSON que manda `api.apply` en app.js.
     #[test]

@@ -296,6 +296,10 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
     if windows && gpu_pref.is_some() {
         available.push("gpu-preference");
     }
+    // Solo con Defender como antivirus activo: con otro, excluir en Defender no sirve (P15).
+    if caps.defender_exclusions && device.defender_active == Some(true) {
+        available.push("defender-exclusions");
+    }
     let games = steam_games(&processes);
 
     Ok(View {
