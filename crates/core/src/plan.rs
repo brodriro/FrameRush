@@ -7,7 +7,7 @@
 use crate::protected::{ProtectedReason, is_protected, normalize, protected_reason};
 use crate::{Action, Category, Level, Risk, Rule, Scope};
 use framerush_device::DeviceProfile;
-use framerush_platform::{Priority, ProcessInfo, ServiceState, Target, Tweak};
+use framerush_platform::{Os, Priority, ProcessInfo, ServiceControl, ServiceState, Target, Tweak};
 
 /// Estado del equipo en el momento del `scan`.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -146,6 +146,32 @@ pub fn running_anticheats(processes: &[ProcessInfo]) -> Vec<String> {
     names.sort_by_key(|n| n.to_lowercase());
     names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
     names
+}
+
+/// Estado de los servicios que nombra alguna regla de `stop_service` en `os` (P15: solo los
+/// que existen). Un servicio que no se pudo leer queda fuera y va en la segunda lista con el
+/// motivo, para que la app lo diga.
+pub fn scan_services(
+    platform: &impl ServiceControl,
+    rules: &[Rule],
+    os: Os,
+) -> (Vec<(String, ServiceState)>, Vec<String>) {
+    let mut names: Vec<&String> = rules
+        .iter()
+        .filter(|r| r.action == Action::StopService)
+        .flat_map(|r| r.matches.for_os(os))
+        .collect();
+    names.sort_by_key(|n| n.to_lowercase());
+    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    let (mut found, mut errors) = (vec![], vec![]);
+    for name in names {
+        match platform.service_state(name) {
+            Ok(Some(state)) => found.push((name.clone(), state)),
+            Ok(None) => {}
+            Err(e) => errors.push(format!("{name}: {e}")),
+        }
+    }
+    (found, errors)
 }
 
 /// Calcula el plan de `level` para este equipo.
@@ -346,6 +372,61 @@ mod tests {
             optional: false,
             elevated: false,
         }
+    }
+
+    /// Solo los servicios de reglas `stop_service` que existen, una vez cada uno.
+    #[test]
+    fn scan_services_reads_the_rule_services_that_exist() {
+        let m = framerush_platform::mock::MockPlatform::new(1);
+        m.add_service("WSearch", ServiceState::Running);
+        m.add_service("SysMain", ServiceState::Stopped);
+        let rules = vec![
+            rule(
+                "wsearch",
+                &["WSearch"],
+                Action::StopService,
+                Level::Agresivo,
+                Risk::Low,
+            ),
+            rule(
+                "again",
+                &["wsearch"],
+                Action::StopService,
+                Level::Extremo,
+                Risk::Low,
+            ),
+            rule(
+                "sysmain",
+                &["SysMain"],
+                Action::StopService,
+                Level::Agresivo,
+                Risk::Low,
+            ),
+            rule(
+                "missing",
+                &["NoExiste"],
+                Action::StopService,
+                Level::Agresivo,
+                Risk::Low,
+            ),
+            rule(
+                "proc",
+                &["Spooler"],
+                Action::Suspend,
+                Level::Normal,
+                Risk::Low,
+            ),
+        ];
+        let (found, errors) = scan_services(&m, &rules, Os::Windows);
+        assert_eq!(
+            found,
+            vec![
+                ("SysMain".to_owned(), ServiceState::Stopped),
+                ("WSearch".to_owned(), ServiceState::Running),
+            ]
+        );
+        assert!(errors.is_empty());
+        assert!(scan_services(&m, &rules, Os::Linux).0.is_empty());
     }
 
     /// Una regla por cada combinación de acción, nivel mínimo, riesgo, opcional y elevada,

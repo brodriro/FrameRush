@@ -19,7 +19,7 @@ pub use journal::{Change, Entry, EntryStatus, FileStore, Journal, JournalError, 
 pub use model::{Action, Category, Level, ParseError, Risk, Scope};
 pub use plan::{
     MemoryOp, Plan, PlanItem, PlanOptions, Snapshot, Subject, persistent_priority_default, plan,
-    running_anticheats, tweak_min_level, tweak_optional, tweak_scope,
+    running_anticheats, scan_services, tweak_min_level, tweak_optional, tweak_scope,
 };
 pub use protected::{ProtectedReason, is_protected, protected_reason};
 pub use rule::{OsNames, Rule};
