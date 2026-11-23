@@ -85,7 +85,7 @@
      * con la acción del nivel (limitRow; nunca cierra) y los ids de las filas limitadas ahora.
      */
     releaseRow(id) { return T.core.invoke('release_row', { id }); },
-    limitRow(id, level) { return T.core.invoke('limit_row', { id, level }); },
+    limitRow(id, level, keepAlive) { return T.core.invoke('limit_row', { id, level, keepAlive }); },
     limitedRows() { return inTauri ? T.core.invoke('limited_rows') : Promise.resolve([]); },
 
     /* Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él. */

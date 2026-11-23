@@ -279,10 +279,11 @@ async fn release_row(
 async fn limit_row(
     id: String,
     level: u8,
+    keep_alive: Option<Vec<String>>,
     sensors: tauri::State<'_, Sensors>,
 ) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
-    blocking(move || actions::limit_row(&id, level, helper)).await
+    blocking(move || actions::limit_row(&id, level, keep_alive.as_deref(), helper)).await
 }
 
 /// Restaurar: deshace toda la sesión y para el watchdog (ya no queda nada que revertir).

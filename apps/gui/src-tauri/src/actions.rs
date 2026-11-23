@@ -44,6 +44,14 @@ pub struct Selection {
     /// Sesión Turbo (`launch-game`, It5.2); `null` en un Aplicar normal.
     #[serde(default)]
     turbo: Option<TurboSelection>,
+    /// `keep-alive-list` tal como la dejó el usuario (P7); `null` = la del equipo.
+    #[serde(default)]
+    keep_alive: Option<Vec<String>>,
+}
+
+/// `keep-alive-list`: la de la UI o, sin ella, la del equipo (R8: la UI arranca con esa).
+fn keep_alive(list: Option<&[String]>, device: &framerush_device::DeviceProfile) -> Vec<String> {
+    list.map_or_else(|| defaults::keep_alive(device).value, <[String]>::to_vec)
 }
 
 /// Opciones de Turbo de la UI.
@@ -61,6 +69,8 @@ pub struct Turbo {
     level: Level,
     /// Filas marcadas con acción congelar o cerrar (en Turbo, cerrar pasa a congelar).
     rows: Vec<String>,
+    /// `keep-alive-list` del Aplicar: también vale en cada re-escaneo (P7).
+    keep_alive: Vec<String>,
     pub every: Duration,
 }
 
@@ -192,9 +202,10 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
     if !game_targets.is_empty() {
         snapshot.game = game_targets.clone();
     }
+    let keep_alive = keep_alive(selection.keep_alive.as_deref(), &device);
     let options = PlanOptions {
         elevated: helper.is_some(),
-        keep_alive: defaults::keep_alive(&device).value,
+        keep_alive: keep_alive.clone(),
     };
     let plan = plan(level, &snapshot, &rules, &device, &options);
     let wanted = |id: &str| selection.settings.iter().any(|s| s == id);
@@ -371,6 +382,7 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
                 .filter(|i| i.action == Action::Suspend)
                 .map(|i| i.rule_id.clone())
                 .collect(),
+            keep_alive,
             every: Duration::from_secs(t.rescan_secs.max(1)),
         });
     // Solo hay algo que vigilar si el juego está en marcha y quedó una sesión abierta. Turbo
@@ -409,7 +421,7 @@ pub fn turbo_rescan(turbo: &Turbo, helper: Option<Elevated>) -> Result<Outcomes>
     }
     let options = PlanOptions {
         elevated: helper.is_some(),
-        keep_alive: defaults::keep_alive(&device).value,
+        keep_alive: turbo.keep_alive.clone(),
     };
     let owned: Vec<PlanItem> = plan(turbo.level, &snapshot, &rules, &device, &options)
         .items
@@ -506,7 +518,12 @@ pub fn undo(helper: Option<Elevated>) -> Result<Outcomes> {
 }
 
 /// Plan de la fila `id` con el equipo de ahora (el juego queda fuera, como en `apply`).
-fn row_item(id: &str, level: Level, elevated: bool) -> Result<PlanItem> {
+fn row_item(
+    id: &str,
+    level: Level,
+    elevated: bool,
+    keep_alive_list: Option<&[String]>,
+) -> Result<PlanItem> {
     let Inputs {
         device,
         rules,
@@ -515,7 +532,7 @@ fn row_item(id: &str, level: Level, elevated: bool) -> Result<PlanItem> {
     } = inputs()?;
     let options = PlanOptions {
         elevated,
-        keep_alive: defaults::keep_alive(&device).value,
+        keep_alive: keep_alive(keep_alive_list, &device),
     };
     plan(level, &snapshot, &rules, &device, &options)
         .items
@@ -554,7 +571,7 @@ pub fn limited_rows() -> Result<Vec<String>> {
 
 /// Reanuda los procesos de una fila y deja el resto de la sesión como está.
 pub fn release_row(id: &str, helper: Option<Elevated>) -> Result<Outcomes> {
-    let item = row_item(id, Level::Extremo, helper.is_some())?;
+    let item = row_item(id, Level::Extremo, helper.is_some(), None)?;
     let targets: Vec<Target> = match &item.subject {
         Subject::Processes(ps) => ps.iter().map(|p| p.target.clone()).collect(),
         Subject::Services(_) => vec![],
@@ -565,8 +582,14 @@ pub fn release_row(id: &str, helper: Option<Elevated>) -> Result<Outcomes> {
 
 /// Vuelve a limitar una fila reanudada, con la acción de `level`. Nunca cierra: un kill pasa a
 /// congelar, porque «Limitar» se puede deshacer y cerrar no.
-pub fn limit_row(id: &str, level_n: u8, helper: Option<Elevated>) -> Result<Outcomes> {
-    let mut item = row_item(id, level(level_n)?, helper.is_some())?;
+/// Con `keep-alive-list` (P7) una fila de una app de voz baja de prioridad en vez de congelarse.
+pub fn limit_row(
+    id: &str,
+    level_n: u8,
+    keep_alive_list: Option<&[String]>,
+    helper: Option<Elevated>,
+) -> Result<Outcomes> {
+    let mut item = row_item(id, level(level_n)?, helper.is_some(), keep_alive_list)?;
     if item.locked {
         return outcomes(Report::default(), vec![], vec![id.to_owned()], vec![]);
     }
@@ -682,11 +705,15 @@ mod tests {
             r#"{"level":2,"rows":["sync-onedrive"],"settings":["game-dvr-off"],"powerPlan":null,
                 "game":{"appid":70,"priority":"realtime","realtimeConfirmed":true,
                         "affinity":[2,3],"highPerformanceGpu":false},
-                "autoRevert":true}"#,
+                "autoRevert":true,"keepAlive":["discord"," teams"]}"#,
         )
         .unwrap();
         assert_eq!(level(s.level).unwrap(), Level::Agresivo);
         assert_eq!(s.rows, ["sync-onedrive"]);
+        assert_eq!(
+            s.keep_alive.as_deref(),
+            Some(&["discord".to_owned(), " teams".to_owned()][..])
+        );
         assert_eq!(s.settings, ["game-dvr-off"]);
         assert_eq!(s.power_plan, None);
         assert!(s.auto_revert);

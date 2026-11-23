@@ -361,7 +361,7 @@
   }
 
   async function limitRow(id) {
-    const r = await run('Limitar', () => api.limitRow(id, S.level));
+    const r = await run('Limitar', () => api.limitRow(id, S.level, keepAliveList()));
     if (!r) return;
     if (r.done) S.hist.push(r.done);
     sess(); syncLimited();
@@ -401,11 +401,21 @@
       game: gameSelection(),
       autoRevert: !!first('auto-revert-on-exit')?.checked,
       turbo: turbo ? { rescanSecs: +(first('turbo-rescan')?.value || 60) } : null,
+      keepAlive: keepAliveList(),
     }));
     if (r) S.watching = !!r.watching;
     if (r) S.turbo = turbo && !!r.watching;
     if (r && r.done) S.hist.push(r.done);
     sess(); syncLimited();
+  }
+
+  /*
+   * keep-alive-list (P7) tal como está en el campo: arranca con la del equipo (R8) y el usuario
+   * puede cambiarla. Vacía = no se protege ninguna app; sin el campo, null (la del equipo).
+   */
+  function keepAliveList() {
+    const x = first('keep-alive-list');
+    return x ? x.value.split(',').map(s => s.trim()).filter(Boolean) : null;
   }
 
   /* Panel del juego (R3): lo que el backend necesita para el GameBoost. FSO e IFEO van en settings. */
