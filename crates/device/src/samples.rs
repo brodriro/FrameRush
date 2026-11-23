@@ -87,6 +87,7 @@ pub fn hybrid_laptop() -> DeviceProfile {
                     hz: 75,
                 },
             ],
+            primary: true,
         }],
         battery: Some(Battery { discharging: true }),
         power_plans: vec![
@@ -142,6 +143,7 @@ pub fn amd_desktop_linux() -> DeviceProfile {
                 height: 1440,
                 hz: 144,
             }],
+            primary: true,
         }],
         battery: None,
         power_plans: vec![

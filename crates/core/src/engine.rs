@@ -1370,6 +1370,7 @@ mod tests {
             id: "d1".into(),
             current: mode(60),
             modes: vec![mode(60), mode(120), mode(144)],
+            primary: true,
         }]);
         let store = MemoryStore::default();
         let engine = Engine::new(&m, &store);

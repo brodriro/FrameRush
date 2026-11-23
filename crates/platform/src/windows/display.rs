@@ -12,13 +12,13 @@ use crate::{Display, Mode, PlatformError, Result};
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::Graphics::Gdi::{
     CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DEVMODEW, DISP_CHANGE_RESTART,
-    DISP_CHANGE_SUCCESSFUL, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICEW,
-    DM_DISPLAYFREQUENCY, DM_INTERLACED, ENUM_CURRENT_SETTINGS, EnumDisplayDevicesW,
-    EnumDisplaySettingsW,
+    DISP_CHANGE_SUCCESSFUL, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICE_PRIMARY_DEVICE,
+    DISPLAY_DEVICEW, DM_DISPLAYFREQUENCY, DM_INTERLACED, ENUM_CURRENT_SETTINGS,
+    EnumDisplayDevicesW, EnumDisplaySettingsW,
 };
 
-/// `DeviceName` de los adaptadores del escritorio, terminados en NUL.
-fn desktop_devices() -> Vec<Vec<u16>> {
+/// `DeviceName` de los adaptadores del escritorio, terminados en NUL, y si es el principal.
+fn desktop_devices() -> Vec<(Vec<u16>, bool)> {
     let mut names = vec![];
     for index in 0.. {
         let mut dd = DISPLAY_DEVICEW {
@@ -32,7 +32,11 @@ fn desktop_devices() -> Vec<Vec<u16>> {
         }
         if dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP != 0 {
             let len = dd.DeviceName.iter().position(|&c| c == 0).unwrap_or(32);
-            names.push(dd.DeviceName[..len].iter().copied().chain([0]).collect());
+            let primary = dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE != 0;
+            names.push((
+                dd.DeviceName[..len].iter().copied().chain([0]).collect(),
+                primary,
+            ));
         }
     }
     names
@@ -87,12 +91,13 @@ fn modes(device: &[u16], current: &DEVMODEW) -> Vec<Mode> {
 pub(super) fn displays() -> Result<Vec<Display>> {
     Ok(desktop_devices()
         .into_iter()
-        .filter_map(|device| {
+        .filter_map(|(device, primary)| {
             let current = mode(&device, ENUM_CURRENT_SETTINGS)?;
             Some(Display {
                 id: name(&device),
                 current: to_mode(&current),
                 modes: modes(&device, &current),
+                primary,
             })
         })
         .collect())
@@ -101,6 +106,7 @@ pub(super) fn displays() -> Result<Vec<Display>> {
 pub(super) fn set_refresh_rate(id: &str, hz: u32) -> Result<()> {
     let device = desktop_devices()
         .into_iter()
+        .map(|(d, _)| d)
         .find(|d| name(d) == id)
         .ok_or_else(|| PlatformError::NotFound(format!("pantalla {id}")))?;
     let mut current = mode(&device, ENUM_CURRENT_SETTINGS)

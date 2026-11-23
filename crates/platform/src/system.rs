@@ -55,6 +55,9 @@ pub struct Display {
     pub current: Mode,
     /// Modos que admite, tal como los lista el SO.
     pub modes: Vec<Mode>,
+    /// Monitor principal del escritorio (en Windows, `DISPLAY_DEVICE_PRIMARY_DEVICE`).
+    #[serde(default)]
+    pub primary: bool,
 }
 
 impl Display {

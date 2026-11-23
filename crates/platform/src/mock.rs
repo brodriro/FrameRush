@@ -820,6 +820,7 @@ mod tests {
                 mode(1920, 1080, 144),
                 mode(1280, 720, 240),
             ],
+            primary: true,
         }]);
         m.set_refresh_rate("d1", 144).unwrap();
         assert_eq!(m.displays().unwrap()[0].current.hz, 144);
