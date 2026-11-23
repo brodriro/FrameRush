@@ -797,6 +797,11 @@ fn print_device(device: &DeviceProfile) {
     if !device.antivirus.is_empty() {
         println!("Antivirus registrado: {}", device.antivirus.join(", "));
     }
+    match device.defender_active {
+        Some(true) => println!("Microsoft Defender: activo"),
+        Some(false) => println!("Microsoft Defender: no es el antivirus activo"),
+        None => {}
+    }
     if !device.virtualization.is_empty() {
         println!(
             "Usa el hipervisor: {} (se rompe si se desactiva)",

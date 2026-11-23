@@ -76,6 +76,9 @@ pub struct DeviceProfile {
     /// Antivirus registrados en el SO (Security Center en Windows). Solo el nombre: si hay más
     /// de uno no se sabe cuál está activo.
     pub antivirus: Vec<String>,
+    /// Microsoft Defender es el antivirus activo (no pasivo); `None` si no se sabe. Las
+    /// exclusiones (`defender-exclusions`) solo se ofrecen con `Some(true)` (P15).
+    pub defender_active: Option<bool>,
     /// Software de virtualización instalado que se rompe con el hipervisor desactivado (V6).
     pub virtualization: Vec<String>,
 }
@@ -101,6 +104,7 @@ impl DeviceProfile {
             vbs_hvci_enabled: None,
             hags_supported: None,
             antivirus: vec![],
+            defender_active: None,
             virtualization: vec![],
         }
     }

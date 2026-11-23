@@ -99,6 +99,7 @@ pub fn hybrid_laptop() -> DeviceProfile {
         vbs_hvci_enabled: Some(true),
         hags_supported: Some(true),
         antivirus: vec!["Microsoft Defender Antivirus".into()],
+        defender_active: Some(true),
         virtualization: vec!["WSL2".into()],
     }
 }
@@ -156,6 +157,7 @@ pub fn amd_desktop_linux() -> DeviceProfile {
         vbs_hvci_enabled: None,
         hags_supported: None,
         antivirus: vec![],
+        defender_active: None,
         virtualization: vec![],
     }
 }
@@ -201,6 +203,7 @@ pub fn apple_silicon_mac() -> DeviceProfile {
         vbs_hvci_enabled: None,
         hags_supported: None,
         antivirus: vec![],
+        defender_active: None,
         virtualization: vec![],
     }
 }

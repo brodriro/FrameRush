@@ -47,6 +47,7 @@ pub fn detect<P: PowerControl + DisplayControl + Inventory>(platform: &P, os: Os
     device.power_plans = platform.power_plans().unwrap_or_default();
     device.active_power_plan = platform.active_power_plan().ok().map(|p| p.id);
     device.antivirus = platform.antivirus().unwrap_or_default();
+    device.defender_active = platform.defender_active().ok().flatten();
     device
 }
 
@@ -112,12 +113,14 @@ mod tests {
 
         m.set_gpu_and_hypervisor(Some(true), &["VirtualMachinePlatform"]);
         m.set_antivirus(&["Windows Defender"]);
+        m.set_defender_active(Some(true));
         m.set_laptop(Some(true));
         m.set_total_memory(Some(16 << 30));
         m.set_system(None, None, None, &["Docker Desktop", "Steam"]);
         let d = detect(&m, Os::Windows);
         assert_eq!(d.hags_supported, Some(true));
         assert_eq!(d.antivirus, ["Windows Defender"]);
+        assert_eq!(d.defender_active, Some(true));
         assert_eq!(d.laptop, Some(true));
         assert_eq!(d.memory_bytes, Some(16 << 30));
         assert_eq!(
