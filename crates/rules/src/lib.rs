@@ -258,7 +258,7 @@ description = "Indexador de búsqueda."
     #[test]
     fn embedded_rules_are_valid() {
         let rules = embedded().unwrap();
-        assert_eq!(rules.len(), 60);
+        assert_eq!(rules.len(), 58);
         // Los navegadores vienen desmarcados (PLAN.md §3).
         assert!(
             rules

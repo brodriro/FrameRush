@@ -148,23 +148,9 @@ min_level = "agresivo"
 risk = "low"
 description = "Servicio de directivas de diagnóstico."
 
-[[rule]]
-id = "wdiservicehost"
-match = { windows = ["WdiServiceHost"] }
-category = "service"
-action = "stop_service"
-min_level = "agresivo"
-risk = "low"
-description = "Host del servicio de diagnóstico."
-
-[[rule]]
-id = "wdisystemhost"
-match = { windows = ["WdiSystemHost"] }
-category = "service"
-action = "stop_service"
-min_level = "agresivo"
-risk = "low"
-description = "Host del sistema de diagnóstico."
+# WdiServiceHost y WdiSystemHost (en la referencia) no están: su descriptor da SERVICE_STOP a
+# los administradores pero SERVICE_START solo a SYSTEM y a DPS (`sc sdshow`, Windows 11), así
+# que detenerlos no se podría deshacer. DPS los arranca cuando los necesita.
 
 # Grupo B: solo en Extremo.
 
