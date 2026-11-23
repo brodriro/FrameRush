@@ -478,6 +478,12 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         self.revert_where(|e| e.change.target().is_some_and(|t| targets.contains(t)))
     }
 
+    /// Reanuda todo lo congelado y deja el resto de la sesión (Turbo al cerrar el juego sin
+    /// `auto-revert-on-exit`, P5: los congelados siempre se reanudan).
+    pub fn resume_frozen(&self) -> Result<Report, EngineError> {
+        self.revert_where(|e| matches!(e.change, Change::Suspend { .. }))
+    }
+
     /// Deshace solo el último lote (`undo-last`).
     pub fn undo_last(&self) -> Result<Report, EngineError> {
         match self.store.load()?.last_batch() {
@@ -1610,6 +1616,28 @@ mod tests {
 
         engine.apply(&request(&items[..1])).unwrap();
         assert!(m.is_suspended(&a).unwrap());
+    }
+
+    /// P5: al salir del juego Turbo reanuda los congelados aunque el resto de la sesión se quede.
+    #[test]
+    fn resume_frozen_keeps_the_other_session_changes() {
+        let m = MockPlatform::new(4);
+        let a = m.spawn(1, "a.exe", "/a", 1);
+        let b = m.spawn(2, "b.exe", "/b", 1);
+        let items = [
+            item(Action::Suspend, procs(&m, &[&a])),
+            item(Action::LowerPriority, procs(&m, &[&b])),
+        ];
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        engine.apply(&request(&items)).unwrap();
+        let lowered = m.priority(&b).unwrap();
+
+        let report = engine.resume_frozen().unwrap();
+        assert_eq!((report.done(), report.failed()), (1, 0), "{report:?}");
+        assert!(!m.is_suspended(&a).unwrap());
+        assert_eq!(m.priority(&b).unwrap(), lowered);
+        assert!(engine.has_open_session().unwrap());
     }
 
     #[test]
