@@ -230,10 +230,12 @@
         '<option value="sistema">La que elija el sistema (sin cambios)</option>';
     });
 
-    /* resolution-override: resolución actual del primer monitor */
+    /* resolution-override: modos reales del monitor principal (R8); nativa = no se toca */
     DS('resolution-override').forEach(sel => {
-      const m = d.displays[0];
-      sel.innerHTML = m ? `<option value="nativa">Nativa (${m.width}×${m.height})</option>` : '<option value="nativa">Nativa</option>';
+      const m = d.displays.find(x => x.primary) || d.displays[0];
+      sel.innerHTML = (m ? `<option value="nativa">Nativa (${m.width}×${m.height})</option>` : '<option value="nativa">Nativa</option>') +
+        (m ? m.resolutions.filter(([w, h]) => w !== m.width || h !== m.height)
+          .map(([w, h]) => `<option value="${w}x${h}">${w}×${h}${w < 1.4 * h ? ' · 4:3' : ''}</option>`).join('') : '');
     });
 
     const ka = first('keep-alive-list');
@@ -465,8 +467,16 @@
         tune: on('game-config-tune'),
         fpsCap: Math.max(0, Math.round(+(first('fps-cap')?.value || 0))),
         bench: on('bench-cfg'),
+        resolution: resolutionValue(),
       } : null,
     };
+  }
+
+  /* resolution-override: [ancho, alto] o null con «Nativa». */
+  function resolutionValue() {
+    const x = first('resolution-override');
+    const m = x && !x.disabled && shown(x) ? /^(\d+)x(\d+)$/.exec(x.value) : null;
+    return m ? [+m[1], +m[2]] : null;
   }
 
   /* Watchdog (It1.4, P5): el juego se cerró y el backend revirtió lo de sesión. */
@@ -812,7 +822,6 @@
     if (id === 'game-priority-persistent' && t.checked && priorityValue() === 'normal') { t.checked = false; toast('«Prioridad Alta siempre» solo guarda la prioridad Alta: elige Alta primero.'); }
     if (id === 'vbs-hvci-off' && t.checked) toast('Desactivar VBS/HVCI: al aplicar tendrás que confirmar qué deja de funcionar.');
     if (id === 'fps-cap' && +t.value > 0) toast(`Límite de FPS ${t.value}: al aplicar se guarda como fps_max en framerush.cfg.`);
-    if (id === 'resolution-override' && t.value === 'custom') toast('Resolución personalizada: control pendiente de definir.');
     if (id === 'profile') {
       if (t.value === 'nuevo') saveProfile();
       else if (t.value === 'global') useProfile(null);

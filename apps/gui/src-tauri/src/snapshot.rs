@@ -134,6 +134,18 @@ struct DisplayView {
     hz: u32,
     /// Máximo con la resolución actual.
     max_hz: Option<u32>,
+    /// Monitor principal (`resolution-override` sale de sus modos).
+    primary: bool,
+    /// Resoluciones que admite (ancho, alto), sin repetir, de mayor a menor.
+    resolutions: Vec<(u32, u32)>,
+}
+
+/// Resoluciones distintas de los modos del monitor, de mayor a menor.
+fn resolutions(d: &framerush_platform::Display) -> Vec<(u32, u32)> {
+    let mut out: Vec<(u32, u32)> = d.modes.iter().map(|m| (m.width, m.height)).collect();
+    out.sort_unstable_by(|a, b| b.cmp(a));
+    out.dedup();
+    out
 }
 
 #[derive(Debug, Serialize)]
@@ -384,6 +396,8 @@ fn device_view(d: &DeviceProfile, gpu_pref: Option<&str>) -> Device {
                 height: x.current.height,
                 hz: x.current.hz,
                 max_hz: x.max_hz_at_current_resolution(),
+                primary: x.primary,
+                resolutions: resolutions(x),
             })
             .collect(),
         battery: d.battery.map(|b| BatteryView {

@@ -110,6 +110,9 @@ pub struct AdapterSelection {
     fps_cap: u32,
     /// `bench-cfg`.
     bench: bool,
+    /// `resolution-override`: (ancho, alto) de un modo del monitor principal; `null` = nativa.
+    #[serde(default)]
+    resolution: Option<(u32, u32)>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -330,7 +333,7 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
                 // La GUI siempre deja el cfg propio (`+exec framerush`); 0 = sin tope.
                 fps_cap: Some(a.fps_cap),
                 bench: a.bench,
-                resolution: None,
+                resolution: a.resolution,
             };
             adapter_files(
                 g.appid,
