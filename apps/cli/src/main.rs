@@ -382,8 +382,7 @@ fn build_plan(
     let (tweaks, admin_tweaks) = native_tweaks();
     let snapshot = Snapshot {
         processes,
-        // Los servicios se consultan con el SCM / systemd en M5.
-        services: vec![],
+        services: native_services(&rules, os),
         game: game
             .iter()
             .flat_map(|g| g.processes.iter().map(|p| p.target.clone()))
@@ -1454,6 +1453,29 @@ fn native_tweaks() -> (Vec<Tweak>, Vec<Tweak>) {
     (vec![], vec![])
 }
 
+/// Servicios de las reglas que existen en este equipo, con su estado (SCM). Los que no se
+/// pudieron leer se avisan y no se listan.
+#[cfg(windows)]
+fn native_services(
+    rules: &[framerush_core::Rule],
+    os: Os,
+) -> Vec<(String, framerush_platform::ServiceState)> {
+    let w = framerush_platform::WindowsPlatform::new();
+    let (found, errors) = framerush_core::scan_services(&w, rules, os);
+    for e in errors {
+        println!("Aviso: no se pudo leer el servicio {e}");
+    }
+    found
+}
+
+#[cfg(not(windows))]
+fn native_services(
+    _rules: &[framerush_core::Rule],
+    _os: Os,
+) -> Vec<(String, framerush_platform::ServiceState)> {
+    vec![]
+}
+
 /// Operaciones de memoria que admite la plataforma nativa.
 fn native_memory() -> Vec<MemoryOp> {
     #[cfg(windows)]
@@ -1510,7 +1532,6 @@ fn print_plan(plan: &Plan, checked: &[&PlanItem], tweaks: &[Tweak], memory_ops: 
             plan.anticheats.join(", ")
         );
     }
-    println!("Servicios: todavía no se consultan.\n");
     if plan.items.is_empty() {
         println!("Ninguna regla coincide con lo que está en ejecución.");
     }
