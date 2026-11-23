@@ -28,8 +28,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use framerush_core::{
     ApplyRequest, CUSTOM_POWER_PLAN_NAME, Change, EntryStatus, FileStore, GameBoost, JournalStore,
     Level, MemoryOp, Outcome, Plan, PlanItem, PlanOptions, RefreshRate, Report, Scope, Snapshot,
-    Subject, defaults, is_protected, persistent_priority_default, plan, status_lines,
-    tweak_requires_reboot, tweak_scope,
+    StateLine, Subject, defaults, is_protected, persistent_priority_default, plan, status_lines,
+    system_state, tweak_requires_reboot, tweak_scope,
 };
 use framerush_device::{CoreKind, DeviceProfile};
 use framerush_platform::{
@@ -68,8 +68,8 @@ enum Command {
     Undo,
     /// Deshace toda la sesión (Restaurar).
     Revert,
-    /// Vista Estado: lo que la sesión tiene aplicado y el valor actual de cada ajuste del
-    /// sistema. No toca el sistema.
+    /// Vista Estado: lo que la sesión tiene aplicado, el valor actual de cada ajuste del
+    /// sistema, VBS/HVCI, plan de energía, Hz y config de los juegos. No toca el sistema.
     Status {
         /// Salida en JSON (exportable).
         #[arg(long)]
@@ -1393,6 +1393,9 @@ fn status(json: bool) -> Result<()> {
         })
     };
     let tweaks = tweak_states()?;
+    let os = Os::current().context("sistema operativo no admitido")?;
+    let mut system = system_state(&native_device(os));
+    system.extend(game_configs());
     if json {
         let tweaks: Vec<_> = tweaks
             .iter()
@@ -1400,7 +1403,7 @@ fn status(json: bool) -> Result<()> {
                 serde_json::json!({ "tweak": t, "values": values, "applied": applied(*t) })
             })
             .collect();
-        let out = serde_json::json!({ "session": session, "tweaks": tweaks });
+        let out = serde_json::json!({ "session": session, "tweaks": tweaks, "system": system });
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
@@ -1420,6 +1423,13 @@ fn status(json: bool) -> Result<()> {
             };
             println!("  lote {:<3} {scope:<11} {state:<9} {}", l.batch, l.what);
         }
+    }
+    println!(
+        "
+Equipo (ahora):"
+    );
+    for l in &system {
+        println!("  {:<28} {}", l.label, l.value);
     }
     if !tweaks.is_empty() {
         println!("\nAjustes del sistema (valor actual):");
@@ -1446,6 +1456,36 @@ fn status(json: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Config de cada juego de Steam instalado que tiene adaptador (`game-config-lock`). Sin Steam,
+/// nada.
+#[cfg(windows)]
+fn game_configs() -> Vec<StateLine> {
+    let w = framerush_platform::WindowsPlatform::new();
+    let Ok(Some(root)) = framerush_steam::locate() else {
+        return vec![];
+    };
+    let Ok(found) = framerush_steam::installed_apps(&root) else {
+        return vec![];
+    };
+    found
+        .apps
+        .iter()
+        .filter_map(|app| framerush_games::adapter(app.appid).map(|a| (a, app)))
+        .flat_map(|(adapter, app)| {
+            let install = framerush_games::Install {
+                dir: &app.dir,
+                steam_root: &root,
+            };
+            framerush_core::game_config_state(&w, adapter.name(), &adapter.config_files(install))
+        })
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn game_configs() -> Vec<StateLine> {
+    vec![]
 }
 
 /// Valor actual de cada ajuste que admite la plataforma nativa. Leer no pide admin, salvo el
