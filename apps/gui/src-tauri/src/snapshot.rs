@@ -227,8 +227,8 @@ pub(crate) fn inputs() -> Result<Inputs> {
     let (tweaks, admin_tweaks, caps) = native_caps();
     let snapshot = Snapshot {
         processes: processes.clone(),
-        // Los servicios se consultan con el SCM / systemd en M5.
-        services: vec![],
+        // Un servicio que no se pudo leer no se lista (P15), como uno que no existe.
+        services: native_services(&rules, os),
         game: running_game(&processes),
         tweaks: tweaks.clone(),
         admin_tweaks,
@@ -817,6 +817,23 @@ fn native_caps() -> (Tweaks, Tweaks, framerush_platform::CapabilitySet) {
 #[cfg(not(windows))]
 fn native_caps() -> (Tweaks, Tweaks, framerush_platform::CapabilitySet) {
     (vec![], vec![], framerush_platform::CapabilitySet::default())
+}
+
+/// Servicios de las reglas que existen en este equipo, con su estado (SCM).
+#[cfg(windows)]
+fn native_services(
+    rules: &[framerush_core::Rule],
+    os: Os,
+) -> Vec<(String, framerush_platform::ServiceState)> {
+    framerush_core::scan_services(&framerush_platform::WindowsPlatform::new(), rules, os).0
+}
+
+#[cfg(not(windows))]
+fn native_services(
+    _rules: &[framerush_core::Rule],
+    _os: Os,
+) -> Vec<(String, framerush_platform::ServiceState)> {
+    vec![]
 }
 
 /// Solo en Windows: es la única plataforma con detección nativa por ahora.
