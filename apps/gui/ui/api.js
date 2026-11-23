@@ -54,6 +54,16 @@
      * Evento `game-launched`: arrancó un juego de Steam (no cuenta el que ya corría al abrir la app).
      * { appid, pids }.
      */
+    /*
+     * Turbo (It5.2): launchGame pide a Steam que lance el juego (steam://rungameid). El evento
+     * `turbo-rescan` llega en cada re-escaneo con { outcomes | null, error | null }.
+     */
+    launchGame(appid) { return T.core.invoke('launch_game', { appid }); },
+    onTurboRescan(cb) {
+      let stop = () => {};
+      T.event.listen('turbo-rescan', e => cb(e.payload)).then(un => { stop = un; });
+      return () => stop();
+    },
     onGameLaunched(cb) {
       let stop = () => {};
       T.event.listen('game-launched', e => cb(e.payload)).then(un => { stop = un; });

@@ -12,8 +12,11 @@
 //! - `profiles` y `save_profile`: perfiles por juego (It3.2) en `profiles.json`.
 //! - evento `game-launched` cuando arranca un juego de Steam: la UI carga y aplica su perfil si
 //!   `profile-auto-apply` está activo (P4).
+//! - Turbo (It5.2): `launch_game` pide a Steam que lance el juego; al arrancar, la UI aplica con
+//!   `turbo` y el watchdog congela cada `turbo-rescan` las instancias nuevas (evento
+//!   `turbo-rescan`) y al salir reanuda siempre lo congelado (P5).
 //!
-//! Turbo y el diagnóstico aún no están conectados: la UI lo dice.
+//! El diagnóstico aún no está conectado: la UI lo dice.
 
 // Sin consola en las compilaciones de release de Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -28,7 +31,7 @@ use actions::Elevated;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Fuentes de sensores abiertas y el hilo que las lee.
@@ -96,16 +99,14 @@ struct GameExited {
     error: Option<String>,
 }
 
-/// Vigila `game` y, cuando ya no queda ningún proceso suyo, revierte lo de sesión. El hilo no
-/// toca el estado de la app: termina solo y el `GameWatch` se suelta en el siguiente `apply` o
-/// `revert`.
-fn watch(
-    app: AppHandle,
-    game: Vec<framerush_platform::Target>,
-    helper: Option<Elevated>,
-) -> GameWatch {
+/// Vigila el juego y, cuando ya no queda ningún proceso suyo, revierte lo de sesión (o, en Turbo
+/// sin `auto-revert-on-exit`, solo reanuda lo congelado, P5). En Turbo congela además las
+/// instancias nuevas cada `turbo-rescan`. El hilo no toca el estado de la app: termina solo y
+/// el `GameWatch` se suelta en el siguiente `apply` o `revert`.
+fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> GameWatch {
     let (stop, stopped) = mpsc::channel::<()>();
     let thread = std::thread::spawn(move || {
+        let mut last_rescan = Instant::now();
         loop {
             match stopped.recv_timeout(WATCH_INTERVAL) {
                 Err(RecvTimeoutError::Timeout) => {}
@@ -115,10 +116,33 @@ fn watch(
             let Ok(processes) = framerush_platform::scan_processes() else {
                 continue;
             };
-            if framerush_core::game_running(&game, &processes) {
+            if framerush_core::game_running(&plan.game, &processes) {
+                if let Some(turbo) = plan
+                    .turbo
+                    .as_ref()
+                    .filter(|t| last_rescan.elapsed() >= t.every)
+                {
+                    last_rescan = Instant::now();
+                    let payload = match actions::turbo_rescan(turbo, helper.clone()) {
+                        Ok(outcomes) => GameExited {
+                            outcomes: Some(outcomes),
+                            error: None,
+                        },
+                        Err(e) => GameExited {
+                            outcomes: None,
+                            error: Some(format!("{e:#}")),
+                        },
+                    };
+                    let _ = app.emit("turbo-rescan", payload);
+                }
                 continue;
             }
-            let payload = match actions::revert_session(helper) {
+            let result = if plan.revert_session {
+                actions::revert_session(helper)
+            } else {
+                actions::resume_frozen(helper)
+            };
+            let payload = match result {
                 Ok(outcomes) => GameExited {
                     outcomes: Some(outcomes),
                     error: None,
@@ -196,10 +220,10 @@ async fn apply(
     let helper = helper(&sensors)?;
     let for_apply = helper.clone();
     let mut out = blocking(move || actions::apply(&selection, for_apply)).await?;
-    let game = out.take_watch();
+    let plan = out.take_watch();
     stop_watch(&watchdog)?;
-    if !game.is_empty() {
-        let w = watch(app, game, helper);
+    if let Some(plan) = plan {
+        let w = watch(app, plan, helper);
         *watchdog
             .0
             .lock()
@@ -225,6 +249,12 @@ fn save_profile(appid: u32, profile: profiles::Profile) -> Result<(), String> {
 async fn undo(sensors: tauri::State<'_, Sensors>) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
     blocking(move || actions::undo(helper)).await
+}
+
+/// «Jugar ahora» (Turbo): pide a Steam que lance el juego `appid`.
+#[tauri::command]
+async fn launch_game(appid: u32) -> Result<(), String> {
+    blocking(move || actions::launch_game(appid)).await
 }
 
 /// Filas con algún proceso limitado por la sesión.
@@ -313,6 +343,7 @@ fn main() -> anyhow::Result<()> {
             undo,
             revert,
             release_row,
+            launch_game,
             limited_rows,
             limit_row,
             profiles,

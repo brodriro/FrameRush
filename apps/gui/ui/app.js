@@ -56,7 +56,7 @@
   /* ---------- Estado ---------- */
   let D = null;           /* snapshot del backend */
   let stopStreams = [];
-  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, profiles: {}, base: null, rt: false, alerted: false, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '', protOpen: false, released: [] };
+  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, profiles: {}, base: null, rt: false, alerted: false, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '', protOpen: false, released: [], turboPending: null };
 
   const game = () => D.games[S.game] || { ...NO_GAME, exe: D.gamesNote || '' };
   /* Anticheat del juego o, sin adaptador, los que están en ejecución (cuentan para cualquier juego, It1.3). */
@@ -385,7 +385,7 @@
   }
 
   /* El backend vuelve a planificar con el equipo de ahora y aplica solo lo marcado. */
-  async function apply(force, verb = 'Aplicar') {
+  async function apply(force, verb = 'Aplicar', turbo = false) {
     const n = S.chk.filter(Boolean).length + S.stc.filter(Boolean).length + levelToggles().length;
     if (first('dry-run')?.checked) { toast(`Simulación: se aplicarían ${n} cambios. No se ha modificado nada.`); return; }
     if (!force && active('vbs-hvci-off')) { /* SETTINGS §4.8 */
@@ -400,8 +400,10 @@
       powerPlan: S.plan ?? null,
       game: gameSelection(),
       autoRevert: !!first('auto-revert-on-exit')?.checked,
+      turbo: turbo ? { rescanSecs: +(first('turbo-rescan')?.value || 60) } : null,
     }));
     if (r) S.watching = !!r.watching;
+    if (r) S.turbo = turbo && !!r.watching;
     if (r && r.done) S.hist.push(r.done);
     sess(); syncLimited();
   }
@@ -433,9 +435,11 @@
   /* Watchdog (It1.4, P5): el juego se cerró y el backend revirtió lo de sesión. */
   function onGameExited(e) {
     S.watching = false;
+    const resumedOnly = S.turbo && !first('auto-revert-on-exit')?.checked;
+    S.turbo = false;
     if (e.error) toast(`Juego cerrado, pero no se pudo revertir: ${e.error}`);
     else {
-      report('Juego cerrado, revertido lo de sesión', e.outcomes);
+      report(resumedOnly ? 'Juego cerrado, Turbo reanudó lo congelado' : 'Juego cerrado, revertido lo de sesión', e.outcomes);
       if (!e.outcomes.sessionOpen) { S.hist = []; D.pendingSession = null; }
     }
     S.released = []; sess(); syncLimited();
@@ -449,6 +453,8 @@
     const i = D.games.findIndex(g => g.appid === e.appid);
     if (i < 0) return; /* instalado después de abrir la app: no hay datos de él */
     Object.assign(D.games[i], { running: true, pids: e.pids });
+    /* Lanzado con «Jugar ahora»: Turbo aplica el perfil una sola vez (P4). */
+    if (S.turboPending === e.appid) { S.turboPending = null; startTurbo(i); return; }
     const p = S.profiles[e.appid];
     if (!p || !first('profile-auto-apply')?.checked) {
       if (S.game === i) caps();
@@ -473,8 +479,44 @@
     }
   }
 
-  function launchGame() {
-    toast(`Jugar ahora (Turbo) ${NOT_WIRED}`);
+  /*
+   * «Jugar ahora» (It5.2): lanza el juego con Steam y, cuando arranca (evento game-launched),
+   * aplica su perfil con Turbo: congela lo marcado (cerrar pasa a congelar), re-escanea cada
+   * turbo-rescan y al salir reanuda siempre lo congelado (P5). Si ya está abierto, Turbo se
+   * aplica sin lanzarlo. En simulación (P11) se lanza sin congelar nada.
+   */
+  async function launchGame() {
+    const g = D.games[S.game];
+    if (!g) { toast('Elige un juego de Steam en «Juego».'); return; }
+    if (!api.inTauri) { toast('Jugar ahora solo funciona dentro de la app.'); return; }
+    const dry = !!first('dry-run')?.checked;
+    if (g.running && !dry) { startTurbo(S.game); return; }
+    S.turboPending = dry ? null : g.appid;
+    try {
+      await api.launchGame(g.appid);
+    } catch (err) {
+      S.turboPending = null;
+      toast(`No se pudo lanzar ${g.name}: ${err && err.message ? err.message : err}`);
+      return;
+    }
+    toast(dry
+      ? `Simulación: lanzando ${g.name} sin congelar nada (${S.chk.filter(Boolean).length} fila(s) marcada(s)).`
+      : `Lanzando ${g.name} con Steam… Turbo se aplica en cuanto arranque.`);
+  }
+
+  function startTurbo(i) {
+    const g = D.games[i];
+    S.game = i;
+    DS('game-target').forEach(s => { s.value = String(i); });
+    caps();
+    if (S.profiles[g.appid]) useProfile(g.appid, true);
+    apply(false, `Turbo · ${g.name}`, true);
+  }
+
+  /* Re-escaneo de Turbo: solo avisa si congeló algo nuevo. */
+  function onTurboRescan(e) {
+    if (e.error) { toast(`Turbo: no se pudo re-escanear (${e.error}).`); return; }
+    if (e.outcomes && e.outcomes.done) { toast(`Turbo: ${e.outcomes.done} proceso(s) nuevo(s) congelado(s).`); syncLimited(); }
   }
 
   /* ---------- Perfiles por juego (It3.2) ---------- */
@@ -783,7 +825,7 @@
     try { S.profiles = await api.profiles(); } catch (err) { S.profiles = {}; toast(`No se pudieron leer los perfiles: ${err && err.message ? err.message : err}`); }
     const g = D.games[S.game];
     if (g && g.appid in S.profiles) useProfile(g.appid); else fillProfiles('global');
-    stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited), api.onGameLaunched(onGameLaunched));
+    stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited), api.onGameLaunched(onGameLaunched), api.onTurboRescan(onTurboRescan));
   }
 
   DS('hardware-profile').forEach(e => { e.textContent = 'Leyendo el equipo…'; });

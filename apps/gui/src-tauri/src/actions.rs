@@ -13,6 +13,7 @@ use framerush_core::{
 };
 use framerush_platform::{Priority, Target};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Ids de design/SETTINGS.md que no son reglas ni ajustes de `Tweak`/`MemoryOp`.
 const POWER_PLAN: &str = "power-plan";
@@ -40,6 +41,37 @@ pub struct Selection {
     game: Option<GameSelection>,
     /// `auto-revert-on-exit`: al cerrarse el juego, el watchdog revierte lo de sesión (P5).
     auto_revert: bool,
+    /// Sesión Turbo (`launch-game`, It5.2); `null` en un Aplicar normal.
+    #[serde(default)]
+    turbo: Option<TurboSelection>,
+}
+
+/// Opciones de Turbo de la UI.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurboSelection {
+    /// `turbo-rescan`: segundos entre escaneos (30 / 60 / 120).
+    rescan_secs: u64,
+}
+
+/// Turbo en marcha (P6): las filas marcadas que congelar, también en cada `turbo-rescan`.
+#[derive(Debug, Clone)]
+pub struct Turbo {
+    appid: u32,
+    level: Level,
+    /// Filas marcadas con acción congelar o cerrar (en Turbo, cerrar pasa a congelar).
+    rows: Vec<String>,
+    pub every: Duration,
+}
+
+/// Lo que vigila el watchdog tras un Aplicar.
+#[derive(Debug, Clone)]
+pub struct WatchPlan {
+    pub game: Vec<Target>,
+    /// `auto-revert-on-exit`: al salir se revierte lo de sesión; si no, solo se reanudan los
+    /// congelados de Turbo (P5).
+    pub revert_session: bool,
+    pub turbo: Option<Turbo>,
 }
 
 /// Panel del juego (R3).
@@ -105,15 +137,15 @@ pub struct Outcomes {
     session_open: bool,
     /// El watchdog vigila el juego para revertir lo de sesión cuando se cierre.
     watching: bool,
-    /// Procesos del juego que vigilar (solo para el backend).
+    /// Qué vigilar al cerrar el juego (solo para el backend).
     #[serde(skip)]
-    watch: Vec<Target>,
+    watch: Option<WatchPlan>,
 }
 
 impl Outcomes {
-    /// Procesos que el watchdog debe vigilar; vacío si no hay que vigilar nada.
-    pub fn take_watch(&mut self) -> Vec<Target> {
-        std::mem::take(&mut self.watch)
+    /// Lo que el watchdog debe vigilar; `None` si no hay nada.
+    pub fn take_watch(&mut self) -> Option<WatchPlan> {
+        self.watch.take()
     }
 
     pub fn set_watching(&mut self, watching: bool) {
@@ -167,11 +199,20 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
     let plan = plan(level, &snapshot, &rules, &device, &options);
     let wanted = |id: &str| selection.settings.iter().any(|s| s == id);
 
-    let items: Vec<_> = plan
+    let owned: Vec<PlanItem> = plan
         .items
         .iter()
         .filter(|i| !i.locked && selection.rows.contains(&i.rule_id))
+        .cloned()
+        .map(|i| {
+            if selection.turbo.is_some() {
+                freeze_instead_of_kill(i)
+            } else {
+                i
+            }
+        })
         .collect();
+    let items: Vec<&PlanItem> = owned.iter().collect();
     let mut needs_admin: Vec<String> = plan
         .items
         .iter()
@@ -319,11 +360,91 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
     };
     let report = run(helper, Op::Apply(Box::new(request)))?;
     let mut out = outcomes(report, not_wired, needs_admin, notes)?;
-    // Solo hay algo que revertir al cerrar el juego si quedó una sesión abierta.
-    if selection.auto_revert && out.session_open {
-        out.watch = game_targets;
+    let turbo = selection
+        .turbo
+        .zip(selection.game.as_ref())
+        .map(|(t, g)| Turbo {
+            appid: g.appid,
+            level,
+            rows: owned
+                .iter()
+                .filter(|i| i.action == Action::Suspend)
+                .map(|i| i.rule_id.clone())
+                .collect(),
+            every: Duration::from_secs(t.rescan_secs.max(1)),
+        });
+    // Solo hay algo que vigilar si el juego está en marcha y quedó una sesión abierta. Turbo
+    // vigila siempre: sus congelados se reanudan al salir (P5).
+    if (selection.auto_revert || turbo.is_some()) && out.session_open && !game_targets.is_empty() {
+        out.watch = Some(WatchPlan {
+            game: game_targets,
+            revert_session: selection.auto_revert,
+            turbo,
+        });
     }
     Ok(out)
+}
+
+/// En Turbo, cerrar pasa a congelar (P6): se reanuda al salir y cerrar no se deshace.
+fn freeze_instead_of_kill(mut item: PlanItem) -> PlanItem {
+    if item.action == Action::Kill {
+        item.action = Action::Suspend;
+    }
+    item
+}
+
+/// `turbo-rescan`: congela las instancias nuevas de las filas de Turbo. Lo ya congelado se
+/// salta (el journal lo tiene).
+pub fn turbo_rescan(turbo: &Turbo, helper: Option<Elevated>) -> Result<Outcomes> {
+    let Inputs {
+        device,
+        rules,
+        processes,
+        mut snapshot,
+        ..
+    } = inputs()?;
+    let game = game_targets(turbo.appid, &processes)?;
+    if !game.is_empty() {
+        snapshot.game = game;
+    }
+    let options = PlanOptions {
+        elevated: helper.is_some(),
+        keep_alive: defaults::keep_alive(&device).value,
+    };
+    let owned: Vec<PlanItem> = plan(turbo.level, &snapshot, &rules, &device, &options)
+        .items
+        .into_iter()
+        .filter(|i| !i.locked && turbo.rows.contains(&i.rule_id))
+        .map(freeze_instead_of_kill)
+        .filter(|i| i.action == Action::Suspend)
+        .collect();
+    if owned.is_empty() {
+        return outcomes(Report::default(), vec![], vec![], vec![]);
+    }
+    let request = ApplyRequest {
+        items: owned.iter().collect(),
+        ..ApplyRequest::default()
+    };
+    let report = run(helper, Op::Apply(Box::new(request)))?;
+    outcomes(report, vec![], vec![], vec![])
+}
+
+/// Turbo sin `auto-revert-on-exit`: al cerrar el juego solo se reanudan los congelados (P5).
+pub fn resume_frozen(helper: Option<Elevated>) -> Result<Outcomes> {
+    let report = run(helper, Op::ResumeFrozen)?;
+    outcomes(report, vec![], vec![], vec![])
+}
+
+/// «Jugar ahora»: pide a Steam que lance el juego. Turbo se aplica cuando arranca (la UI
+/// espera el evento `game-launched`).
+#[cfg(windows)]
+pub fn launch_game(appid: u32) -> Result<()> {
+    framerush_platform::steam_launch(appid).context("no se pudo lanzar el juego desde Steam")
+}
+
+#[cfg(not(windows))]
+pub fn launch_game(_appid: u32) -> Result<()> {
+    anyhow::bail!("lanzar juegos de Steam solo está implementado en Windows por ahora")
 }
 
 /// Lo que el adaptador del juego quiere escribir. Sin adaptador o sin Steam, nada.
@@ -437,9 +558,7 @@ pub fn limit_row(id: &str, level_n: u8, helper: Option<Elevated>) -> Result<Outc
     if item.locked {
         return outcomes(Report::default(), vec![], vec![id.to_owned()], vec![]);
     }
-    if item.action == Action::Kill {
-        item.action = Action::Suspend;
-    }
+    item = freeze_instead_of_kill(item);
     let request = ApplyRequest {
         items: vec![&item],
         ..ApplyRequest::default()
@@ -487,7 +606,7 @@ fn outcomes(
         notes,
         session_open,
         watching: false,
-        watch: vec![],
+        watch: None,
     })
 }
 
@@ -508,6 +627,7 @@ enum Op<'a> {
     Revert,
     RevertSession,
     RevertProcesses(Vec<Target>),
+    ResumeFrozen,
 }
 
 #[cfg(windows)]
@@ -528,6 +648,9 @@ fn run(helper: Option<Elevated>, op: Op<'_>) -> Result<Report> {
         Op::RevertProcesses(targets) => engine
             .revert_processes(&targets)
             .context("no se pudo reanudar")?,
+        Op::ResumeFrozen => engine
+            .resume_frozen()
+            .context("no se pudo reanudar lo congelado")?,
     })
 }
 
