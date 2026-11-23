@@ -472,6 +472,12 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         self.revert_where(|e| e.change.scope() == Scope::Session)
     }
 
+    /// Deshace solo los cambios de los procesos de `targets` (reanudar una fila suelta) y deja
+    /// el resto de la sesión como está. Volver a limitarlos es otro `apply` con esa fila.
+    pub fn revert_processes(&self, targets: &[Target]) -> Result<Report, EngineError> {
+        self.revert_where(|e| e.change.target().is_some_and(|t| targets.contains(t)))
+    }
+
     /// Deshace solo el último lote (`undo-last`).
     pub fn undo_last(&self) -> Result<Report, EngineError> {
         match self.store.load()?.last_batch() {
@@ -1569,6 +1575,36 @@ mod tests {
         assert_eq!(report.failed(), 0);
         assert_eq!(state(&m, &[&a, &game], &[]), initial);
         assert!(!engine.has_open_session().unwrap());
+    }
+
+    /// Reanudar una fila deshace solo sus procesos; el resto de la sesión sigue aplicado y la
+    /// fila se puede volver a limitar.
+    #[test]
+    fn revert_processes_leaves_the_rest_of_the_session() {
+        let m = MockPlatform::new(4);
+        let a = m.spawn(1, "a.exe", "/a", 1);
+        let b = m.spawn(2, "b.exe", "/b", 1);
+        let game = m.spawn(9, "game.exe", "/game", 1);
+        let items = [
+            item(Action::Suspend, procs(&m, &[&a])),
+            item(Action::Suspend, procs(&m, &[&b])),
+        ];
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        let mut req = request(&items);
+        req.game = boost(&game, Priority::High, false).game;
+        engine.apply(&req).unwrap();
+
+        let report = engine.revert_processes(std::slice::from_ref(&a)).unwrap();
+        assert_eq!((report.done(), report.failed()), (1, 0), "{report:?}");
+        assert!(!m.is_suspended(&a).unwrap());
+        assert!(m.is_suspended(&b).unwrap());
+        assert_eq!(m.priority(&game).unwrap(), Priority::High);
+        let journal = store.load().unwrap();
+        assert!(journal.entries.iter().all(|e| e.change.target() != Some(&a)));
+
+        engine.apply(&request(&items[..1])).unwrap();
+        assert!(m.is_suspended(&a).unwrap());
     }
 
     #[test]
