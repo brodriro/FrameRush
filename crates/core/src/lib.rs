@@ -9,6 +9,7 @@ mod model;
 mod plan;
 mod protected;
 mod rule;
+mod status;
 mod watchdog;
 
 pub use engine::{
@@ -24,4 +25,5 @@ pub use plan::{
 };
 pub use protected::{ProtectedReason, is_protected, protected_reason};
 pub use rule::{OsNames, Rule};
+pub use status::{StateLine, game_config_state, system_state};
 pub use watchdog::game_running;
