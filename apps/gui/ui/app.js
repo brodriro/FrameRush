@@ -537,7 +537,8 @@
     S.game = i;
     DS('game-target').forEach(s => { s.value = String(i); });
     caps();
-    if (S.profiles[g.appid]) useProfile(g.appid, true);
+    /* P4: con el perfil del juego ya elegido no se recarga, para no perder lo marcado después a mano. */
+    if (S.profiles[g.appid] && first('profile')?.value !== String(g.appid)) useProfile(g.appid, true);
     await apply(false, `Turbo · ${g.name}`, true);
     if (!S.turbo && retry) S.turboPending = g.appid;
   }
