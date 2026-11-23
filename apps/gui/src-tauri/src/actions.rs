@@ -19,6 +19,7 @@ use std::time::Duration;
 /// Ids de design/SETTINGS.md que no son reglas ni ajustes de `Tweak`/`MemoryOp`.
 const POWER_PLAN: &str = "power-plan";
 const CUSTOM_POWER_PLAN: &str = "custom-power-plan";
+const CSTATES_OFF: &str = "cstates-off";
 const REFRESH_RATE_MAX: &str = "refresh-rate-max";
 /// Ajustes del exe del juego que llegan como ids de `settings`.
 const PERSISTENT_PRIORITY: &str = "game-priority-persistent";
@@ -271,6 +272,8 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         .filter(|p| device.active_power_plan.as_deref() != Some(p.id.as_str()))
         .filter(|_| custom_power_plan.is_none())
         .cloned();
+    // Solo dentro del plan propio (la UI lo desactiva sin él).
+    let cstates_off = wanted(CSTATES_OFF) && custom_power_plan.is_some();
     let refresh_rates: Vec<RefreshRate> = if wanted(REFRESH_RATE_MAX) {
         defaults::refresh_rate_max(level, &device)
             .into_iter()
@@ -367,6 +370,7 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
             || id == DEFENDER_EXCLUSIONS
             || id == GAME_CONFIG_LOCK
             || id == CUSTOM_POWER_PLAN
+            || id == CSTATES_OFF
             || id == REFRESH_RATE_MAX
             || id == FSO_OFF
             || id == PERSISTENT_PRIORITY
@@ -388,7 +392,7 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         memory,
         power_plan,
         custom_power_plan,
-        cstates_off: false,
+        cstates_off,
         refresh_rates,
         game_files,
         defender_exclusions,

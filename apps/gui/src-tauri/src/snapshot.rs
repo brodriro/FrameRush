@@ -282,7 +282,8 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
         available.push("power-plan");
     }
     if caps.custom_power_plan {
-        available.push("custom-power-plan");
+        // `cstates-off` va dentro del plan propio.
+        available.extend(["custom-power-plan", "cstates-off"]);
     }
     if caps.refresh_rate && !defaults::refresh_rate_max(Level::Extremo, &device).is_empty() {
         available.push("refresh-rate-max");

@@ -34,7 +34,7 @@
     '⚠ Extremo (requiere reiniciar): lo de Agresivo + cierra procesos de riesgo bajo, servicios del grupo B, HAGS y desactiva VBS/HVCI y C-states. Reservar núcleos y el temporizador siguen siendo opcionales.'];
   const DEFAULT_LEVEL = 2; /* Agresivo (PLAN §3, valores por defecto) */
   /* Ajustes que requieren reinicio (SETTINGS §4.7). */
-  const REBOOT = { hags: 'HAGS', 'vbs-hvci-off': 'VBS/HVCI desactivado', 'cstates-off': 'C-states desactivados', 'timer-resolution': 'temporizador global' };
+  const REBOOT = { hags: 'HAGS', 'vbs-hvci-off': 'VBS/HVCI desactivado', 'timer-resolution': 'temporizador global' };
   /* run-as-admin: W y L según SETTINGS.md; la etiqueta de macOS no está definida (pendiente). */
   const ELEVATE_LABEL = { win: '🔒 Ejecutar como administrador', lin: '🔒 Pedir permisos de administrador (polkit)', mac: '🔒 Pedir permisos de administrador' };
   const RT_API = { lin: ' (SCHED_RR)' };
@@ -168,6 +168,9 @@
     });
     setText('.pwrCur', o.current == null ? 'plan actual desconocido' : o.plans[o.current]);
     const custom = D.caps.windows && active('custom-power-plan');
+    /* cstates-off va dentro de «FrameRush Max»: sin ese plan no hay dónde ponerlo. */
+    DS('cstates-off').forEach(x => { x.disabled = !custom; });
+    $$('.cstNote').forEach(e => { e.hidden = custom; });
     const what = custom ? `se activará «FrameRush Max» (base: ${o.plans[S.plan] ?? 'plan actual'})`
       : S.plan == null || S.plan === o.current ? 'sin cambios en este nivel' : `se cambiará a «${o.plans[S.plan]}» al aplicar`;
     setText('.pwrNote', `${POWER_BACKEND[D.os]} · ${what} · se deshace con Restaurar`);
