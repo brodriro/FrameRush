@@ -4,8 +4,8 @@
 //! Ajustes de sistema en el registro (`SystemTweaks`, módulo `registry`). Los que piden admin
 //! pasan por el helper elevado si hay uno (módulo `helper`).
 //!
-//! Planes de energía con `powrprof` (módulo `power`). Los servicios llegan en M5; hasta entonces
-//! devuelven `Unsupported` y `capabilities()` lo refleja.
+//! Planes de energía con `powrprof` (módulo `power`). Servicios con el SCM (módulo `service`):
+//! detener y arrancar piden admin y, sin él, pasan al helper si hay uno.
 //!
 //! Antes de cada operación se revalida el `Target` (PID, arranque y ruta) con `sysinfo`, la
 //! misma fuente del scan, para no tocar un PID reutilizado. Queda una ventana mínima entre la
@@ -22,6 +22,7 @@ mod inventory;
 mod nvapi;
 mod power;
 mod registry;
+mod service;
 mod wmi;
 
 pub use acer::AcerSensor;
@@ -645,16 +646,16 @@ impl GameFiles for WindowsPlatform {
 }
 
 impl ServiceControl for WindowsPlatform {
-    fn service_state(&self, _name: &str) -> Result<Option<ServiceState>> {
-        Err(PlatformError::Unsupported("servicios (M5)"))
+    fn service_state(&self, name: &str) -> Result<Option<ServiceState>> {
+        service::service_state(name)
     }
 
-    fn stop_service(&self, _name: &str) -> Result<()> {
-        Err(PlatformError::Unsupported("servicios (M5)"))
+    fn stop_service(&self, name: &str) -> Result<()> {
+        service::stop_service(name)
     }
 
-    fn start_service(&self, _name: &str) -> Result<()> {
-        Err(PlatformError::Unsupported("servicios (M5)"))
+    fn start_service(&self, name: &str) -> Result<()> {
+        service::start_service(name)
     }
 }
 
@@ -1137,7 +1138,7 @@ impl Capabilities for WindowsPlatform {
             set_priority: true,
             suspend: true,
             kill: true,
-            services: false,
+            services: true,
             power_plans: true,
             custom_power_plan: true,
             refresh_rate: true,
