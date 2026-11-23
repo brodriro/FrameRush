@@ -5,11 +5,11 @@
 //! UI marca y aún no está conectado (juego, Turbo, ajustes sin backend) vuelve en `not_wired`
 //! para que la UI lo diga en vez de darlo por hecho.
 
-use crate::snapshot::{Inputs, data_dir, game_targets, inputs, steam_install};
+use crate::snapshot::{Inputs, data_dir, game_targets, inputs, session_targets, steam_install};
 use anyhow::{Context, Result};
 use framerush_core::{
-    ApplyRequest, FileStore, GameBoost, Level, Outcome, PlanOptions, RefreshRate, Report, defaults,
-    persistent_priority_default, plan,
+    Action, ApplyRequest, FileStore, GameBoost, Level, Outcome, PlanItem, PlanOptions, RefreshRate,
+    Report, Subject, defaults, persistent_priority_default, plan,
 };
 use framerush_platform::{Priority, Target};
 use serde::{Deserialize, Serialize};
@@ -372,6 +372,82 @@ pub fn undo(helper: Option<Elevated>) -> Result<Outcomes> {
     outcomes(report, vec![], vec![], vec![])
 }
 
+/// Plan de la fila `id` con el equipo de ahora (el juego queda fuera, como en `apply`).
+fn row_item(id: &str, level: Level, elevated: bool) -> Result<PlanItem> {
+    let Inputs {
+        device,
+        rules,
+        snapshot,
+        ..
+    } = inputs()?;
+    let options = PlanOptions {
+        elevated,
+        keep_alive: defaults::keep_alive(&device).value,
+    };
+    plan(level, &snapshot, &rules, &device, &options)
+        .items
+        .into_iter()
+        .find(|i| i.rule_id == id)
+        .with_context(|| format!("{id}: no hay procesos de esta fila en marcha"))
+}
+
+/// Ids de las filas con algún proceso limitado por la sesión (la UI lo pide tras cada acción,
+/// porque el snapshot solo se carga al abrir).
+pub fn limited_rows() -> Result<Vec<String>> {
+    let limited = session_targets();
+    if limited.is_empty() {
+        return Ok(vec![]);
+    }
+    let Inputs {
+        device,
+        rules,
+        snapshot,
+        ..
+    } = inputs()?;
+    let options = PlanOptions {
+        elevated: true,
+        keep_alive: defaults::keep_alive(&device).value,
+    };
+    Ok(plan(Level::Extremo, &snapshot, &rules, &device, &options)
+        .items
+        .into_iter()
+        .filter(|i| match &i.subject {
+            Subject::Processes(ps) => ps.iter().any(|p| limited.contains(&p.target)),
+            Subject::Services(_) => false,
+        })
+        .map(|i| i.rule_id)
+        .collect())
+}
+
+/// Reanuda los procesos de una fila y deja el resto de la sesión como está.
+pub fn release_row(id: &str, helper: Option<Elevated>) -> Result<Outcomes> {
+    let item = row_item(id, Level::Extremo, helper.is_some())?;
+    let targets: Vec<Target> = match &item.subject {
+        Subject::Processes(ps) => ps.iter().map(|p| p.target.clone()).collect(),
+        Subject::Services(_) => vec![],
+    };
+    let report = run(helper, Op::RevertProcesses(targets))?;
+    outcomes(report, vec![], vec![], vec![])
+}
+
+/// Vuelve a limitar una fila reanudada, con la acción de `level`. Nunca cierra: un kill pasa a
+/// congelar, porque «Limitar» se puede deshacer y cerrar no.
+pub fn limit_row(id: &str, level_n: u8, helper: Option<Elevated>) -> Result<Outcomes> {
+    let mut item = row_item(id, level(level_n)?, helper.is_some())?;
+    if item.locked {
+        return outcomes(Report::default(), vec![], vec![id.to_owned()], vec![]);
+    }
+    if item.action == Action::Kill {
+        item.action = Action::Suspend;
+    }
+    let request = ApplyRequest {
+        items: vec![&item],
+        ..ApplyRequest::default()
+    };
+    let report = run(helper, Op::Apply(Box::new(request)))?;
+    outcomes(report, vec![], vec![], vec![])
+}
+
 /// Deshace toda la sesión (Restaurar).
 pub fn revert(helper: Option<Elevated>) -> Result<Outcomes> {
     let report = run(helper, Op::Revert)?;
@@ -431,6 +507,7 @@ enum Op<'a> {
     Undo,
     Revert,
     RevertSession,
+    RevertProcesses(Vec<Target>),
 }
 
 #[cfg(windows)]
@@ -448,6 +525,9 @@ fn run(helper: Option<Elevated>, op: Op<'_>) -> Result<Report> {
         Op::RevertSession => engine
             .revert_session()
             .context("no se pudo revertir la sesión")?,
+        Op::RevertProcesses(targets) => engine
+            .revert_processes(&targets)
+            .context("no se pudo reanudar")?,
     })
 }
 

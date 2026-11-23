@@ -69,6 +69,14 @@
     saveProfile(appid, name, data) { return T.core.invoke('save_profile', { appid, profile: { name, data } }); },
     revert() { return T.core.invoke('revert'); },
 
+    /*
+     * Reanudar una fila suelta (releaseRow) sin tocar el resto de la sesión, volver a limitarla
+     * con la acción del nivel (limitRow; nunca cierra) y los ids de las filas limitadas ahora.
+     */
+    releaseRow(id) { return T.core.invoke('release_row', { id }); },
+    limitRow(id, level) { return T.core.invoke('limit_row', { id, level }); },
+    limitedRows() { return inTauri ? T.core.invoke('limited_rows') : Promise.resolve([]); },
+
     /* Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él. */
     elevate() {
       if (!inTauri) return Promise.reject(new Error('Solo dentro de la app.'));

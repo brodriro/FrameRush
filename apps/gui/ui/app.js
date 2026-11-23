@@ -56,7 +56,7 @@
   /* ---------- Estado ---------- */
   let D = null;           /* snapshot del backend */
   let stopStreams = [];
-  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, profiles: {}, base: null, rt: false, alerted: false, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '', protOpen: false };
+  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, profiles: {}, base: null, rt: false, alerted: false, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '', protOpen: false, released: [] };
 
   const game = () => D.games[S.game] || { ...NO_GAME, exe: D.gamesNote || '' };
   /* Anticheat del juego o, sin adaptador, los que están en ejecución (cuentan para cualquier juego, It1.3). */
@@ -84,7 +84,11 @@
   };
   const lockBadge = p => (locked(p) ? ' <span class="adm" data-setting="admin-lock">🔒 Requiere admin</span>' : '');
   const riskBadge = p => { const r = RISK[p.risk]; return `<span class="badge r${r[1]}">${r[0]}</span>`; };
-  const rowHTML = (p, i) => `<label class="p prow ${S.chk[i] ? '' : 'off'} ${locked(p) ? 'lk' : ''}" title="${esc(p.desc)}"><input type="checkbox" data-i="${i}" ${S.chk[i] ? 'checked' : ''} ${locked(p) ? 'disabled' : ''}><span class="n"><b>${esc(p.name)}</b>${lockBadge(p)}<i>${esc(p.desc)}</i></span><span class="r">${actBadge(p)} ${p.ramBytes ? fmt(p.ramBytes) : '—'} · ${p.cpu == null ? '— CPU' : p.cpu.toFixed(1) + '%'}${riskBadge(p)}</span></label>`;
+  /* Reanudar / volver a limitar una fila sin tocar el resto de la sesión. */
+  const rowBtn = p => (p.limited
+    ? ` <button class="btn rowAct" data-release="${esc(p.id)}" data-setting="process-release" title="Reanuda solo estos procesos; el resto sigue limitado">▶ Reanudar</button>`
+    : S.released.includes(p.id) ? ` <button class="btn rowAct" data-limit="${esc(p.id)}" data-setting="process-release" title="Vuelve a limitar estos procesos (nunca los cierra)">⏸ Limitar</button>` : '');
+  const rowHTML = (p, i) => `<label class="p prow ${S.chk[i] ? '' : 'off'} ${locked(p) ? 'lk' : ''}" title="${esc(p.desc)}"><input type="checkbox" data-i="${i}" ${S.chk[i] ? 'checked' : ''} ${locked(p) ? 'disabled' : ''}><span class="n"><b>${esc(p.name)}</b>${lockBadge(p)}${p.limited ? ' <span class="badge r2">limitado</span>' : ''}<i>${esc(p.desc)}</i></span><span class="r">${actBadge(p)} ${p.ramBytes ? fmt(p.ramBytes) : '—'} · ${p.cpu == null ? '— CPU' : p.cpu.toFixed(1) + '%'}${riskBadge(p)}${rowBtn(p)}</span></label>`;
   const catHTML = c => `<div class="cat">${CAT[c]}<span class="sp"></span><button class="lnk" data-setting="process-category-bulk" data-c="${c}" data-v="1">todos</button><button class="lnk" data-setting="process-category-bulk" data-c="${c}" data-v="0">ninguno</button></div>`;
   const lockHTML = l => `<div class="p lk" data-setting="protected-processes"><span>🔒</span><span class="n"><b>${esc(l.name)}</b><i>${esc(l.why)} · nunca se modifica</i></span><span class="r"><span class="badge r0">Protegido</span></span></div>`;
   const stHTML = (s, i, dis) => `<label class="p ${dis ? 'dis' : ''}"><input type="checkbox" data-s="${i}" ${S.stc[i] ? 'checked' : ''} ${dis ? 'disabled' : ''}><span class="n"><b>${esc(s.name)}</b><span class="src">${esc(s.source)}</span><i>${esc(s.why)}${dis ? ' · requiere overlay desactivado' : ''}</i></span><span></span></label>`;
@@ -338,12 +342,37 @@
     }
   }
 
+  /* El snapshot se carga una vez: tras cada acción se pregunta qué filas quedaron limitadas. */
+  async function syncLimited() {
+    try {
+      const ids = await api.limitedRows();
+      D.processes.forEach(p => { p.limited = ids.includes(p.id); });
+      S.released = S.released.filter(id => !ids.includes(id));
+      render();
+    } catch (err) { toast(`No se pudo leer qué procesos están limitados: ${err && err.message ? err.message : err}`); }
+  }
+
+  async function releaseRow(id) {
+    const r = await run('Reanudar', () => api.releaseRow(id));
+    if (!r) return;
+    if (!r.failed) S.released.push(id);
+    if (!r.sessionOpen) { S.hist = []; D.pendingSession = null; }
+    sess(); syncLimited();
+  }
+
+  async function limitRow(id) {
+    const r = await run('Limitar', () => api.limitRow(id, S.level));
+    if (!r) return;
+    if (r.done) S.hist.push(r.done);
+    sess(); syncLimited();
+  }
+
   async function undo() {
     const r = await run('Deshacer', api.undo);
     if (!r) return;
     S.hist.pop();
     if (!r.sessionOpen) { S.hist = []; D.pendingSession = null; }
-    sess();
+    sess(); syncLimited();
   }
 
   async function revert() {
@@ -351,7 +380,8 @@
     if (!r) return;
     S.watching = false;
     if (!r.sessionOpen) { S.hist = []; D.pendingSession = null; DS('restore-after-crash').forEach(x => { x.hidden = true; }); }
-    sess();
+    S.released = [];
+    sess(); syncLimited();
   }
 
   /* El backend vuelve a planificar con el equipo de ahora y aplica solo lo marcado. */
@@ -373,7 +403,7 @@
     }));
     if (r) S.watching = !!r.watching;
     if (r && r.done) S.hist.push(r.done);
-    sess();
+    sess(); syncLimited();
   }
 
   /* Panel del juego (R3): lo que el backend necesita para el GameBoost. FSO e IFEO van en settings. */
@@ -408,7 +438,7 @@
       report('Juego cerrado, revertido lo de sesión', e.outcomes);
       if (!e.outcomes.sessionOpen) { S.hist = []; D.pendingSession = null; }
     }
-    sess();
+    S.released = []; sess(); syncLimited();
   }
 
   /*
@@ -622,6 +652,8 @@
   /* ---------- Eventos de la UI ---------- */
   document.addEventListener('click', e => {
     const t = e.target;
+    const rel = t.closest('[data-release]'); if (rel) { e.preventDefault(); releaseRow(rel.dataset.release); return; }
+    const lim = t.closest('[data-limit]'); if (lim) { e.preventDefault(); limitRow(lim.dataset.limit); return; }
     const lb = t.closest('[data-l]'); if (lb) { setLevel(+lb.dataset.l); return; }
     const bk = t.closest('[data-setting="process-category-bulk"]');
     if (bk) { e.preventDefault(); D.processes.forEach((p, i) => { if (p.category === bk.dataset.c && !locked(p)) S.chk[i] = bk.dataset.v === '1'; }); render(); return; }
@@ -728,7 +760,7 @@
     }
     /* Juegos de Steam del equipo; adaptadores y recomendaciones llegan en M4. */
     D.steamRecs = D.steamRecs || [];
-    Object.assign(S, { admin: D.elevated, game: Math.max(0, D.games.findIndex(g => g.running)), hist: [], rt: false, alerted: false, rb: [], turbo: false, fps: [], lastSensors: null, fanIds: '', chk: [], stc: D.steamRecs.map(s => !!s.checked) });
+    Object.assign(S, { admin: D.elevated, game: Math.max(0, D.games.findIndex(g => g.running)), hist: [], rt: false, alerted: false, rb: [], turbo: false, fps: [], lastSensors: null, fanIds: '', released: [], chk: [], stc: D.steamRecs.map(s => !!s.checked) });
     $$('[data-touched]').forEach(x => { delete x.dataset.touched; });
 
     DS('game-target').forEach(s => {

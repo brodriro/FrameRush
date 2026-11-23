@@ -169,6 +169,9 @@ struct Row {
     locked: bool,
     /// Marcada por defecto en Normal, Agresivo y Extremo.
     checked: [bool; 3],
+    /// Algún proceso de la fila tiene un cambio de la sesión (congelado, prioridad): se puede
+    /// reanudar sin tocar el resto.
+    limited: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -295,7 +298,7 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
             fps: None,
         },
         available,
-        processes: rows(&plans),
+        processes: rows(&plans, &session_targets()),
         anticheats: plans[0].anticheats.clone(),
         protected: protected(&processes),
         sensor_sources: sensors.checked,
@@ -402,7 +405,7 @@ fn device_view(d: &DeviceProfile, gpu_pref: Option<&str>) -> Device {
 }
 
 /// Filas del checklist: las de Extremo (el plan solo decide qué viene marcado en cada nivel).
-fn rows(plans: &[Plan]) -> Vec<Row> {
+fn rows(plans: &[Plan], limited: &[Target]) -> Vec<Row> {
     let Some(extremo) = plans.last() else {
         return vec![];
     };
@@ -445,6 +448,10 @@ fn rows(plans: &[Plan]) -> Vec<Row> {
                 cpu,
                 locked: item.locked,
                 checked,
+                limited: match &item.subject {
+                    Subject::Processes(ps) => ps.iter().any(|p| limited.contains(&p.target)),
+                    Subject::Services(_) => false,
+                },
             }
         })
         .collect()
@@ -685,6 +692,20 @@ fn steam_games(processes: &[ProcessInfo]) -> (Vec<GameView>, Option<String>) {
         Ok(None) => (vec![], Some("Steam no está instalado".into())),
         Err(e) => (vec![], Some(format!("no se pudo leer Steam: {e}"))),
     }
+}
+
+/// Procesos con algún cambio de la sesión en el journal.
+pub(crate) fn session_targets() -> Vec<Target> {
+    data_dir()
+        .and_then(|d| FileStore::new(d.join("session.json")).load().ok())
+        .map(|j| {
+            j.entries
+                .iter()
+                .filter(|e| e.status != EntryStatus::Failed)
+                .filter_map(|e| e.change.target().cloned())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn pending_session() -> Option<Pending> {

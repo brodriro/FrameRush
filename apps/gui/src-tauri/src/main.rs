@@ -227,6 +227,33 @@ async fn undo(sensors: tauri::State<'_, Sensors>) -> Result<actions::Outcomes, S
     blocking(move || actions::undo(helper)).await
 }
 
+/// Filas con algún proceso limitado por la sesión.
+#[tauri::command]
+async fn limited_rows() -> Result<Vec<String>, String> {
+    blocking(actions::limited_rows).await
+}
+
+/// Reanuda una fila sin tocar el resto de la sesión (el watchdog sigue).
+#[tauri::command]
+async fn release_row(
+    id: String,
+    sensors: tauri::State<'_, Sensors>,
+) -> Result<actions::Outcomes, String> {
+    let helper = helper(&sensors)?;
+    blocking(move || actions::release_row(&id, helper)).await
+}
+
+/// Vuelve a limitar una fila reanudada con la acción del nivel (sin cerrar procesos).
+#[tauri::command]
+async fn limit_row(
+    id: String,
+    level: u8,
+    sensors: tauri::State<'_, Sensors>,
+) -> Result<actions::Outcomes, String> {
+    let helper = helper(&sensors)?;
+    blocking(move || actions::limit_row(&id, level, helper)).await
+}
+
 /// Restaurar: deshace toda la sesión y para el watchdog (ya no queda nada que revertir).
 #[tauri::command]
 async fn revert(
@@ -285,6 +312,9 @@ fn main() -> anyhow::Result<()> {
             apply,
             undo,
             revert,
+            release_row,
+            limited_rows,
+            limit_row,
             profiles,
             save_profile
         ])
