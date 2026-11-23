@@ -1410,7 +1410,12 @@ fn status(json: bool) -> Result<()> {
             } else {
                 ""
             };
-            println!("  {}{mark}", t.id());
+            let unread = if values.is_empty() {
+                " · solo se lee como administrador"
+            } else {
+                ""
+            };
+            println!("  {}{mark}{unread}", t.id());
             for v in values {
                 let value = match &v.value {
                     Some(SavedData::Number(n)) => n.to_string(),
@@ -1424,7 +1429,8 @@ fn status(json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Valor actual de cada ajuste que admite la plataforma nativa. Leer no pide admin.
+/// Valor actual de cada ajuste que admite la plataforma nativa. Leer no pide admin, salvo el
+/// arranque de `vbs-hvci-off` (sale sin valores).
 #[cfg(windows)]
 fn tweak_states() -> Result<Vec<(Tweak, Vec<SavedValue>)>> {
     use framerush_platform::SystemTweaks;
@@ -1432,9 +1438,11 @@ fn tweak_states() -> Result<Vec<(Tweak, Vec<SavedValue>)>> {
     w.supported_tweaks()
         .into_iter()
         .map(|t| {
-            let values = w
-                .read_tweak(t)
-                .with_context(|| format!("no se pudo leer {}", t.id()))?;
+            // El arranque de `vbs-hvci-off` solo se lee elevado: sin admin, sin valores.
+            let values = match w.read_tweak(t) {
+                Err(framerush_platform::PlatformError::AccessDenied(_)) => vec![],
+                other => other.with_context(|| format!("no se pudo leer {}", t.id()))?,
+            };
             Ok((t, values))
         })
         .collect()

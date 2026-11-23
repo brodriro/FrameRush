@@ -111,6 +111,9 @@ pub struct Plan {
     pub optional_tweaks: Vec<Tweak>,
     /// Ajustes del nivel que piden admin y no hay elevación: se muestran con candado (P14).
     pub locked_tweaks: Vec<Tweak>,
+    /// Ajustes del nivel que no se pueden marcar, con el motivo (P10: `vbs-hvci-off` con un
+    /// anticheat que puede exigir VBS).
+    pub blocked_tweaks: Vec<(Tweak, String)>,
     /// Operaciones de memoria marcadas (desde Agresivo, con elevación).
     pub memory: Vec<MemoryOp>,
     /// Las del nivel que no se pueden hacer sin elevación: con candado (P14).
@@ -146,6 +149,46 @@ pub fn running_anticheats(processes: &[ProcessInfo]) -> Vec<String> {
     names.sort_by_key(|n| n.to_lowercase());
     names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
     names
+}
+
+/// P10, V7: anticheats que pueden exigir VBS/HVCI. Vanguard (`vgc`) puede pedir integridad de
+/// memoria y FACEIT exige VBS para IOMMU (soporte de Riot y de FACEIT).
+pub fn anticheat_may_require_vbs(name: &str) -> bool {
+    let name = normalize(name);
+    name == "vgc" || name.starts_with("faceit")
+}
+
+/// P10 sobre los ajustes ya repartidos: con un anticheat que puede exigir VBS, `vbs-hvci-off`
+/// queda bloqueado; con cualquier otro, desmarcado.
+fn vbs_precedence(
+    anticheats: &[String],
+    tweaks: &mut Vec<Tweak>,
+    optional: &mut Vec<Tweak>,
+    locked: &mut Vec<Tweak>,
+) -> Vec<(Tweak, String)> {
+    let vbs = Tweak::VbsHvciOff;
+    if !tweaks.contains(&vbs) && !optional.contains(&vbs) && !locked.contains(&vbs) {
+        return vec![];
+    }
+    let requiring: Vec<&str> = anticheats
+        .iter()
+        .filter(|a| anticheat_may_require_vbs(a))
+        .map(String::as_str)
+        .collect();
+    if !requiring.is_empty() {
+        for list in [&mut *tweaks, &mut *optional, &mut *locked] {
+            list.retain(|t| *t != vbs);
+        }
+        return vec![(
+            vbs,
+            format!("{} puede exigir VBS/HVCI", requiring.join(", ")),
+        )];
+    }
+    if !anticheats.is_empty() && tweaks.contains(&vbs) {
+        tweaks.retain(|t| *t != vbs);
+        optional.push(vbs);
+    }
+    vec![]
 }
 
 /// Estado de los servicios que nombra alguna regla de `stop_service` en `os` (P15: solo los
@@ -254,6 +297,8 @@ pub fn plan(
         .iter()
         .copied()
         .filter(|t| level.includes(tweak_min_level(*t)))
+        // Solo se ofrece si VBS está en marcha: si no, no hay nada que apagar.
+        .filter(|t| *t != Tweak::VbsHvciOff || device.vbs_hvci_enabled == Some(true))
     {
         if !options.elevated && snapshot.admin_tweaks.contains(&t) {
             locked_tweaks.push(t);
@@ -273,13 +318,21 @@ pub fn plan(
     } else {
         (vec![], memory_ops.collect())
     };
+    let anticheats = running_anticheats(&snapshot.processes);
+    let blocked_tweaks = vbs_precedence(
+        &anticheats,
+        &mut tweaks,
+        &mut optional_tweaks,
+        &mut locked_tweaks,
+    );
     Plan {
         level,
         items,
-        anticheats: running_anticheats(&snapshot.processes),
+        anticheats,
         tweaks,
         optional_tweaks,
         locked_tweaks,
+        blocked_tweaks,
         memory,
         locked_memory,
     }
@@ -294,6 +347,7 @@ pub fn tweak_min_level(tweak: Tweak) -> Level {
         | Tweak::PowerThrottlingOff
         | Tweak::MmcssGames
         | Tweak::UwpBackgroundOff => Level::Agresivo,
+        Tweak::VbsHvciOff => Level::Extremo,
         Tweak::GameDvrOff
         | Tweak::WindowsGameMode
         | Tweak::NotificationsOff
@@ -313,8 +367,14 @@ pub fn tweak_scope(tweak: Tweak) -> Scope {
         | Tweak::UwpBackgroundOff
         | Tweak::SchedulerForegroundBoost
         | Tweak::PowerThrottlingOff
-        | Tweak::MmcssGames => Scope::Persistent,
+        | Tweak::MmcssGames
+        | Tweak::VbsHvciOff => Scope::Persistent,
     }
+}
+
+/// Ajustes que solo surten efecto al reiniciar, y al restaurarlos también (SETTINGS §4.7).
+pub fn tweak_requires_reboot(tweak: Tweak) -> bool {
+    tweak == Tweak::VbsHvciOff
 }
 
 /// `game-priority-persistent` viene activo desde Agresivo, salvo si la prioridad del juego es
@@ -714,6 +774,60 @@ mod tests {
         let admin = plan(Level::Agresivo, &snap, &[], &device, &elevated);
         assert_eq!(admin.tweaks, [Tweak::GameDvrOff, Tweak::GameDvrPolicyOff]);
         assert!(admin.locked_tweaks.is_empty());
+    }
+
+    /// `vbs-hvci-off`: solo en Extremo y con VBS en marcha; P10 con anticheats.
+    #[test]
+    fn vbs_hvci_off_follows_vbs_state_and_p10() {
+        let mut device = samples::hybrid_laptop();
+        device.vbs_hvci_enabled = Some(true);
+        let elevated = PlanOptions {
+            elevated: true,
+            ..PlanOptions::default()
+        };
+        let snap = |processes: Vec<ProcessInfo>| Snapshot {
+            processes,
+            tweaks: vec![Tweak::VbsHvciOff],
+            admin_tweaks: vec![Tweak::VbsHvciOff],
+            ..Snapshot::default()
+        };
+        let clean = snap(vec![]);
+        assert!(
+            plan(Level::Agresivo, &clean, &[], &device, &elevated)
+                .tweaks
+                .is_empty()
+        );
+        let p = plan(Level::Extremo, &clean, &[], &device, &elevated);
+        assert_eq!(p.tweaks, [Tweak::VbsHvciOff]);
+        assert!(tweak_requires_reboot(Tweak::VbsHvciOff));
+
+        // Sin VBS en marcha no hay nada que apagar.
+        let mut off = device.clone();
+        off.vbs_hvci_enabled = Some(false);
+        let p = plan(Level::Extremo, &clean, &[], &off, &elevated);
+        assert!(p.tweaks.is_empty() && p.optional_tweaks.is_empty());
+
+        // Otro anticheat: desmarcado.
+        let eac = snap(vec![proc(1, "EasyAntiCheat.exe")]);
+        let p = plan(Level::Extremo, &eac, &[], &device, &elevated);
+        assert!(p.tweaks.is_empty());
+        assert_eq!(p.optional_tweaks, [Tweak::VbsHvciOff]);
+
+        // Vanguard o FACEIT: bloqueado, también sin elevación.
+        for name in ["vgc.exe", "FACEIT.exe"] {
+            let ac = snap(vec![proc(1, name)]);
+            for opts in [&elevated, &PlanOptions::default()] {
+                let p = plan(Level::Extremo, &ac, &[], &device, opts);
+                assert!(p.tweaks.is_empty() && p.optional_tweaks.is_empty());
+                assert!(p.locked_tweaks.is_empty());
+                assert_eq!(p.blocked_tweaks.len(), 1, "{name}");
+                assert!(
+                    p.blocked_tweaks[0].1.contains(name),
+                    "{:?}",
+                    p.blocked_tweaks
+                );
+            }
+        }
     }
 
     /// P12: una fila con un proceso de otro usuario o de SYSTEM (o de dueño ilegible) lleva

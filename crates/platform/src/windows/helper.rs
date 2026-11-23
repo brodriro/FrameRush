@@ -58,6 +58,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
 /// Lo único que el helper sabe hacer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum Request {
+    /// Lectura de un ajuste que solo se lee elevado (el arranque de `vbs-hvci-off`).
+    ReadTweak(Tweak),
     ApplyTweak(Tweak),
     RestoreTweak(Tweak, Vec<SavedValue>),
     /// `game-priority-persistent` del exe.
@@ -102,6 +104,8 @@ enum Response {
     Done,
     /// Resultado de una lectura.
     Value(u64),
+    /// Estado de un ajuste ([`Request::ReadTweak`]).
+    Saved(Vec<SavedValue>),
     Failed(String),
 }
 
@@ -162,6 +166,15 @@ impl Helper {
     /// PID del proceso del helper.
     pub(super) fn pid(&self) -> Option<u32> {
         self.0.pid
+    }
+
+    pub(super) fn read_tweak(&self, tweak: Tweak) -> Result<Vec<SavedValue>> {
+        match self.exchange(&Request::ReadTweak(tweak))? {
+            Response::Saved(saved) => Ok(saved),
+            other => Err(PlatformError::Os(format!(
+                "respuesta del helper: {other:?}"
+            ))),
+        }
     }
 
     pub(super) fn apply_tweak(&self, tweak: Tweak) -> Result<()> {
@@ -579,12 +592,18 @@ fn handle<
     {
         return Response::Failed(format!("{ex:?} no es de un juego instalado"));
     }
-    if let Request::ApplyTweak(t) | Request::RestoreTweak(t, _) = &request
+    if let Request::ReadTweak(t) | Request::ApplyTweak(t) | Request::RestoreTweak(t, _) = &request
         && !platform.tweak_requires_admin(*t)
     {
         return Response::Failed(format!("`{}` no pide admin", t.id()));
     }
     let result = match request {
+        Request::ReadTweak(t) => {
+            return match platform.read_tweak(t) {
+                Ok(saved) => Response::Saved(saved),
+                Err(e) => Response::Failed(e.to_string()),
+            };
+        }
         Request::HasDefenderExclusion(ex) => {
             return match platform.has_defender_exclusion(&ex) {
                 Ok(has) => Response::Value(u64::from(has)),
@@ -670,6 +689,7 @@ mod tests {
         let client = helper(connect(&pipe, me, None).unwrap());
 
         let before = mock.read_tweak(Tweak::GameDvrPolicyOff).unwrap();
+        assert_eq!(client.read_tweak(Tweak::GameDvrPolicyOff).unwrap(), before);
         client.apply_tweak(Tweak::GameDvrPolicyOff).unwrap();
         assert_ne!(mock.read_tweak(Tweak::GameDvrPolicyOff).unwrap(), before);
         client
@@ -740,6 +760,7 @@ mod tests {
         assert!(!mock.has_defender_exclusion(&windows).unwrap());
 
         let user = mock.read_tweak(Tweak::GameDvrOff).unwrap();
+        assert!(client.read_tweak(Tweak::GameDvrOff).is_err());
         assert!(client.apply_tweak(Tweak::GameDvrOff).is_err());
         assert_eq!(mock.read_tweak(Tweak::GameDvrOff).unwrap(), user);
 

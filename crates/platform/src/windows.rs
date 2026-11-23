@@ -14,6 +14,7 @@
 #![allow(unsafe_code)]
 
 mod acer;
+mod bcd;
 mod cpus;
 mod defender;
 mod display;
@@ -879,6 +880,13 @@ const GAME_BAR: &str = r"Software\Microsoft\GameBar";
 /// Tarea `Games` de MMCSS (PLAN.md V11).
 const MMCSS_GAMES: &str =
     r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games";
+/// VBS e integridad de memoria (HVCI): Microsoft Learn, "Enable memory integrity".
+const DEVICE_GUARD: &str = r"SYSTEM\CurrentControlSet\Control\DeviceGuard";
+const HVCI: &str =
+    r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity";
+/// Directiva de grupo "Turn on Virtualization Based Security": si existe, manda sobre
+/// `DEVICE_GUARD` y cambiar este no serviría.
+const DEVICE_GUARD_POLICY: &str = r"SOFTWARE\Policies\Microsoft\Windows\DeviceGuard";
 /// Directiva de equipo de Game DVR (referencia CS2-FPS-Boost, `$RegAggressive`).
 const GAME_DVR_POLICY: &str = r"SOFTWARE\Policies\Microsoft\Windows\GameDVR";
 
@@ -985,7 +993,40 @@ fn reg_values(tweak: Tweak) -> &'static [RegValue] {
             name: "LetAppsRunInBackground",
             value: Dword(2),
         }],
+        // Learn da `EnableVirtualizationBasedSecurity = 1` y HVCI `Enabled = 1` para activarlos,
+        // y HVCI `Enabled = 0` para apagarlo (Troubleshooting); la referencia pone los dos a 0.
+        // El hipervisor va aparte, en el arranque (`bcd`).
+        Tweak::VbsHvciOff => &[
+            RegValue {
+                hive: Hive::LocalMachine,
+                path: DEVICE_GUARD,
+                name: "EnableVirtualizationBasedSecurity",
+                value: Dword(0),
+            },
+            RegValue {
+                hive: Hive::LocalMachine,
+                path: HVCI,
+                name: "Enabled",
+                value: Dword(0),
+            },
+        ],
     }
+}
+
+/// `vbs-hvci-off` no se puede quitar desde el registro si está con bloqueo UEFI (`Locked = 1`;
+/// Learn: hay que desactivar Secure Boot) ni si lo pone una directiva de grupo.
+fn vbs_locked() -> bool {
+    let locked = |path| registry::read_dword(Hive::LocalMachine, path, "Locked");
+    let policy = registry::read_dword(
+        Hive::LocalMachine,
+        DEVICE_GUARD_POLICY,
+        "EnableVirtualizationBasedSecurity",
+    );
+    // Si no se puede leer, no se ofrece (R8: mejor ocultarlo que fallar al reiniciar).
+    !matches!(
+        (locked(DEVICE_GUARD), locked(HVCI), policy),
+        (Ok(None | Some(0)), Ok(None | Some(0)), Ok(None))
+    )
 }
 
 impl SystemTweaks for WindowsPlatform {
@@ -996,6 +1037,7 @@ impl SystemTweaks for WindowsPlatform {
         Tweak::ALL
             .into_iter()
             .filter(|t| !(home && *t == Tweak::UwpBackgroundOff))
+            .filter(|t| *t != Tweak::VbsHvciOff || !vbs_locked())
             .collect()
     }
 
@@ -1010,7 +1052,7 @@ impl SystemTweaks for WindowsPlatform {
         if tweak == Tweak::VisualEffectsPerformance {
             return effects::read();
         }
-        reg_values(tweak)
+        let mut saved = reg_values(tweak)
             .iter()
             .map(|v| {
                 Ok(SavedValue {
@@ -1018,7 +1060,18 @@ impl SystemTweaks for WindowsPlatform {
                     value: v.read()?,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        if tweak == Tweak::VbsHvciOff {
+            // bcdedit pide admin hasta para leer: sin elevar, lo lee el helper.
+            match (bcd::read(), &self.helper) {
+                (Err(PlatformError::AccessDenied(_)), Some(h)) => return h.read_tweak(tweak),
+                (result, _) => saved.push(SavedValue {
+                    location: bcd::LOCATION.into(),
+                    value: result?.map(SavedData::Text),
+                }),
+            }
+        }
+        Ok(saved)
     }
 
     fn apply_tweak(&self, tweak: Tweak) -> Result<()> {
@@ -1028,7 +1081,11 @@ impl SystemTweaks for WindowsPlatform {
         if tweak == Tweak::VisualEffectsPerformance {
             return effects::apply();
         }
-        reg_values(tweak).iter().try_for_each(RegValue::apply)
+        reg_values(tweak).iter().try_for_each(RegValue::apply)?;
+        if tweak == Tweak::VbsHvciOff {
+            bcd::set("Off")?;
+        }
+        Ok(())
     }
 
     /// Restaura cada valor de la tabla con lo guardado; si no existía, lo borra.
@@ -1049,6 +1106,24 @@ impl SystemTweaks for WindowsPlatform {
             match &s.value {
                 Some(data) => v.write(data)?,
                 None => registry::delete_value(v.hive, v.path, v.name)?,
+            }
+        }
+        if tweak == Tweak::VbsHvciOff {
+            let Some(s) = saved.iter().find(|s| s.location == bcd::LOCATION) else {
+                return Err(PlatformError::Os(format!(
+                    "el journal no tiene el valor previo de {}",
+                    bcd::LOCATION
+                )));
+            };
+            match &s.value {
+                Some(SavedData::Text(v)) => bcd::set(v)?,
+                None => bcd::delete()?,
+                Some(other) => {
+                    return Err(PlatformError::Os(format!(
+                        "{}: valor guardado no válido {other:?}",
+                        bcd::LOCATION
+                    )));
+                }
             }
         }
         Ok(())
@@ -1306,6 +1381,30 @@ mod tests {
         }
     }
 
+    /// Con admin: aplica `vbs-hvci-off` y lo restaura enseguida, sin reiniciar (nada surte
+    /// efecto hasta el arranque). Restaura antes de comprobar nada.
+    #[test]
+    #[ignore = "pide admin; toca VBS/HVCI y el arranque y los deja como estaban"]
+    fn vbs_hvci_off_round_trip() {
+        let w = WindowsPlatform::new();
+        let before = w.read_tweak(Tweak::VbsHvciOff).unwrap();
+        let applied = w.apply_tweak(Tweak::VbsHvciOff);
+        let during = w.read_tweak(Tweak::VbsHvciOff);
+        w.restore_tweak(Tweak::VbsHvciOff, &before).unwrap();
+        assert_eq!(w.read_tweak(Tweak::VbsHvciOff).unwrap(), before);
+        applied.unwrap();
+        let during = during.unwrap();
+        assert_eq!(during.len(), 3, "{during:?}");
+        for v in &during {
+            let off = match &v.value {
+                Some(SavedData::Number(n)) => *n == 0,
+                Some(SavedData::Text(t)) => t.eq_ignore_ascii_case("Off"),
+                None => false,
+            };
+            assert!(off, "{v:?}");
+        }
+    }
+
     /// Solo lectura: no cambia los valores reales del usuario.
     #[test]
     fn read_tweak_reports_every_value_it_touches() {
@@ -1315,8 +1414,15 @@ mod tests {
             .into_iter()
             .filter(|t| *t != Tweak::VisualEffectsPerformance)
         {
+            let mut expected: Vec<String> = reg_values(t).iter().map(RegValue::location).collect();
+            if t == Tweak::VbsHvciOff {
+                // El arranque solo se lee elevado; sin helper, se deniega.
+                match w.read_tweak(t) {
+                    Err(PlatformError::AccessDenied(_)) => continue,
+                    _ => expected.push(bcd::LOCATION.into()),
+                }
+            }
             let saved = w.read_tweak(t).unwrap();
-            let expected: Vec<String> = reg_values(t).iter().map(RegValue::location).collect();
             let got: Vec<String> = saved.into_iter().map(|s| s.location).collect();
             assert_eq!(got, expected, "{t:?}");
         }
@@ -1348,7 +1454,8 @@ mod tests {
                 Tweak::UwpBackgroundOff,
                 Tweak::SchedulerForegroundBoost,
                 Tweak::PowerThrottlingOff,
-                Tweak::MmcssGames
+                Tweak::MmcssGames,
+                Tweak::VbsHvciOff
             ]
         );
     }

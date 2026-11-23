@@ -151,6 +151,9 @@ pub fn describe(change: &Change) -> String {
         Change::Suspend { target } => format!("suspender {}", proc(target)),
         Change::Kill { target } => format!("cerrar {}", proc(target)),
         Change::StopService { name } => format!("detener el servicio {name}"),
+        Change::Tweak { tweak, .. } if crate::tweak_requires_reboot(*tweak) => {
+            format!("ajuste {} (surte efecto al reiniciar)", tweak.id())
+        }
         Change::Tweak { tweak, .. } => format!("ajuste {}", tweak.id()),
         Change::FullscreenOptimizationsOff { exe } => {
             format!("sin optimizaciones de pantalla completa: {}", exe.display())

@@ -665,6 +665,7 @@ impl SystemTweaks for MockPlatform {
                 | Tweak::PowerThrottlingOff
                 | Tweak::MmcssGames
                 | Tweak::UwpBackgroundOff
+                | Tweak::VbsHvciOff
         )
     }
 

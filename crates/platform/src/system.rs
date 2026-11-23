@@ -254,10 +254,13 @@ pub enum Tweak {
     PowerThrottlingOff,
     /// `mmcss-games`: reparto de MMCSS para la tarea `Games`. Es opt-in: su efecto es casi nulo.
     MmcssGames,
+    /// `vbs-hvci-off`: sin VBS ni integridad de memoria (HVCI) y sin lanzar el hipervisor.
+    /// Requiere reinicio y deja sin WSL2, Docker, Hyper-V, Sandbox ni emuladores WHPX.
+    VbsHvciOff,
 }
 
 impl Tweak {
-    pub const ALL: [Tweak; 9] = [
+    pub const ALL: [Tweak; 10] = [
         Tweak::GameDvrOff,
         Tweak::GameDvrPolicyOff,
         Tweak::WindowsGameMode,
@@ -267,6 +270,7 @@ impl Tweak {
         Tweak::SchedulerForegroundBoost,
         Tweak::PowerThrottlingOff,
         Tweak::MmcssGames,
+        Tweak::VbsHvciOff,
     ];
 
     /// Id de design/SETTINGS.md.
@@ -281,6 +285,7 @@ impl Tweak {
             Tweak::SchedulerForegroundBoost => "scheduler-foreground-boost",
             Tweak::PowerThrottlingOff => "power-throttling-off",
             Tweak::MmcssGames => "mmcss-games",
+            Tweak::VbsHvciOff => "vbs-hvci-off",
         }
     }
 }
@@ -309,7 +314,8 @@ pub trait SystemTweaks {
     fn supported_tweaks(&self) -> Vec<Tweak>;
     /// Aplicarlo o restaurarlo pide elevación (lo hace el helper). Leerlo, no.
     fn tweak_requires_admin(&self, tweak: Tweak) -> bool;
-    /// Estado actual de todos los valores que toca `tweak` (para el journal).
+    /// Estado actual de todos los valores que toca `tweak` (para el journal). Alguno, como el
+    /// arranque de `vbs-hvci-off`, solo se puede leer con elevación (lo hace el helper).
     fn read_tweak(&self, tweak: Tweak) -> Result<Vec<SavedValue>>;
     fn apply_tweak(&self, tweak: Tweak) -> Result<()>;
     /// Deja los valores como en `saved` (lo que devolvió `read_tweak` antes de aplicar).

@@ -124,6 +124,35 @@ fn p2_anticheat_turns_off_game_tuning() {
     assert_eq!(guarded.anticheats, ["BEService.exe"]);
 }
 
+/// P10: `vbs-hvci-off` queda bloqueado con Vanguard o FACEIT y desmarcado con otro anticheat.
+#[test]
+fn p10_vbs_hvci_off_yields_to_anticheats() {
+    let m = MockPlatform::new(4);
+    let mut device = samples::hybrid_laptop();
+    device.vbs_hvci_enabled = Some(true);
+    let elevated = PlanOptions {
+        elevated: true,
+        ..PlanOptions::default()
+    };
+    let with_vbs = |m: &MockPlatform| Snapshot {
+        tweaks: vec![Tweak::VbsHvciOff],
+        admin_tweaks: vec![Tweak::VbsHvciOff],
+        ..snapshot(m)
+    };
+    let clean = plan(Level::Extremo, &with_vbs(&m), &[], &device, &elevated);
+    assert_eq!(clean.tweaks, [Tweak::VbsHvciOff]);
+
+    m.spawn(1, "BEService.exe", "/BEService.exe", 1);
+    let other = plan(Level::Extremo, &with_vbs(&m), &[], &device, &elevated);
+    assert_eq!(other.optional_tweaks, [Tweak::VbsHvciOff]);
+    assert!(other.blocked_tweaks.is_empty());
+
+    m.spawn(2, "vgc.exe", "/vgc.exe", 1);
+    let vanguard = plan(Level::Extremo, &with_vbs(&m), &[], &device, &elevated);
+    assert!(!vanguard.optional_tweaks.contains(&Tweak::VbsHvciOff));
+    assert_eq!(vanguard.blocked_tweaks[0].0, Tweak::VbsHvciOff);
+}
+
 /// P5 y §3: al salir del juego solo se revierte lo de sesión; lo persistente espera a
 /// Restaurar. Un valor que no existía se borra al restaurar.
 #[test]
