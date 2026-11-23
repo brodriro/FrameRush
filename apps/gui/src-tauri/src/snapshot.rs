@@ -261,8 +261,10 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
         tweaks,
         caps,
     } = inputs()?;
+    // Con el helper abierto lo que pide admin no lleva candado y el nivel lo marca como
+    // cualquier otra fila (servicios, procesos ajenos).
     let options = PlanOptions {
-        elevated: false,
+        elevated: sensors.elevated,
         keep_alive: defaults::keep_alive(&device).value,
     };
     let plans: Vec<Plan> = Level::ALL
