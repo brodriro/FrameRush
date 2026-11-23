@@ -161,4 +161,18 @@ mod tests {
         assert_eq!(service_state("RpcSs").unwrap(), Some(ServiceState::Running));
         assert_eq!(service_state("framerush-no-existe").unwrap(), None);
     }
+
+    /// Como administrador: WdiSystemHost se puede parar pero solo SYSTEM y DPS lo arrancan
+    /// (`sc sdshow`), así que se rechaza antes de pedir la parada y su estado no cambia.
+    /// `cargo test -p framerush-platform -- --ignored` desde una consola elevada.
+    #[test]
+    #[ignore = "necesita admin"]
+    fn refuses_to_stop_a_service_it_could_not_restart() {
+        let before = service_state("WdiSystemHost").unwrap();
+        let err = stop_service("WdiSystemHost").unwrap_err();
+        assert!(
+            matches!(err, PlatformError::Os(ref m) if m.contains("no deja volver a arrancarlo"))
+        );
+        assert_eq!(service_state("WdiSystemHost").unwrap(), before);
+    }
 }
