@@ -213,11 +213,57 @@ impl From<GamePriority> for Priority {
     }
 }
 
+/// Log de la CLI (It4.5): se añade a `<datos>/logs/framerush-cli.log` (cada orden es una
+/// ejecución corta) y al pasar de este tamaño queda como `framerush-cli.old.log`.
+const CLI_LOG_MAX: u64 = 1024 * 1024;
+
+/// Log local en archivo (nivel `info`) y, como antes, en la consola con `RUST_LOG`. Sin carpeta
+/// de datos solo queda la consola.
+fn init_logs() {
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    let file = data_dir().ok().and_then(|d| {
+        let dir = d.join("logs");
+        std::fs::create_dir_all(&dir).ok()?;
+        let path = dir.join("framerush-cli.log");
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > CLI_LOG_MAX) {
+            let _ = std::fs::rename(&path, dir.join("framerush-cli.old.log"));
+        }
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()
+    });
+    let console = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_filter(EnvFilter::from_default_env());
+    let file = file.map(|f| {
+        tracing_subscriber::fmt::layer()
+            .with_writer(std::sync::Mutex::new(f))
+            .with_ansi(false)
+            .with_filter(EnvFilter::new("info"))
+    });
+    let _ = tracing_subscriber::registry()
+        .with(console)
+        .with(file)
+        .try_init();
+}
+
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
-    match Cli::parse().command {
+    init_logs();
+    let cli = Cli::parse();
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), command = ?cli.command, "framerush");
+    let result = run_command(cli.command);
+    if let Err(e) = &result {
+        tracing::error!(error = %format!("{e:#}"), "la orden falló");
+    }
+    result
+}
+
+fn run_command(command: Command) -> Result<()> {
+    match command {
         Command::Scan => scan(),
         Command::Plan { level, admin, game } => show_plan(level, admin, &game),
         Command::Apply(args) => apply(&args),
@@ -1822,10 +1868,19 @@ fn print_report(report: &Report) {
         let (mark, why) = match &line.outcome {
             Outcome::Done => ("ok", String::new()),
             Outcome::Skipped(why) => ("--", format!(" ({why})")),
-            Outcome::Failed(e) => ("!!", format!(" ({e})")),
+            Outcome::Failed(e) => {
+                tracing::warn!(what = %line.what, error = %e, "acción fallida");
+                ("!!", format!(" ({e})"))
+            }
         };
         println!("[{mark}] {}{why}", line.what);
     }
+    tracing::info!(
+        done = report.done(),
+        failed = report.failed(),
+        total = report.lines.len(),
+        "resultado"
+    );
     println!(
         "{} hechos · {} fallidos · {} en total",
         report.done(),

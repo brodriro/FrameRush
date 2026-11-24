@@ -2,8 +2,9 @@
 //!
 //! Nada sale del equipo (sin telemetría). El log de cada ejecución va a
 //! `<datos>/logs/framerush-gui.log` y el de la anterior se guarda como `framerush-gui.old.log`.
-//! El informe junta versión, `DeviceProfile`, vista Estado, journal y los dos logs, con la
-//! carpeta del usuario sustituida por `%USERPROFILE%`, y se guarda en Descargas.
+//! El informe junta versión, `DeviceProfile`, vista Estado, journal, los dos logs de la GUI y
+//! el de la CLI, con la carpeta del usuario sustituida por `%USERPROFILE%`, y se guarda en
+//! Descargas.
 
 use crate::snapshot::{data_dir, native_device, status_of};
 use anyhow::{Context, Result};
@@ -14,6 +15,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const LOG: &str = "framerush-gui.log";
 const OLD_LOG: &str = "framerush-gui.old.log";
+/// Log de la CLI (`framerush`), en la misma carpeta.
+const CLI_LOG: &str = "framerush-cli.log";
 /// Tope de líneas por log en el informe (las últimas).
 const LOG_LINES: usize = 5000;
 
@@ -64,6 +67,7 @@ pub fn export() -> Result<PathBuf> {
         "journal": journal,
         "log": log(LOG),
         "previous_log": log(OLD_LOG),
+        "cli_log": log(CLI_LOG),
     });
     let text = serde_json::to_string_pretty(&report).context("no se pudo generar el informe")?;
     let text = match std::env::var("USERPROFILE") {
