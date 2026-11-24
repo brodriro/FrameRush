@@ -796,6 +796,53 @@ pub fn sensor_views(sensors: &[Sensor]) -> Vec<SensorView> {
         .collect()
 }
 
+/// Vista Estado (It5.6): lo aplicado en la sesión y cómo está el equipo ahora.
+#[derive(Debug, Serialize)]
+pub struct StatusView {
+    session: Vec<framerush_core::StatusLine>,
+    system: Vec<framerush_core::StateLine>,
+}
+
+/// Lee el journal y vuelve a detectar el equipo (plan, Hz y VBS pueden haber cambiado).
+pub fn status() -> Result<StatusView> {
+    let session = match data_dir() {
+        Some(dir) => framerush_core::status_lines(
+            &FileStore::new(dir.join("session.json"))
+                .load()
+                .context("no se pudo leer el journal")?,
+        ),
+        None => vec![],
+    };
+    let os = Os::current().context("sistema operativo no admitido")?;
+    let mut system = framerush_core::system_state(&native_device(os));
+    system.extend(game_configs());
+    Ok(StatusView { session, system })
+}
+
+/// Config de cada juego de Steam instalado con adaptador (`game-config-lock`).
+#[cfg(windows)]
+fn game_configs() -> Vec<framerush_core::StateLine> {
+    let Ok(Some((root, apps))) = steam_library() else {
+        return vec![];
+    };
+    let w = framerush_platform::WindowsPlatform::new();
+    apps.iter()
+        .filter_map(|app| framerush_games::adapter(app.appid).map(|a| (a, app)))
+        .flat_map(|(adapter, app)| {
+            let files = adapter.config_files(framerush_games::Install {
+                dir: &app.dir,
+                steam_root: &root,
+            });
+            framerush_core::game_config_state(&w, adapter.name(), &files)
+        })
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn game_configs() -> Vec<framerush_core::StateLine> {
+    vec![]
+}
+
 /// Perfil del equipo con la plataforma nativa (R8), como en la CLI.
 #[cfg(windows)]
 fn native_device(os: Os) -> DeviceProfile {

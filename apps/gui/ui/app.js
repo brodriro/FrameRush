@@ -308,6 +308,24 @@
     ].join('\n');
   }
 
+  /* Vista Estado: lo elegido, lo aplicado (journal) y el equipo ahora, leído por el backend. */
+  async function showStatus(v) {
+    v.textContent = statusText() + '\n\nLeyendo el estado del equipo…';
+    try {
+      const st = await window.FrameRushApi.status();
+      const scope = { session: 'sesión', persistent: 'persistente' };
+      const state = { done: 'hecho', pending: 'pendiente', failed: 'fallido' };
+      const applied = st.session.length
+        ? st.session.map(l => `  lote ${l.batch} · ${scope[l.scope] || l.scope} · ${state[l.status] || l.status} · ${l.what}`)
+        : ['  nada'];
+      const pad = Math.max(...st.system.map(l => l.label.length), 0);
+      v.textContent = [statusText(), '', 'Aplicado por FrameRush:', ...applied, '', 'Equipo (ahora):',
+        ...st.system.map(l => `  ${l.label.padEnd(pad)}  ${l.value}`)].join('\n');
+    } catch (err) {
+      v.textContent = statusText() + `\n\nNo se pudo leer el estado: ${err && err.message ? err.message : err}`;
+    }
+  }
+
   function sess() {
     const on = S.hist.length > 0;
     DS('session-status').forEach(e => {
@@ -795,7 +813,7 @@
     if (id === 'undo-last') undo();
     if (id === 'restore') revert();
     if (id === 'launch-game') launchGame();
-    if (id === 'status-view') { const v = $('#stv'); v.hidden = !v.hidden; if (!v.hidden) v.textContent = statusText(); }
+    if (id === 'status-view') { const v = $('#stv'); v.hidden = !v.hidden; if (!v.hidden) showStatus(v); }
     if (id === 'realtime-confirm') {
       if (!$('#rtAck').checked) { toast('Marca «Entiendo el riesgo» para confirmar.'); return; }
       S.rt = true; $$('[data-setting="game-priority"] button').forEach(x => x.classList.toggle('on', x.dataset.v === 'realtime'));

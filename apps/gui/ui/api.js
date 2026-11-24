@@ -73,6 +73,12 @@
     undo() { return T.core.invoke('undo'); },
 
     /*
+     * Vista Estado (It5.6): { session: [{ batch, what, scope, status }], system: [{ label, value }] }.
+     * system: VBS/HVCI, plan de energía, Hz por monitor y config de los juegos, leídos ahora.
+     */
+    status() { return T.core.invoke('status'); },
+
+    /*
      * Perfiles por juego (It3.2): { [appid]: { name, data } }. data es el estado de la UI
      * (profileState en app.js); el backend lo guarda tal cual en profiles.json.
      */

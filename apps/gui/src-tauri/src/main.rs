@@ -190,6 +190,12 @@ async fn snapshot(sensors: tauri::State<'_, Sensors>) -> Result<snapshot::View, 
         .map_err(|e| format!("{e:#}"))
 }
 
+/// Vista Estado: journal y equipo ahora, fuera del hilo de la UI (WMI tarda).
+#[tauri::command]
+async fn status() -> Result<snapshot::StatusView, String> {
+    blocking(snapshot::status).await
+}
+
 /// Helper elevado abierto, si lo hay (se comparte: un solo UAC).
 fn helper(sensors: &Sensors) -> Result<Option<Elevated>, String> {
     Ok(sensors
@@ -340,6 +346,7 @@ fn main() -> anyhow::Result<()> {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             snapshot,
+            status,
             elevate,
             apply,
             undo,
