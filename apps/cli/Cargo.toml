@@ -13,7 +13,6 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-ctrlc.workspace = true
 framerush-core.workspace = true
 framerush-device.workspace = true
 framerush-games.workspace = true
@@ -24,6 +23,10 @@ framerush-steam.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+# Ctrl+C de `turbo`, que de momento solo existe en Windows.
+[target.'cfg(windows)'.dependencies]
+ctrlc.workspace = true
 
 [lints]
 workspace = true

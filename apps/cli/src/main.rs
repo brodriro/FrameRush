@@ -1126,10 +1126,6 @@ fn apply(args: &ApplyArgs) -> Result<()> {
 
 /// Turbo (It5.2, P6): en su `apply`, cerrar pasa a congelar y `keep-alive-list` puede venir de
 /// la línea de órdenes.
-#[cfg_attr(
-    not(windows),
-    expect(dead_code, reason = "Turbo solo existe en Windows por ahora")
-)]
 struct TurboApply<'a> {
     keep_alive: Option<&'a [String]>,
 }
