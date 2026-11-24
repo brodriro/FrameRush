@@ -385,6 +385,25 @@
   }
 
   /*
+   * foreign-frozen: procesos congelados por otro programa (p. ej. un script «Turbo» externo que
+   * se cerró sin reanudarlos). Se mira al abrir y con ↻ Actualizar lista.
+   */
+  async function checkFrozen() {
+    let list = [];
+    try { list = await api.frozenProcesses(); } catch (err) { toast(t('err-frozen', { error: String(err && err.message ? err.message : err) })); }
+    DS('foreign-frozen').forEach(box => {
+      box.hidden = !list.length;
+      const rows = box.querySelector('.frzList');
+      if (rows) rows.innerHTML = list.map(p => `<div class="frzRow"><b>${esc(p.name)}</b><span>pid ${p.pid} · ${fmt(p.memoryBytes)}${p.admin ? ' · ' + esc(t('frz-admin')) : ''}</span><button class="btn sm" data-frz="${p.pid}">${esc(t('frz-resume'))}</button></div>`).join('');
+    });
+  }
+
+  async function resumeForeign(pid) {
+    const r = await run(t('verb-resume-foreign'), () => api.resumeForeign(pid === 'all' ? [] : [Number(pid)]));
+    if (r) checkFrozen();
+  }
+
+  /*
    * process-refresh: vuelve a leer qué hay abierto sin tocar nivel, ajustes, perfil ni sesión.
    * Las filas que siguen conservan lo marcado; las nuevas llegan con lo que marca el nivel (core).
    */
@@ -400,6 +419,7 @@
       S.chk = D.processes.map(p => !locked(p) && (was.has(p.id) ? was.get(p.id) : p.checked[S.level - 1]));
       S.released = S.released.filter(id => D.processes.some(p => p.id === id));
       render();
+      checkFrozen();
       toast(added || gone ? t('list-updated', { added, gone }) : t('list-unchanged'));
     } catch (err) {
       toast(t('err-list', { error: String(err && err.message ? err.message : err) }));
@@ -858,6 +878,8 @@
     }
     if (t.closest('[data-cw]')) { S.cwRetry = null; DS('compat-warning').forEach(x => { x.hidden = true; }); return; }
     if (t.closest('[data-rb]')) { DS('reboot-required').forEach(x => { x.hidden = true; }); return; }
+    const fz = t.closest('[data-frz]');
+    if (fz) { resumeForeign(fz.dataset.frz); return; }
     const cr = t.closest('[data-crash]');
     if (cr) {
       DS('restore-after-crash').forEach(x => { x.hidden = true; });
@@ -972,6 +994,7 @@
     DS('compat-warning').forEach(e => { e.hidden = true; }); rebootBanner();
     elevateButton();
     setLevel(DEFAULT_LEVEL); sess(); renderPerf();
+    checkFrozen();
     /* Global = lo de arriba; el perfil del juego en marcha, si lo hay, se carga encima. */
     S.base = profileState();
     try { S.profiles = await api.profiles(); } catch (err) { S.profiles = {}; toast(t('err-profiles', { error: String(err && err.message ? err.message : err) })); }

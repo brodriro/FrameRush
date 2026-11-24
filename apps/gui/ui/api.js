@@ -128,6 +128,13 @@
     limitRow(id, level, keepAlive) { return T.core.invoke('limit_row', { id, level, keepAlive }); },
     limitedRows() { return inTauri ? T.core.invoke('limited_rows') : Promise.resolve([]); },
 
+    /*
+     * foreign-frozen: procesos congelados por otro programa ({ pid, name, memoryBytes, admin })
+     * y reanudarlos (pids vacío = todos). No pasa por la sesión de FrameRush.
+     */
+    frozenProcesses() { return inTauri ? T.core.invoke('frozen_processes') : Promise.resolve([]); },
+    resumeForeign(pids) { return T.core.invoke('resume_foreign', { pids }); },
+
     /* Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él. */
     elevate() {
       if (!inTauri) return Promise.reject(new Error(window.FrameRushI18n.t('api-only-app')));

@@ -447,6 +447,26 @@ async fn limit_row(
     )
 }
 
+/// Procesos congelados por otro programa (`foreign-frozen`).
+#[tauri::command]
+async fn frozen_processes() -> Result<Vec<actions::Frozen>, String> {
+    blocking(actions::frozen).await
+}
+
+/// Reanuda los congelados por otro programa de `pids` (todos si está vacío). No pasa por el
+/// journal: no es un cambio de FrameRush.
+#[tauri::command]
+async fn resume_foreign(
+    pids: Vec<u32>,
+    sensors: tauri::State<'_, Sensors>,
+) -> Result<actions::Outcomes, String> {
+    let helper = helper(&sensors)?;
+    logged(
+        "resume_foreign",
+        blocking(move || actions::resume_foreign(&pids, helper)).await,
+    )
+}
+
 /// Restaurar: deshace toda la sesión y para el watchdog (ya no queda nada que revertir).
 #[tauri::command]
 async fn revert(
@@ -553,6 +573,8 @@ fn main() -> anyhow::Result<()> {
             release_row,
             launch_game,
             limited_rows,
+            frozen_processes,
+            resume_foreign,
             limit_row,
             profiles,
             save_profile,

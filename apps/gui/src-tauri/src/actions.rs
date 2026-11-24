@@ -694,6 +694,68 @@ pub fn limit_row(
     outcomes(report, vec![], vec![], vec![])
 }
 
+/// Proceso congelado por otro programa (`foreign-frozen`), para el aviso de Procesos.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Frozen {
+    pid: u32,
+    name: String,
+    memory_bytes: u64,
+    /// No es propio (P12): reanudarlo pide el helper elevado.
+    admin: bool,
+}
+
+/// Congelados por otro programa ahora mismo: todos sus hilos suspendidos, sin las apps de la
+/// Store, los protegidos ni lo que congeló FrameRush.
+#[cfg(windows)]
+fn foreign_frozen_now() -> Result<Vec<framerush_platform::ProcessInfo>> {
+    use framerush_core::JournalStore;
+    use framerush_platform::{ProcessControl, WindowsPlatform};
+
+    let processes =
+        framerush_platform::scan_processes().context("no se pudo listar los procesos")?;
+    let suspended = WindowsPlatform::new()
+        .suspended()
+        .context("no se pudo leer qué procesos están congelados")?;
+    let journal = store()?.load()?;
+    Ok(
+        framerush_core::foreign_frozen(&processes, &suspended, &journal)
+            .into_iter()
+            .cloned()
+            .collect(),
+    )
+}
+
+/// Fuera de Windows aún no se detectan.
+#[cfg(not(windows))]
+fn foreign_frozen_now() -> Result<Vec<framerush_platform::ProcessInfo>> {
+    Ok(vec![])
+}
+
+pub fn frozen() -> Result<Vec<Frozen>> {
+    Ok(foreign_frozen_now()?
+        .into_iter()
+        .map(|p| Frozen {
+            pid: p.target.pid,
+            name: p.name,
+            memory_bytes: p.memory_bytes,
+            admin: p.own != Some(true),
+        })
+        .collect())
+}
+
+/// Reanuda los congelados por otro programa de `pids` (todos si está vacío). Se vuelven a
+/// buscar ahora: un PID que ya no está congelado o es otro proceso no se toca.
+pub fn resume_foreign(pids: &[u32], helper: Option<Elevated>) -> Result<Outcomes> {
+    let targets: Vec<Target> = foreign_frozen_now()?
+        .into_iter()
+        .filter(|p| pids.is_empty() || pids.contains(&p.target.pid))
+        .map(|p| p.target)
+        .collect();
+    let report = run(helper, Op::ResumeForeign(targets))?;
+    outcomes(report, vec![], vec![], vec![])
+}
+
 /// Deshace toda la sesión (Restaurar).
 pub fn revert(helper: Option<Elevated>) -> Result<Outcomes> {
     let report = run(helper, Op::Revert)?;
@@ -755,6 +817,7 @@ enum Op<'a> {
     RevertSession,
     RevertProcesses(Vec<Target>),
     ResumeFrozen,
+    ResumeForeign(Vec<Target>),
 }
 
 #[cfg(windows)]
@@ -778,6 +841,9 @@ fn run(helper: Option<Elevated>, op: Op<'_>) -> Result<Report> {
         Op::ResumeFrozen => engine
             .resume_frozen()
             .context("no se pudo reanudar lo congelado")?,
+        Op::ResumeForeign(targets) => engine
+            .resume_foreign(&targets)
+            .context("no se pudo reanudar lo congelado por otro programa")?,
     })
 }
 
