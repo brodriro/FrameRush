@@ -9,150 +9,150 @@
 <body>
 <div class="win" role="dialog" aria-label="FrameRush">
  <div class="bar" data-tauri-drag-region><b>FRAMERUSH</b><span class="sp"></span>
-  <button class="ib" data-setting="always-on-top" aria-pressed="false" title="Mantener siempre encima">📌</button><button class="ib" data-win="minimize" title="Minimizar">—</button><button class="ib" data-win="close" title="Cerrar FrameRush">✕</button>
+  <button class="ib" data-setting="always-on-top" aria-pressed="false" title="Mantener siempre encima" data-l10n-id="mantener-siempre-encima">📌</button><button class="ib" data-win="minimize" title="Minimizar" data-l10n-id="minimizar">—</button><button class="ib" data-win="close" title="Cerrar FrameRush" data-l10n-id="cerrar-framerush">✕</button>
  </div>
- <div class="crash" data-setting="restore-after-crash" role="alert" hidden>⚠ FrameRush se cerró sin deshacer sus cambios: <span class="crashN"></span> siguen activos.
-  <span class="acts"><button class="btn sm pri" data-crash="restore">Restaurar</button><button class="btn sm" data-crash="ignore">Ignorar</button></span></div>
- <div class="bnr bat" data-setting="battery-warning" role="status" hidden>🔋 Estás usando la batería: enchufa el portátil para no perder rendimiento.</div>
- <div class="bnr rb" data-setting="reboot-required" role="status" hidden>⟳ Reinicia el equipo para que surtan efecto: <span class="rbList"></span><span class="acts"><button class="btn sm" data-rb="later">Más tarde</button></span></div>
- <div class="bnr cw" data-setting="compat-warning" role="alert" hidden>⚠ Desactivar VBS/HVCI y el hipervisor (seguridad por virtualización de Windows) hace que, mientras siga desactivado, dejen de funcionar:
+ <div class="crash" data-setting="restore-after-crash" role="alert" hidden><span data-l10n-id="framerush-se-cerro-sin-deshacer">⚠ FrameRush se cerró sin deshacer sus cambios:</span> <span class="crashN"></span> <span data-l10n-id="siguen-activos">siguen activos.</span>
+  <span class="acts"><button class="btn sm pri" data-crash="restore" data-l10n-id="restaurar">Restaurar</button><button class="btn sm" data-crash="ignore" data-l10n-id="ignorar">Ignorar</button></span></div>
+ <div class="bnr bat" data-setting="battery-warning" role="status" hidden data-l10n-id="estas-usando-la-bateria-enchufa">🔋 Estás usando la batería: enchufa el portátil para no perder rendimiento.</div>
+ <div class="bnr rb" data-setting="reboot-required" role="status" hidden><span data-l10n-id="reinicia-el-equipo-para-que">⟳ Reinicia el equipo para que surtan efecto:</span> <span class="rbList"></span><span class="acts"><button class="btn sm" data-rb="later" data-l10n-id="mas-tarde">Más tarde</button></span></div>
+ <div class="bnr cw" data-setting="compat-warning" role="alert" hidden><span data-l10n-id="desactivar-vbs-hvci-y-el">⚠ Desactivar VBS/HVCI y el hipervisor (seguridad por virtualización de Windows) hace que, mientras siga desactivado, dejen de funcionar:</span>
   <ul class="cwList"></ul>
-  <label><input type="checkbox" id="cwAck"> Entiendo lo que deja de funcionar</label>
-  <button class="btn sm warn" data-cwok>Confirmar y aplicar</button> <button class="btn sm" data-cw="cancel">Cancelar</button></div>
+  <label><input type="checkbox" id="cwAck"> <span data-l10n-id="entiendo-lo-que-deja-de">Entiendo lo que deja de funcionar</span></label>
+  <button class="btn sm warn" data-cwok data-l10n-id="confirmar-y-aplicar">Confirmar y aplicar</button> <button class="btn sm" data-cw="cancel" data-l10n-id="cancelar">Cancelar</button></div>
 
  <div class="scroll">
   <!-- General -->
   <div class="hero">
    <div class="cover" aria-hidden="true"></div>
-   <div class="t"><select data-setting="game-target" aria-label="Juego"></select><small><span class="gameExe"></span><span class="gamePid"></span></small></div>
+   <div class="t"><select data-setting="game-target" aria-label="Juego" data-l10n-id="juego"></select><small><span class="gameExe"></span><span class="gamePid"></span></small></div>
    <div class="fps"><b class="fpsNow">—</b><small>FPS</small></div>
   </div>
   <svg class="spark" viewBox="0 0 396 26" preserveAspectRatio="none" aria-hidden="true"><polyline id="spk" data-w="396" data-h="26" fill="none" stroke="var(--ok)" stroke-width="1.5"/></svg>
   <div class="pad">
-   <div class="seg lv" data-setting="optimization-level" role="group" aria-label="Nivel de optimización"><button data-l="1">Normal</button><button data-l="2">Agresivo</button><button data-l="3">Extremo</button></div>
+   <div class="seg lv" data-setting="optimization-level" role="group" aria-label="Nivel de optimización" data-l10n-id="nivel-de-optimizacion"><button data-l="1" data-l10n-id="normal">Normal</button><button data-l="2" data-l10n-id="agresivo">Agresivo</button><button data-l="3" data-l10n-id="extremo">Extremo</button></div>
    <div class="lvNote"></div>
    <div class="strip" data-setting="sensor-temps">
     <div class="s"><small>CPU · <span class="cpuSrc"></span></small><b data-temp="cpu"></b></div>
     <div class="s"><small>GPU · <span class="gpuSrc"></span></small><b data-temp="gpu"></b></div>
-    <div class="s"><small>Ventiladores</small><b class="fanCount"></b></div>
+    <div class="s"><small data-l10n-id="ventiladores">Ventiladores</small><b class="fanCount"></b></div>
    </div>
    <div class="hw" data-setting="hardware-profile"></div>
-   <div class="turbo"><button class="btn pri" data-setting="launch-game">▶ Jugar ahora (Turbo)</button></div>
-   <p class="note">Abre el juego, pausa los programas de fondo y los reanuda al salir.</p>
+   <div class="turbo"><button class="btn pri" data-setting="launch-game" data-l10n-id="jugar-ahora-turbo">▶ Jugar ahora (Turbo)</button></div>
+   <p class="note" data-l10n-id="abre-el-juego-pausa-los">Abre el juego, pausa los programas de fondo y los reanuda al salir.</p>
    <div class="impact" data-setting="impact-estimate" aria-live="polite"></div>
    <div class="acw" data-setting="anti-cheat-warning" hidden></div>
   </div>
 
   <details open>
-   <summary>Procesos <span class="m pm"></span></summary>
+   <summary><span data-l10n-id="procesos">Procesos</span> <span class="m pm"></span></summary>
    <div class="body">
-    <div class="ptools"><button class="btn sm" data-setting="run-as-admin"></button><button class="btn sm" data-setting="process-refresh" title="Vuelve a mirar qué programas hay abiertos; lo que ya marcaste se mantiene">↻ Actualizar lista</button><span class="note" data-setting="kill-policy">Cerrar procesos: solo en Extremo y con riesgo bajo; si no, se pausan (*)</span></div>
+    <div class="ptools"><button class="btn sm" data-setting="run-as-admin"></button><button class="btn sm" data-setting="process-refresh" title="Vuelve a mirar qué programas hay abiertos; lo que ya marcaste se mantiene" data-l10n-id="actualizar-lista">↻ Actualizar lista</button><span class="note" data-setting="kill-policy" data-l10n-id="cerrar-procesos-solo-en-extremo">Cerrar procesos: solo en Extremo y con riesgo bajo; si no, se pausan (*)</span></div>
     <div id="rows" data-setting="process-selection"></div>
    </div>
   </details>
 
   <details>
-   <summary>Turbo <span class="m">pausa los programas de fondo mientras juegas</span></summary>
+   <summary><span data-l10n-id="turbo">Turbo</span> <span class="m" data-l10n-id="pausa-los-programas-de-fondo">pausa los programas de fondo mientras juegas</span></summary>
    <div class="body">
-    <div class="row"><div>No pausar nunca<small>Nombres separados por comas · por defecto, las apps de voz detectadas</small></div><input type="text" value="" data-setting="keep-alive-list" aria-label="Programas que nunca se pausan"></div>
-    <div class="row"><div>Buscar programas nuevos cada<small>Pausa también lo que se abra durante la partida</small></div><select data-setting="turbo-rescan"><option value="30">30 s</option><option value="60" selected>60 s</option><option value="120">120 s</option></select></div>
+    <div class="row"><div><span data-l10n-id="no-pausar-nunca">No pausar nunca</span><small data-l10n-id="nombres-separados-por-comas-por">Nombres separados por comas · por defecto, las apps de voz detectadas</small></div><input type="text" value="" data-setting="keep-alive-list" aria-label="Programas que nunca se pausan" data-l10n-id="programas-que-nunca-se-pausan"></div>
+    <div class="row"><div><span data-l10n-id="buscar-programas-nuevos-cada">Buscar programas nuevos cada</span><small data-l10n-id="pausa-tambien-lo-que-se">Pausa también lo que se abra durante la partida</small></div><select data-setting="turbo-rescan"><option value="30">30 s</option><option value="60" selected>60 s</option><option value="120">120 s</option></select></div>
     <div data-cap="win">
-     <div class="row" data-min="agresivo"><div>Liberar RAM de los programas de fondo<small>Les retira la memoria que no están usando · desde Agresivo</small></div><input type="checkbox" class="tg" data-setting="memory-trim"></div>
-     <div class="row" data-min="agresivo"><div>Vaciar la memoria en espera (standby)<small>Puede reducir los tirones · desde Agresivo</small></div><input type="checkbox" class="tg" data-setting="standby-purge"></div>
+     <div class="row" data-min="agresivo"><div><span data-l10n-id="liberar-ram-de-los-programas">Liberar RAM de los programas de fondo</span><small data-l10n-id="les-retira-la-memoria-que">Les retira la memoria que no están usando · desde Agresivo</small></div><input type="checkbox" class="tg" data-setting="memory-trim"></div>
+     <div class="row" data-min="agresivo"><div><span data-l10n-id="vaciar-la-memoria-en-espera">Vaciar la memoria en espera (standby)</span><small data-l10n-id="puede-reducir-los-tirones-desde">Puede reducir los tirones · desde Agresivo</small></div><input type="checkbox" class="tg" data-setting="standby-purge"></div>
     </div>
    </div>
   </details>
 
   <details>
-   <summary>Juego <span class="m">prioridad · tarjeta gráfica · núcleos</span></summary>
+   <summary><span data-l10n-id="juego-2">Juego</span> <span class="m" data-l10n-id="prioridad-tarjeta-grafica-nucleos">prioridad · tarjeta gráfica · núcleos</span></summary>
    <div class="body">
-    <div class="row"><div>Prioridad del juego<small>Cuánta CPU recibe frente al resto · Alta por defecto; Tiempo real pide confirmación</small></div>
-     <div class="seg" data-setting="game-priority"><button data-v="normal">Normal</button><button class="on" data-v="alta">Alta</button><button data-v="realtime">Tiempo real</button></div></div>
-    <div class="rt" id="rtBox" hidden>⚠ Tiempo real<span class="rtApi"></span> puede dejar sin CPU al teclado, al ratón y al sonido.
-     <label><input type="checkbox" id="rtAck"> Entiendo el riesgo</label>
-     <button class="btn sm warn" data-setting="realtime-confirm">Confirmar Tiempo real</button></div>
-    <div class="row" data-cap="gpu"><div>Tarjeta gráfica del juego<small class="gpuNote"></small></div>
+    <div class="row"><div><span data-l10n-id="prioridad-del-juego">Prioridad del juego</span><small data-l10n-id="cuanta-cpu-recibe-frente-al">Cuánta CPU recibe frente al resto · Alta por defecto; Tiempo real pide confirmación</small></div>
+     <div class="seg" data-setting="game-priority"><button data-v="normal" data-l10n-id="normal-2">Normal</button><button class="on" data-v="alta" data-l10n-id="alta">Alta</button><button data-v="realtime" data-l10n-id="tiempo-real">Tiempo real</button></div></div>
+    <div class="rt" id="rtBox" hidden><span data-l10n-id="tiempo-real-2">⚠ Tiempo real</span><span class="rtApi"></span> <span data-l10n-id="puede-dejar-sin-cpu-al">puede dejar sin CPU al teclado, al ratón y al sonido.</span>
+     <label><input type="checkbox" id="rtAck"> <span data-l10n-id="entiendo-el-riesgo">Entiendo el riesgo</span></label>
+     <button class="btn sm warn" data-setting="realtime-confirm" data-l10n-id="confirmar-tiempo-real">Confirmar Tiempo real</button></div>
+    <div class="row" data-cap="gpu"><div><span data-l10n-id="tarjeta-grafica-del-juego">Tarjeta gráfica del juego</span><small class="gpuNote"></small></div>
      <select data-setting="gpu-preference"></select></div>
     <div data-cap="win">
-     <div class="row" data-min="agresivo"><div>Prioridad Alta siempre<small>Windows abre el juego con prioridad Alta aunque FrameRush no esté abierto · hasta Restaurar · desde Agresivo</small></div><input type="checkbox" class="tg" data-setting="game-priority-persistent"></div>
-     <div class="row" data-min="normal" data-optin><div>Desactivar optimizaciones de pantalla completa<small>Opcional · solo para este juego · puede empeorar juegos DX12</small></div><input type="checkbox" class="tg" data-setting="fullscreen-optimizations-off"></div>
+     <div class="row" data-min="agresivo"><div><span data-l10n-id="prioridad-alta-siempre">Prioridad Alta siempre</span><small data-l10n-id="windows-abre-el-juego-con">Windows abre el juego con prioridad Alta aunque FrameRush no esté abierto · hasta Restaurar · desde Agresivo</small></div><input type="checkbox" class="tg" data-setting="game-priority-persistent"></div>
+     <div class="row" data-min="normal" data-optin><div><span data-l10n-id="desactivar-optimizaciones-de-pantalla-completa">Desactivar optimizaciones de pantalla completa</span><small data-l10n-id="opcional-solo-para-este-juego">Opcional · solo para este juego · puede empeorar juegos DX12</small></div><input type="checkbox" class="tg" data-setting="fullscreen-optimizations-off"></div>
     </div>
     <div class="adapter" data-adapter>
-     <div class="grp">Ajustes del juego · <span class="adName"></span></div>
-     <div class="row"><div>Ajustes de vídeo recomendados<small><span class="adCfg"></span> · opcional: se eligen según tu equipo</small></div><input type="checkbox" class="tg" data-setting="game-config-tune"></div>
-     <div class="row" data-min="agresivo"><div>Bloquear la configuración del juego<small>Solo lectura: el juego no puede deshacer los ajustes · desde Agresivo</small></div><input type="checkbox" class="tg" data-setting="game-config-lock"></div>
-     <div class="row"><div>Límite de FPS<small>0 = sin límite · consejo: un 10 % por debajo de tus FPS medios</small></div><input type="number" min="0" max="999" value="0" data-setting="fps-cap"></div>
-     <div class="row" data-cap="win"><div>Resolución<small>Del monitor principal · se guarda en la config del juego · estirado o con bandas negras lo decide el escalado de la GPU</small></div><select data-setting="resolution-override"></select></div>
-     <div class="row"><div>Archivo para medir FPS<small class="adBench"></small></div><input type="checkbox" class="tg" data-setting="bench-cfg" checked></div>
-     <div class="row"><div>Opciones de lanzamiento de Steam<small class="adOpts" style="font-family:var(--mono)"></small></div><button class="btn sm" data-setting="launch-options-copy">Copiar</button></div>
+     <div class="grp"><span data-l10n-id="ajustes-del-juego">Ajustes del juego ·</span> <span class="adName"></span></div>
+     <div class="row"><div><span data-l10n-id="ajustes-de-video-recomendados">Ajustes de vídeo recomendados</span><small><span class="adCfg"></span> <span data-l10n-id="opcional-se-eligen-segun-tu">· opcional: se eligen según tu equipo</span></small></div><input type="checkbox" class="tg" data-setting="game-config-tune"></div>
+     <div class="row" data-min="agresivo"><div><span data-l10n-id="bloquear-la-configuracion-del-juego">Bloquear la configuración del juego</span><small data-l10n-id="solo-lectura-el-juego-no">Solo lectura: el juego no puede deshacer los ajustes · desde Agresivo</small></div><input type="checkbox" class="tg" data-setting="game-config-lock"></div>
+     <div class="row"><div><span data-l10n-id="limite-de-fps">Límite de FPS</span><small data-l10n-id="t-0-sin-limite-consejo-un">0 = sin límite · consejo: un 10 % por debajo de tus FPS medios</small></div><input type="number" min="0" max="999" value="0" data-setting="fps-cap"></div>
+     <div class="row" data-cap="win"><div><span data-l10n-id="resolucion">Resolución</span><small data-l10n-id="del-monitor-principal-se-guarda">Del monitor principal · se guarda en la config del juego · estirado o con bandas negras lo decide el escalado de la GPU</small></div><select data-setting="resolution-override"></select></div>
+     <div class="row"><div><span data-l10n-id="archivo-para-medir-fps">Archivo para medir FPS</span><small class="adBench"></small></div><input type="checkbox" class="tg" data-setting="bench-cfg" checked></div>
+     <div class="row"><div><span data-l10n-id="opciones-de-lanzamiento-de-steam">Opciones de lanzamiento de Steam</span><small class="adOpts" style="font-family:var(--mono)"></small></div><button class="btn sm" data-setting="launch-options-copy" data-l10n-id="copiar">Copiar</button></div>
     </div>
-    <details class="adv"><summary>Avanzado</summary>
+    <details class="adv"><summary data-l10n-id="avanzado">Avanzado</summary>
      <div data-cap="affinity">
-      <div class="row"><div>Reservar núcleos para el juego<small class="affNote">Opcional en todos los niveles</small></div><input type="checkbox" class="tg" data-setting="cpu-affinity"></div>
-      <div class="aff" data-setting="cpu-affinity-cores" aria-label="Núcleos reservados para el juego"></div>
+      <div class="row"><div><span data-l10n-id="reservar-nucleos-para-el-juego">Reservar núcleos para el juego</span><small class="affNote" data-l10n-id="opcional-en-todos-los-niveles">Opcional en todos los niveles</small></div><input type="checkbox" class="tg" data-setting="cpu-affinity"></div>
+      <div class="aff" data-setting="cpu-affinity-cores" aria-label="Núcleos reservados para el juego" data-l10n-id="nucleos-reservados-para-el-juego"></div>
      </div>
-     <div class="row" data-cap="timer"><div>Temporizador global a 0,5 ms <span class="rbb">requiere reinicio</span><small>Opcional · solo Windows 11 · GlobalTimerResolutionRequests</small></div><input type="checkbox" class="tg" data-setting="timer-resolution"></div>
+     <div class="row" data-cap="timer"><div><span data-l10n-id="temporizador-global-a-0-5">Temporizador global a 0,5 ms</span> <span class="rbb" data-l10n-id="requiere-reinicio">requiere reinicio</span><small data-l10n-id="opcional-solo-windows-11-globaltimerresolutionrequests">Opcional · solo Windows 11 · GlobalTimerResolutionRequests</small></div><input type="checkbox" class="tg" data-setting="timer-resolution"></div>
     </details>
    </div>
   </details>
 
   <details>
-   <summary>Energía <span class="m pwrCur"></span></summary>
+   <summary><span data-l10n-id="energia">Energía</span> <span class="m pwrCur"></span></summary>
    <div class="body"><div class="seg" data-setting="power-plan" style="display:flex;flex-wrap:wrap"></div><p class="note pwrNote"></p>
     <div data-cap="win">
-     <div class="row" data-min="agresivo"><div>Plan de energía «FrameRush Max»<small>CPU siempre al 100 %, todos los núcleos activos y sin ahorro de energía en PCIe ni USB · solo enchufado · se borra con Restaurar</small></div><input type="checkbox" class="tg" data-setting="custom-power-plan"></div>
-     <div class="row" data-min="agresivo"><div>Pantalla a su frecuencia máxima (Hz)<small class="hzNote"></small></div><input type="checkbox" class="tg" data-setting="refresh-rate-max"></div>
+     <div class="row" data-min="agresivo"><div><span data-l10n-id="plan-de-energia-framerush-max">Plan de energía «FrameRush Max»</span><small data-l10n-id="cpu-siempre-al-100-todos">CPU siempre al 100 %, todos los núcleos activos y sin ahorro de energía en PCIe ni USB · solo enchufado · se borra con Restaurar</small></div><input type="checkbox" class="tg" data-setting="custom-power-plan"></div>
+     <div class="row" data-min="agresivo"><div><span data-l10n-id="pantalla-a-su-frecuencia-maxima">Pantalla a su frecuencia máxima (Hz)</span><small class="hzNote"></small></div><input type="checkbox" class="tg" data-setting="refresh-rate-max"></div>
     </div>
    </div>
   </details>
 
   <details data-cap="win">
-   <summary>Sistema <span class="m">ajustes de Windows · la mayoría duran hasta Restaurar</span></summary>
+   <summary><span data-l10n-id="sistema">Sistema</span> <span class="m" data-l10n-id="ajustes-de-windows-la-mayoria">ajustes de Windows · la mayoría duran hasta Restaurar</span></summary>
    <div class="body">
-    <div class="grp">Normal · solo afecta a tu usuario</div>
-    <div class="row" data-min="normal"><div>Desactivar Game DVR y la grabación en segundo plano</div><input type="checkbox" class="tg" data-setting="game-dvr-off"></div>
-    <div class="row" data-min="normal"><div>Activar el Modo de juego de Windows<small>Y la Game Bar sin su panel de inicio</small></div><input type="checkbox" class="tg" data-setting="windows-game-mode"></div>
-    <div class="row" data-min="normal"><div>Silenciar las notificaciones durante la partida</div><input type="checkbox" class="tg" data-setting="notifications-off"></div>
-    <div class="row" data-min="normal"><div>Efectos visuales en modo rendimiento<small>Y sin transparencias</small></div><input type="checkbox" class="tg" data-setting="visual-effects-performance"></div>
-    <div class="row" data-min="normal"><div>Apps de Microsoft Store sin segundo plano<small>Las que ya estén abiertas deben reiniciarse</small></div><input type="checkbox" class="tg" data-setting="uwp-background-off"></div>
-    <div class="grp">Agresivo · requiere administrador, sin reiniciar</div>
-    <div class="row" data-min="agresivo"><div>Más CPU para la ventana activa<small>Turnos de CPU cortos y ventaja para el programa en primer plano · Win32PrioritySeparation = 38</small></div><input type="checkbox" class="tg" data-setting="scheduler-foreground-boost"></div>
-    <div class="row" data-min="agresivo"><div>Desactivar Power Throttling<small>Windows deja de frenar procesos para ahorrar energía</small></div><input type="checkbox" class="tg" data-setting="power-throttling-off"></div>
-    <div class="row" data-min="agresivo" data-optin><div>Prioridad multimedia «Games» (MMCSS)<small>Opcional · efecto casi nulo según Microsoft</small></div><input type="checkbox" class="tg" data-setting="mmcss-games"></div>
-    <div class="row" data-min="agresivo" data-optin><div>Excluir el juego del antivirus (Defender)<small>Opcional · riesgo medio · solo la carpeta y el ejecutable del juego; Defender sigue activo</small></div><input type="checkbox" class="tg" data-setting="defender-exclusions"></div>
-    <div class="grp">Extremo · requiere reinicio</div>
-    <div class="row" data-min="extremo"><div>Programación de GPU acelerada por hardware (HAGS) <span class="rbb">reinicio</span><small>Resultado variable: mide tus FPS antes y después</small></div><input type="checkbox" class="tg" data-setting="hags"></div>
-    <div class="row" data-min="extremo"><div>Desactivar VBS/HVCI y el hipervisor <span class="rbb">reinicio</span><small>Reduce la seguridad de Windows · pide confirmación: dejan de funcionar WSL2, Docker, Hyper-V y los emuladores que usan WHPX</small><small class="vbsAc c-bad" hidden></small></div><input type="checkbox" class="tg" data-setting="vbs-hvci-off"></div>
-    <div class="row" data-min="extremo"><div>Desactivar el reposo de la CPU (C-states)<small>Dentro del plan «FrameRush Max», sin reiniciar · respuesta más estable pero más calor: vigila las alertas de temperatura</small><small class="c-warn cstNote" hidden>Activa «FrameRush Max» para usarlo</small></div><input type="checkbox" class="tg" data-setting="cstates-off"></div>
+    <div class="grp" data-l10n-id="normal-solo-afecta-a-tu">Normal · solo afecta a tu usuario</div>
+    <div class="row" data-min="normal"><div data-l10n-id="desactivar-game-dvr-y-la">Desactivar Game DVR y la grabación en segundo plano</div><input type="checkbox" class="tg" data-setting="game-dvr-off"></div>
+    <div class="row" data-min="normal"><div><span data-l10n-id="activar-el-modo-de-juego">Activar el Modo de juego de Windows</span><small data-l10n-id="y-la-game-bar-sin">Y la Game Bar sin su panel de inicio</small></div><input type="checkbox" class="tg" data-setting="windows-game-mode"></div>
+    <div class="row" data-min="normal"><div data-l10n-id="silenciar-las-notificaciones-durante-la">Silenciar las notificaciones durante la partida</div><input type="checkbox" class="tg" data-setting="notifications-off"></div>
+    <div class="row" data-min="normal"><div><span data-l10n-id="efectos-visuales-en-modo-rendimiento">Efectos visuales en modo rendimiento</span><small data-l10n-id="y-sin-transparencias">Y sin transparencias</small></div><input type="checkbox" class="tg" data-setting="visual-effects-performance"></div>
+    <div class="row" data-min="normal"><div><span data-l10n-id="apps-de-microsoft-store-sin">Apps de Microsoft Store sin segundo plano</span><small data-l10n-id="las-que-ya-esten-abiertas">Las que ya estén abiertas deben reiniciarse</small></div><input type="checkbox" class="tg" data-setting="uwp-background-off"></div>
+    <div class="grp" data-l10n-id="agresivo-requiere-administrador-sin-reiniciar">Agresivo · requiere administrador, sin reiniciar</div>
+    <div class="row" data-min="agresivo"><div><span data-l10n-id="mas-cpu-para-la-ventana">Más CPU para la ventana activa</span><small data-l10n-id="turnos-de-cpu-cortos-y">Turnos de CPU cortos y ventaja para el programa en primer plano · Win32PrioritySeparation = 38</small></div><input type="checkbox" class="tg" data-setting="scheduler-foreground-boost"></div>
+    <div class="row" data-min="agresivo"><div><span data-l10n-id="desactivar-power-throttling">Desactivar Power Throttling</span><small data-l10n-id="windows-deja-de-frenar-procesos">Windows deja de frenar procesos para ahorrar energía</small></div><input type="checkbox" class="tg" data-setting="power-throttling-off"></div>
+    <div class="row" data-min="agresivo" data-optin><div><span data-l10n-id="prioridad-multimedia-games-mmcss">Prioridad multimedia «Games» (MMCSS)</span><small data-l10n-id="opcional-efecto-casi-nulo-segun">Opcional · efecto casi nulo según Microsoft</small></div><input type="checkbox" class="tg" data-setting="mmcss-games"></div>
+    <div class="row" data-min="agresivo" data-optin><div><span data-l10n-id="excluir-el-juego-del-antivirus">Excluir el juego del antivirus (Defender)</span><small data-l10n-id="opcional-riesgo-medio-solo-la">Opcional · riesgo medio · solo la carpeta y el ejecutable del juego; Defender sigue activo</small></div><input type="checkbox" class="tg" data-setting="defender-exclusions"></div>
+    <div class="grp" data-l10n-id="extremo-requiere-reinicio">Extremo · requiere reinicio</div>
+    <div class="row" data-min="extremo"><div><span data-l10n-id="programacion-de-gpu-acelerada-por">Programación de GPU acelerada por hardware (HAGS)</span> <span class="rbb" data-l10n-id="reinicio">reinicio</span><small data-l10n-id="resultado-variable-mide-tus-fps">Resultado variable: mide tus FPS antes y después</small></div><input type="checkbox" class="tg" data-setting="hags"></div>
+    <div class="row" data-min="extremo"><div><span data-l10n-id="desactivar-vbs-hvci-y-el-2">Desactivar VBS/HVCI y el hipervisor</span> <span class="rbb" data-l10n-id="reinicio-2">reinicio</span><small data-l10n-id="reduce-la-seguridad-de-windows">Reduce la seguridad de Windows · pide confirmación: dejan de funcionar WSL2, Docker, Hyper-V y los emuladores que usan WHPX</small><small class="vbsAc c-bad" hidden></small></div><input type="checkbox" class="tg" data-setting="vbs-hvci-off"></div>
+    <div class="row" data-min="extremo"><div><span data-l10n-id="desactivar-el-reposo-de-la">Desactivar el reposo de la CPU (C-states)</span><small data-l10n-id="dentro-del-plan-framerush-max">Dentro del plan «FrameRush Max», sin reiniciar · respuesta más estable pero más calor: vigila las alertas de temperatura</small><small class="c-warn cstNote" hidden data-l10n-id="activa-framerush-max-para-usarlo">Activa «FrameRush Max» para usarlo</small></div><input type="checkbox" class="tg" data-setting="cstates-off"></div>
    </div>
   </details>
 
   <details>
-   <summary>Steam <span class="m stm"></span></summary>
+   <summary><span data-l10n-id="steam">Steam</span> <span class="m stm"></span></summary>
    <div class="body"><div class="pd">AppID <span class="gameId"></span> · <span class="gameName"></span></div><div id="steamList" data-setting="steam-recommendations"></div></div>
   </details>
 
   <details>
-   <summary>Sensores <span class="m">se actualizan cada segundo</span></summary>
+   <summary><span data-l10n-id="sensores">Sensores</span> <span class="m" data-l10n-id="se-actualizan-cada-segundo">se actualizan cada segundo</span></summary>
    <div class="body">
     <div data-setting="sensor-fans"></div>
     <p class="note" data-setting="sensor-backend-notice"></p>
-    <details class="adv"><summary>Avanzado: alertas de temperatura</summary>
-     <div class="row"><div>Alertas de temperatura<small>Avisa y sugiere bajar al nivel Normal</small></div><input type="checkbox" class="tg" data-setting="thermal-alerts" checked></div>
-     <div class="row"><div>Temperatura de alerta</div><span><input type="number" min="60" max="105" data-setting="thermal-alert-threshold"> °C</span></div>
-     <div class="row"><div>Temperatura de aviso</div><span><input type="number" min="50" max="95" data-setting="thermal-warn-threshold"> °C</span></div>
-     <div class="row"><div>Avisar si un ventilador se para (0 rpm)</div><input type="checkbox" class="tg" data-setting="fan-stop-alert" checked></div>
+    <details class="adv"><summary data-l10n-id="avanzado-alertas-de-temperatura">Avanzado: alertas de temperatura</summary>
+     <div class="row"><div><span data-l10n-id="alertas-de-temperatura">Alertas de temperatura</span><small data-l10n-id="avisa-y-sugiere-bajar-al">Avisa y sugiere bajar al nivel Normal</small></div><input type="checkbox" class="tg" data-setting="thermal-alerts" checked></div>
+     <div class="row"><div data-l10n-id="temperatura-de-alerta">Temperatura de alerta</div><span><input type="number" min="60" max="105" data-setting="thermal-alert-threshold"> °C</span></div>
+     <div class="row"><div data-l10n-id="temperatura-de-aviso">Temperatura de aviso</div><span><input type="number" min="50" max="95" data-setting="thermal-warn-threshold"> °C</span></div>
+     <div class="row"><div data-l10n-id="avisar-si-un-ventilador-se">Avisar si un ventilador se para (0 rpm)</div><input type="checkbox" class="tg" data-setting="fan-stop-alert" checked></div>
      <p class="note thrNote"></p>
     </details>
    </div>
   </details>
 
   <details>
-   <summary>Rendimiento <span class="m fpsNote"></span></summary>
+   <summary><span data-l10n-id="rendimiento">Rendimiento</span> <span class="m fpsNote"></span></summary>
    <div class="body">
     <div class="row"><div class="seg" data-setting="perf-metric"><button data-m="fps">FPS</button><button class="on" data-m="frametime">Frametime</button><button data-m="low1">1% low</button></div>
-     <select data-setting="perf-capture-window" aria-label="Periodo de medición"><option value="30">30 s</option><option value="60" selected>60 s</option><option value="120">120 s</option></select></div>
-    <svg viewBox="0 0 396 60" style="width:100%;height:60px;display:block" preserveAspectRatio="none" aria-label="Antes y después">
+     <select data-setting="perf-capture-window" aria-label="Periodo de medición" data-l10n-id="periodo-de-medicion"><option value="30">30 s</option><option value="60" selected>60 s</option><option value="120">120 s</option></select></div>
+    <svg viewBox="0 0 396 60" style="width:100%;height:60px;display:block" preserveAspectRatio="none" aria-label="Antes y después" data-l10n-id="antes-y-despues">
      <polyline id="perfBefore" fill="none" stroke="var(--tx3)" stroke-width="1.5"/>
      <polyline id="perfAfter" fill="none" stroke="var(--ok)" stroke-width="2"/>
     </svg>
@@ -161,26 +161,26 @@
   </details>
 
   <details>
-   <summary>Perfil y sesión</summary>
+   <summary data-l10n-id="perfil-y-sesion">Perfil y sesión</summary>
    <div class="body">
-    <div class="row"><div>Perfil activo</div><select data-setting="profile"></select></div>
-    <div class="row"><div>Guardar como perfil del juego</div><button class="btn sm" data-setting="profile-save">Guardar</button></div>
-    <div class="row"><div>Aplicar el perfil al abrir el juego<small>Cuando lo abres fuera de FrameRush, por ejemplo desde Steam</small></div><input type="checkbox" class="tg" data-setting="profile-auto-apply" checked></div>
-    <div class="row"><div>Deshacer al cerrar el juego<small>Deshace los cambios temporales; los permanentes solo con Restaurar. Lo pausado por Turbo se reanuda siempre</small></div><input type="checkbox" class="tg" data-setting="auto-revert-on-exit" checked></div>
-    <div class="row"><div>Modo simulación<small>Cuenta los cambios que se harían, sin tocar nada</small></div><input type="checkbox" class="tg" data-setting="dry-run"></div>
-    <div class="row"><div>Resumen<small>Lo elegido, lo aplicado y cómo está el equipo ahora</small></div><button class="btn sm" data-setting="status-view">Ver resumen</button></div>
+    <div class="row"><div data-l10n-id="perfil-activo">Perfil activo</div><select data-setting="profile"></select></div>
+    <div class="row"><div data-l10n-id="guardar-como-perfil-del-juego">Guardar como perfil del juego</div><button class="btn sm" data-setting="profile-save" data-l10n-id="guardar">Guardar</button></div>
+    <div class="row"><div><span data-l10n-id="aplicar-el-perfil-al-abrir">Aplicar el perfil al abrir el juego</span><small data-l10n-id="cuando-lo-abres-fuera-de">Cuando lo abres fuera de FrameRush, por ejemplo desde Steam</small></div><input type="checkbox" class="tg" data-setting="profile-auto-apply" checked></div>
+    <div class="row"><div><span data-l10n-id="deshacer-al-cerrar-el-juego">Deshacer al cerrar el juego</span><small data-l10n-id="deshace-los-cambios-temporales-los">Deshace los cambios temporales; los permanentes solo con Restaurar. Lo pausado por Turbo se reanuda siempre</small></div><input type="checkbox" class="tg" data-setting="auto-revert-on-exit" checked></div>
+    <div class="row"><div><span data-l10n-id="modo-simulacion">Modo simulación</span><small data-l10n-id="cuenta-los-cambios-que-se">Cuenta los cambios que se harían, sin tocar nada</small></div><input type="checkbox" class="tg" data-setting="dry-run"></div>
+    <div class="row"><div><span data-l10n-id="resumen">Resumen</span><small data-l10n-id="lo-elegido-lo-aplicado-y">Lo elegido, lo aplicado y cómo está el equipo ahora</small></div><button class="btn sm" data-setting="status-view" data-l10n-id="ver-resumen">Ver resumen</button></div>
     <div class="stv" id="stv" hidden></div>
-    <details class="adv"><summary>Avanzado</summary>
-     <div class="row"><div>Atajo global</div><input type="text" value="Ctrl+Shift+F" data-setting="overlay-hotkey" aria-label="Atajo global"></div>
-     <div class="row"><div>Idioma</div><select data-setting="language"><option value="es" selected>Español</option><option value="en">English</option></select></div>
-     <div class="row"><div>Actualizar reglas (firmadas)</div><input type="checkbox" class="tg" data-setting="rules-update"></div>
-     <div class="row"><div>Informe de diagnóstico</div><button class="btn sm" data-setting="export-diagnostics">Exportar</button></div>
+    <details class="adv"><summary data-l10n-id="avanzado-2">Avanzado</summary>
+     <div class="row"><div data-l10n-id="atajo-global">Atajo global</div><input type="text" value="Ctrl+Shift+F" data-setting="overlay-hotkey" aria-label="Atajo global" data-l10n-id="atajo-global-2"></div>
+     <div class="row"><div data-l10n-id="idioma">Idioma</div><select data-setting="language"><option value="es" selected>Español</option><option value="en">English</option></select></div>
+     <div class="row"><div data-l10n-id="actualizar-reglas-firmadas">Actualizar reglas (firmadas)</div><input type="checkbox" class="tg" data-setting="rules-update"></div>
+     <div class="row"><div data-l10n-id="informe-de-diagnostico">Informe de diagnóstico</div><button class="btn sm" data-setting="export-diagnostics" data-l10n-id="exportar">Exportar</button></div>
     </details>
    </div>
   </details>
 
   <details>
-   <summary>Pasos manuales <span class="m">lo que FrameRush no puede hacer por ti</span></summary>
+   <summary><span data-l10n-id="pasos-manuales">Pasos manuales</span> <span class="m" data-l10n-id="lo-que-framerush-no-puede">lo que FrameRush no puede hacer por ti</span></summary>
    <div class="body mr" data-setting="manual-recommendations"></div>
   </details>
  </div>
@@ -188,14 +188,16 @@
  <div class="foot">
   <div class="sess" data-setting="session-status"><span class="d"></span><span class="sessT"></span></div>
   <div class="btns">
-   <button class="btn" data-setting="undo-last" disabled title="Deshacer la última aplicación" aria-label="Deshacer la última aplicación">↶</button>
-   <button class="btn" data-setting="restore" disabled title="Deshace todos los cambios de FrameRush que se puedan deshacer">↺ Restaurar</button>
-   <button class="btn pri" data-setting="apply"><span class="lbl">Aplicar optimización</span><kbd data-setting="shortcut-apply">Ctrl+↵</kbd></button>
+   <button class="btn" data-setting="undo-last" disabled title="Deshacer la última aplicación" aria-label="Deshacer la última aplicación" data-l10n-id="deshacer-la-ultima-aplicacion">↶</button>
+   <button class="btn" data-setting="restore" disabled title="Deshace todos los cambios de FrameRush que se puedan deshacer" data-l10n-id="restaurar-2">↺ Restaurar</button>
+   <button class="btn pri" data-setting="apply"><span class="lbl" data-l10n-id="aplicar-optimizacion">Aplicar optimización</span><kbd data-setting="shortcut-apply">Ctrl+↵</kbd></button>
   </div>
  </div>
 </div>
 
 <!-- Orden: capa de datos (comandos y eventos de Tauri) → UI -->
+<script src="vendor/fluent-bundle.js"></script>
+<script src="i18n.js"></script>
 <script src="api.js"></script>
 <script src="app.js"></script>
 </body>

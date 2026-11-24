@@ -14,7 +14,7 @@
 
     /* Snapshot del equipo: DeviceProfile, capacidades, plan, protegidos y sesión pendiente. */
     async load() {
-      if (!inTauri) throw new Error('Abre FrameRush como app para ver los datos de este equipo.');
+      if (!inTauri) throw new Error(window.FrameRushI18n.t('api-not-tauri'));
       return T.core.invoke('snapshot');
     },
 
@@ -96,7 +96,7 @@
 
     /* Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él. */
     elevate() {
-      if (!inTauri) return Promise.reject(new Error('Solo dentro de la app.'));
+      if (!inTauri) return Promise.reject(new Error(window.FrameRushI18n.t('api-only-app')));
       return T.core.invoke('elevate');
     },
 

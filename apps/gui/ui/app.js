@@ -5,10 +5,14 @@
  * textos de la interfaz y reglas del plan. Lo que el snapshot no trae se oculta o se muestra
  * como "No disponible": nunca se rellena.
  */
-(function () {
+(async function () {
   'use strict';
 
   const api = window.FrameRushApi;
+  const I18N = window.FrameRushI18n;
+  /* Sin los textos la app sigue: t() devuelve el id (se ve qué falta, no se inventa). */
+  try { await I18N.ready; } catch (err) { console.error('i18n:', err); }
+  const t = I18N.t;
 
   /* ---------- Utilidades de DOM ---------- */
   const $ = s => document.querySelector(s);
@@ -23,34 +27,31 @@
   const active = id => { const x = first(id); return !!x && x.checked && !x.disabled && shown(x); };
 
   /* ---------- Textos de la interfaz y reglas del plan (no dependen del equipo) ---------- */
-  const CAT = { telemetry: 'Telemetría (envío de datos)', updater: 'Actualizadores', sync: 'Sincronización y nube', launcher: 'Lanzadores de juegos', browser: 'Navegadores y apps', overlay: 'Superposiciones (overlays)', peripheral: 'Periféricos', service_a: 'Servicios · grupo A (desde Agresivo)', service_b: 'Servicios · grupo B (solo Extremo)' };
-  const ACT = { lower_priority: 'Bajar prioridad', suspend: 'Pausar', kill: 'Cerrar', stop_service: 'Detener servicio' };
-  const RISK = { low: ['Bajo', 1], medium: ['Medio', 2], high: ['Alto', 3] };
+  const CAT = Object.fromEntries(['telemetry', 'updater', 'sync', 'launcher', 'browser', 'overlay', 'peripheral', 'service_a', 'service_b'].map(c => [c, t(`cat-${c}`)]));
+  const ACT = { lower_priority: t('act-lower-priority'), suspend: t('act-suspend'), kill: t('act-kill'), stop_service: t('act-stop-service') };
+  const RISK = { low: [t('risk-low'), 1], medium: [t('risk-medium'), 2], high: [t('risk-high'), 3] };
   const LV = { normal: 1, agresivo: 2, extremo: 3 };
-  const LV_NAME = ['', 'Normal', 'Agresivo', 'Extremo'];
-  const LV_NOTE = ['',
-    'Normal (sin administrador): baja la prioridad de lo que no hace falta, pausa actualizadores y telemetría y aplica ajustes de tu usuario (Game DVR, notificaciones, efectos visuales). No cambia la energía.',
-    'Agresivo (requiere administrador, sin reiniciar): lo de Normal + pausa sincronización, lanzadores y periféricos; servicios del grupo A; prioridad Alta siempre; plan «FrameRush Max»; pantalla a su frecuencia máxima; configuración del juego bloqueada.',
-    '⚠ Extremo (requiere reiniciar): lo de Agresivo + cierra procesos de riesgo bajo, servicios del grupo B, HAGS y desactiva VBS/HVCI y C-states. Reservar núcleos y el temporizador siguen siendo opcionales.'];
+  const LV_NAME = ['', t('level-normal'), t('level-agresivo'), t('level-extremo')];
+  const LV_NOTE = ['', t('level-note-normal'), t('level-note-agresivo'), t('level-note-extremo')];
   const DEFAULT_LEVEL = 2; /* Agresivo (PLAN §3, valores por defecto) */
   /* Ajustes que requieren reinicio (SETTINGS §4.7). */
-  const REBOOT = { hags: 'HAGS', 'vbs-hvci-off': 'VBS/HVCI desactivado', 'timer-resolution': 'temporizador global' };
+  const REBOOT = { hags: 'HAGS', 'vbs-hvci-off': t('reboot-vbs-off'), 'timer-resolution': t('reboot-timer') };
   /* run-as-admin: W y L según SETTINGS.md; la etiqueta de macOS no está definida (pendiente). */
-  const ELEVATE_LABEL = { win: '🔒 Ejecutar como administrador', lin: '🔒 Pedir permisos de administrador (polkit)', mac: '🔒 Pedir permisos de administrador' };
+  const ELEVATE_LABEL = { win: t('elevate-win'), lin: t('elevate-lin'), mac: t('elevate-mac') };
   const RT_API = { lin: ' (SCHED_RR)' };
-  const FPS_SOURCE = { presentmon: 'PresentMon (ETW)', mangohud: 'Logs de MangoHud' };
-  const GPU_NOTE = { write: 'Se guarda en la configuración de gráficos de Windows (UserGpuPreferences)', info: 'En Linux solo es informativo (DRI_PRIME / prime-run)' };
-  const POWER_BACKEND = { win: 'Plan de energía de Windows', lin: 'power-profiles-daemon', mac: 'pmset' };
+  const FPS_SOURCE = { presentmon: 'PresentMon (ETW)', mangohud: t('fps-source-mangohud') };
+  const GPU_NOTE = { write: t('gpu-note-write'), info: t('gpu-note-info') };
+  const POWER_BACKEND = { win: t('power-backend-win'), lin: 'power-profiles-daemon', mac: 'pmset' };
   /* Motivo de cada protegido (core::ProtectedReason). */
-  const PROT_WHY = { os_critical: 'parte esencial del sistema', compositor: 'dibuja el escritorio (compositor)', audio: 'sonido', gpu_driver: 'controlador de la GPU', anti_cheat: 'anticheat', self_app: 'FrameRush' };
+  const PROT_WHY = { os_critical: t('prot-os-critical'), compositor: t('prot-compositor'), audio: t('prot-audio'), gpu_driver: t('prot-gpu-driver'), anti_cheat: t('prot-anti-cheat'), self_app: 'FrameRush' };
   /* Ajustes con backend: se ocultan si el snapshot no los trae en `available` (P15). */
   const BACKEND_IDS = ['game-dvr-off', 'windows-game-mode', 'notifications-off', 'visual-effects-performance', 'uwp-background-off',
     'scheduler-foreground-boost', 'power-throttling-off', 'mmcss-games', 'defender-exclusions', 'hags', 'vbs-hvci-off', 'cstates-off',
     'memory-trim', 'standby-purge', 'custom-power-plan', 'refresh-rate-max', 'game-priority-persistent', 'fullscreen-optimizations-off',
     'gpu-preference', 'cpu-affinity', 'timer-resolution'];
   /* Lo que la app aún no hace: se dice en vez de simularlo. */
-  const NOT_WIRED = 'aún no funciona en esta versión; no se ha cambiado nada.';
-  const NO_GAME = { name: 'Ningún juego detectado', exe: '', appid: '', pids: [] };
+  const NOT_WIRED = t('not-wired');
+  const NO_GAME = { name: t('no-game'), exe: '', appid: '', pids: [] };
   const GB = 1024 ** 3, MB = 1024 ** 2;
 
   /* ---------- Estado ---------- */
@@ -80,18 +81,18 @@
   /* ---------- Plantillas ---------- */
   const actBadge = p => {
     const a = effAct(p), fell = a !== p.action;
-    return `<span class="act" data-setting="process-action" title="${fell ? 'Cerrar solo en Extremo y con riesgo bajo: se pausa en su lugar' : ACT[a]}">${ACT[a]}${fell ? ' *' : ''}</span>`;
+    return `<span class="act" data-setting="process-action" title="${fell ? t('act-fell-title') : ACT[a]}">${ACT[a]}${fell ? ' *' : ''}</span>`;
   };
-  const lockBadge = p => (locked(p) ? ' <span class="adm" data-setting="admin-lock">🔒 Requiere administrador</span>' : '');
+  const lockBadge = p => (locked(p) ? ` <span class="adm" data-setting="admin-lock">${t('admin-lock')}</span>` : '');
   const riskBadge = p => { const r = RISK[p.risk]; return `<span class="badge r${r[1]}">${r[0]}</span>`; };
   /* Reanudar / volver a limitar una fila sin tocar el resto de la sesión. */
   const rowBtn = p => (p.limited
-    ? ` <button class="btn rowAct" data-release="${esc(p.id)}" data-setting="process-release" title="Reanuda solo estos procesos; el resto sigue limitado">▶ Reanudar</button>`
-    : S.released.includes(p.id) ? ` <button class="btn rowAct" data-limit="${esc(p.id)}" data-setting="process-release" title="Vuelve a limitar estos procesos (nunca los cierra)">⏸ Limitar</button>` : '');
-  const rowHTML = (p, i) => `<label class="p prow ${S.chk[i] ? '' : 'off'} ${locked(p) ? 'lk' : ''}" title="${esc(p.desc)}"><input type="checkbox" data-i="${i}" ${S.chk[i] ? 'checked' : ''} ${locked(p) ? 'disabled' : ''}><span class="n"><b>${esc(p.name)}</b>${lockBadge(p)}${p.limited ? ' <span class="badge r2">limitado</span>' : ''}<i>${esc(p.desc)}</i></span><span class="r">${actBadge(p)} ${p.ramBytes ? fmt(p.ramBytes) : '—'} · ${p.cpu == null ? '— CPU' : p.cpu.toFixed(1) + '%'}${riskBadge(p)}${rowBtn(p)}</span></label>`;
-  const catHTML = c => `<div class="cat">${CAT[c]}<span class="sp"></span><button class="lnk" data-setting="process-category-bulk" data-c="${c}" data-v="1">todos</button><button class="lnk" data-setting="process-category-bulk" data-c="${c}" data-v="0">ninguno</button></div>`;
-  const lockHTML = l => `<div class="p lk" data-setting="protected-processes"><span>🔒</span><span class="n"><b>${esc(l.name)}</b><i>${esc(l.why)} · FrameRush nunca lo toca</i></span><span class="r"><span class="badge r0">Protegido</span></span></div>`;
-  const stHTML = (s, i, dis) => `<label class="p ${dis ? 'dis' : ''}"><input type="checkbox" data-s="${i}" ${S.stc[i] ? 'checked' : ''} ${dis ? 'disabled' : ''}><span class="n"><b>${esc(s.name)}</b><span class="src">${esc(s.source)}</span><i>${esc(s.why)}${dis ? ' · requiere overlay desactivado' : ''}</i></span><span></span></label>`;
+    ? ` <button class="btn rowAct" data-release="${esc(p.id)}" data-setting="process-release" title="${t('row-release-title')}">${t('row-release')}</button>`
+    : S.released.includes(p.id) ? ` <button class="btn rowAct" data-limit="${esc(p.id)}" data-setting="process-release" title="${t('row-limit-title')}">${t('row-limit')}</button>` : '');
+  const rowHTML = (p, i) => `<label class="p prow ${S.chk[i] ? '' : 'off'} ${locked(p) ? 'lk' : ''}" title="${esc(p.desc)}"><input type="checkbox" data-i="${i}" ${S.chk[i] ? 'checked' : ''} ${locked(p) ? 'disabled' : ''}><span class="n"><b>${esc(p.name)}</b>${lockBadge(p)}${p.limited ? ` <span class="badge r2">${t('row-limited')}</span>` : ''}<i>${esc(p.desc)}</i></span><span class="r">${actBadge(p)} ${p.ramBytes ? fmt(p.ramBytes) : '—'} · ${p.cpu == null ? '— CPU' : p.cpu.toFixed(1) + '%'}${riskBadge(p)}${rowBtn(p)}</span></label>`;
+  const catHTML = c => `<div class="cat">${CAT[c]}<span class="sp"></span><button class="lnk" data-setting="process-category-bulk" data-c="${c}" data-v="1">${t('bulk-all')}</button><button class="lnk" data-setting="process-category-bulk" data-c="${c}" data-v="0">${t('bulk-none')}</button></div>`;
+  const lockHTML = l => `<div class="p lk" data-setting="protected-processes"><span>🔒</span><span class="n"><b>${esc(l.name)}</b><i>${esc(l.why)} · ${t('prot-never')}</i></span><span class="r"><span class="badge r0">${t('prot-badge')}</span></span></div>`;
+  const stHTML = (s, i, dis) => `<label class="p ${dis ? 'dis' : ''}"><input type="checkbox" data-s="${i}" ${S.stc[i] ? 'checked' : ''} ${dis ? 'disabled' : ''}><span class="n"><b>${esc(s.name)}</b><span class="src">${esc(s.source)}</span><i>${esc(s.why)}${dis ? ' · ' + t('steam-needs-overlay-off') : ''}</i></span><span></span></label>`;
 
   /* ---------- Nivel (SETTINGS §4.1) ---------- */
   function setLevel(l) {
@@ -108,14 +109,14 @@
       if (x) { x.disabled = !ok; x.checked = ok && !('optin' in r.dataset); }
       const s = r.querySelector('small');
       if (s && !ok && !s.dataset.o) s.dataset.o = s.textContent;
-      if (s && s.dataset.o) s.textContent = ok ? s.dataset.o : 'Disponible desde ' + LV_NAME[LV[r.dataset.min]];
+      if (s && s.dataset.o) s.textContent = ok ? s.dataset.o : t('available-from', { level: LV_NAME[LV[r.dataset.min]] });
     });
     const ac = antiCheat(), vb = D.vbsBlocked;
     if (ac) setCheck('vbs-hvci-off', false); /* P10: desmarcado con cualquier anticheat */
     DS('vbs-hvci-off').forEach(x => {
       if (vb) { x.disabled = true; x.checked = false; } /* P10, V7: bloqueado con Vanguard/FACEIT (core) */
       const n = x.closest('.row')?.querySelector('.vbsAc');
-      if (n) { n.hidden = !vb; n.textContent = vb ? `Bloqueado: ${vb}` : ''; }
+      if (n) { n.hidden = !vb; n.textContent = vb ? t('vbs-blocked', { reason: vb }) : ''; }
     });
     if (priorityValue() === 'normal') setCheck('game-priority-persistent', false); /* P1 */
     renderPower(); render(); caps();
@@ -131,12 +132,12 @@
       h += catHTML(c);
       ix.forEach(i => { h += rowHTML(D.processes[i], i); });
     }
-    if (!D.processes.length) h += '<p class="note">Ahora mismo no hay abierto ningún programa que FrameRush sepa optimizar.</p>';
+    if (!D.processes.length) h += `<p class="note">${t('no-processes')}</p>`;
     /* Solo informativos: plegados por defecto; se recuerda si el usuario los abre (render rehace la lista). */
     const prot = $('#rows details.prot');
     if (prot) S.protOpen = prot.open;
     if (D.protected.length) {
-      h += `<details class="adv prot" ${S.protOpen ? 'open' : ''}><summary>Protegidos abiertos: FrameRush nunca los toca · ${D.protected.length}</summary>`;
+      h += `<details class="adv prot" ${S.protOpen ? 'open' : ''}><summary>${t('prot-summary', { n: D.protected.length })}</summary>`;
       D.protected.forEach(l => { h += lockHTML({ name: l.name, why: PROT_WHY[l.reason] || l.reason }); });
       h += '</details>';
     }
@@ -150,9 +151,9 @@
     let n = 0, ram = 0, cpu = 0;
     D.processes.forEach((p, i) => { if (S.chk[i]) { n++; ram += p.ramBytes; cpu += p.cpu || 0; } });
     /* impact-estimate: solo RAM y CPU, nunca cifras de FPS (PLAN §6). */
-    DS('impact-estimate').forEach(e => { e.innerHTML = `Se liberarían aprox. <b>${fmt(ram)}</b> de RAM y <b>${cpu.toFixed(1)} %</b> de CPU · ${n} marcados`; });
-    setText('.pm', `${n}/${D.processes.length} marcados`);
-    setText('.stm', `${S.stc.filter(Boolean).length}/${D.steamRecs.length} recomendaciones`);
+    DS('impact-estimate').forEach(e => { e.innerHTML = t('impact', { ram: `<b>${fmt(ram)}</b>`, cpu: `<b>${cpu.toFixed(1)} %</b>`, n }); });
+    setText('.pm', t('checked-of', { n, total: D.processes.length }));
+    setText('.stm', t('steam-recs-of', { n: S.stc.filter(Boolean).length, total: D.steamRecs.length }));
   }
 
   /* ---------- Energía (P3) ---------- */
@@ -160,20 +161,20 @@
     const o = D.device.power;
     if (!o) {
       DS('power-plan').forEach(g => { g.innerHTML = ''; });
-      setText('.pwrCur', 'No disponible'); setText('.pwrNote', 'No se pudieron leer los planes de energía de este equipo.');
+      setText('.pwrCur', t('unavailable')); setText('.pwrNote', t('power-unreadable'));
       return;
     }
     DS('power-plan').forEach(g => {
-      g.innerHTML = o.plans.map((x, i) => `<button data-i="${i}" class="${i === S.plan ? 'on' : ''}" title="${i === o.current ? 'Plan actual del sistema' : ''}">${esc(x)}${i === o.current ? ' •' : ''}</button>`).join('');
+      g.innerHTML = o.plans.map((x, i) => `<button data-i="${i}" class="${i === S.plan ? 'on' : ''}" title="${i === o.current ? t('power-current-title') : ''}">${esc(x)}${i === o.current ? ' •' : ''}</button>`).join('');
     });
-    setText('.pwrCur', o.current == null ? 'plan actual desconocido' : o.plans[o.current]);
+    setText('.pwrCur', o.current == null ? t('power-current-unknown') : o.plans[o.current]);
     const custom = D.caps.windows && active('custom-power-plan');
     /* cstates-off va dentro de «FrameRush Max»: sin ese plan no hay dónde ponerlo. */
     DS('cstates-off').forEach(x => { x.disabled = !custom; });
     $$('.cstNote').forEach(e => { e.hidden = custom; });
-    const what = custom ? `se activará «FrameRush Max» (base: ${o.plans[S.plan] ?? 'plan actual'})`
-      : S.plan == null || S.plan === o.current ? 'sin cambios en este nivel' : `se cambiará a «${o.plans[S.plan]}» al aplicar`;
-    setText('.pwrNote', `${POWER_BACKEND[D.os]} · ${what} · se deshace con Restaurar`);
+    const what = custom ? t('power-will-custom', { base: o.plans[S.plan] ?? t('power-current-plan') })
+      : S.plan == null || S.plan === o.current ? t('power-no-change') : t('power-will-switch', { plan: o.plans[S.plan] });
+    setText('.pwrNote', t('power-note', { backend: POWER_BACKEND[D.os], what }));
   }
 
   /* ---------- Capacidades del SO y juego seleccionado ---------- */
@@ -187,9 +188,9 @@
     ['cpu-affinity', 'timer-resolution'].forEach(id => DS(id).forEach(x => { x.disabled = ac; if (ac) x.checked = false; }));
     DS('anti-cheat-warning').forEach(e => {
       e.hidden = !ac;
-      e.textContent = ac ? `🛡 Anticheat abierto (${antiCheat().name}): se desactivan «Reservar núcleos» y el temporizador global; el juego solo recibe más prioridad y el anticheat no se toca.` : '';
+      e.textContent = ac ? t('anticheat-warning', { name: antiCheat().name }) : '';
     });
-    setText('.fpsNote', k.fps ? FPS_SOURCE[k.fps] : 'sin medición de FPS todavía');
+    setText('.fpsNote', k.fps ? FPS_SOURCE[k.fps] : t('fps-none-yet'));
     setText('.gameName', g.name); setText('.gameExe', g.exe); setText('.gameId', g.appid);
     setText('.gamePid', g.pids.length ? ` · PID ${g.pids.join(', ')}` : '');
     $$('.cover').forEach(e => { e.style.background = g.cover || ''; });
@@ -216,27 +217,27 @@
 
     /* hardware-profile: solo lo detectado */
     const cores = !cpu ? '' : cpu.cores.length
-      ? (cpu.cores.some(c => c.efficiency) ? `${cpu.cores.filter(c => !c.efficiency).length}P + ${cpu.cores.filter(c => c.efficiency).length}E` : `${cpu.cores.length} núcleos físicos`) + ` / ${cpu.threads} hilos`
-      : `${cpu.threads} hilos`;
+      ? (cpu.cores.some(c => c.efficiency) ? `${cpu.cores.filter(c => !c.efficiency).length}P + ${cpu.cores.filter(c => c.efficiency).length}E` : t('physical-cores', { n: cpu.cores.length })) + ' / ' + t('threads', { n: cpu.threads })
+      : t('threads', { n: cpu.threads });
     const gpus = d.gpus.map(x => {
       const n = esc(x.name) + (x.vramBytes ? ` ${gb(x.vramBytes)}` : '');
       return x.preferred ? `<b>${n}</b>` : n;
     }).join(' + ');
     DS('hardware-profile').forEach(e => {
-      e.innerHTML = [cpu ? `<b>${esc(cpu.model)}</b> · ${cores}` : 'CPU: No disponible', gpus || 'GPU: No disponible', d.manufacturer ? esc(d.manufacturer) : '']
+      e.innerHTML = [cpu ? `<b>${esc(cpu.model)}</b> · ${cores}` : `CPU: ${t('unavailable')}`, gpus || `GPU: ${t('unavailable')}`, d.manufacturer ? esc(d.manufacturer) : '']
         .filter(Boolean).join(' · ');
     });
 
     /* gpu-preference: la GPU que elige core (más VRAM dedicada) o dejarlo al sistema */
     DS('gpu-preference').forEach(sel => {
       sel.innerHTML = d.gpus.filter(x => x.preferred).map(x => `<option value="alto">${esc(x.name)}${x.vramBytes ? ` ${gb(x.vramBytes)}` : ''}</option>`).join('') +
-        '<option value="sistema">La que elija el sistema (sin cambios)</option>';
+        `<option value="sistema">${t('gpu-system')}</option>`;
     });
 
     /* resolution-override: modos reales del monitor principal (R8); nativa = no se toca */
     DS('resolution-override').forEach(sel => {
       const m = d.displays.find(x => x.primary) || d.displays[0];
-      sel.innerHTML = (m ? `<option value="nativa">Nativa (${m.width}×${m.height})</option>` : '<option value="nativa">Nativa</option>') +
+      sel.innerHTML = (m ? `<option value="nativa">${t('res-native-size', { w: m.width, h: m.height })}</option>` : `<option value="nativa">${t('res-native')}</option>`) +
         (m ? m.resolutions.filter(([w, h]) => w !== m.width || h !== m.height)
           .map(([w, h]) => `<option value="${w}x${h}">${w}×${h}${w < 1.4 * h ? ' · 4:3' : ''}</option>`).join('') : '');
     });
@@ -249,23 +250,23 @@
     if (al && !al.dataset.touched) al.value = Math.round(d.thermalAlert.value);
     if (wa && !wa.dataset.touched) wa.value = Math.round(d.thermalWarn.value);
     const slowdown = d.gpus.find(x => x.slowdown != null)?.slowdown ?? null;
-    setText('.thrNote', d.thermalAlert.estimated ? 'Valores estimados: no se pudo leer la temperatura máxima de la CPU (TjMax) ni la de la GPU.'
-      : `Calculado: TjMax ${cpu?.tjmax ?? '—'} °C − 10 · límite de la GPU ${slowdown ?? '—'} °C − 5 → ${Math.round(d.thermalAlert.value)} °C`);
+    setText('.thrNote', d.thermalAlert.estimated ? t('thr-estimated')
+      : t('thr-calculated', { tjmax: cpu?.tjmax ?? '—', slowdown: slowdown ?? '—', alert: Math.round(d.thermalAlert.value) }));
 
     /* manual-recommendations (It5.8): rules/recommendations.toml filtradas por core para este equipo y el juego elegido */
     const recs = [...D.recommendations, ...(game().recommendations || [])];
     DS('manual-recommendations').forEach(e => {
-      e.innerHTML = recs.map(r => `<label><input type="checkbox"><span><b>${esc(r.title)}</b>${r.steps.map(s => `<br>${esc(s)}`).join('')}<br><small>Fuente: ${esc(r.source)}</small></span></label>`).join('');
+      e.innerHTML = recs.map(r => `<label><input type="checkbox"><span><b>${esc(r.title)}</b>${r.steps.map(s => `<br>${esc(s)}`).join('')}<br><small>${t('rec-source', { source: esc(r.source) })}</small></span></label>`).join('');
       e.closest('details').hidden = !recs.length;
     });
 
     /* compat-warning: solo lo que está instalado */
     $$('.cwList').forEach(e => {
-      e.innerHTML = (d.virtualization.length ? d.virtualization.map(v => `<li>${esc(v)} (instalado)</li>`).join('') : '<li>No se detectó ningún programa instalado que use el hipervisor</li>') +
-        (D.vbsBlocked ? `<li>${esc(D.vbsBlocked)}: la opción queda bloqueada</li>` : ac ? `<li>Anticheat ${esc(ac.name)}: comprueba que no exija VBS</li>` : '');
+      e.innerHTML = (d.virtualization.length ? d.virtualization.map(v => `<li>${t('cw-installed', { name: esc(v) })}</li>`).join('') : `<li>${t('cw-none')}</li>`) +
+        (D.vbsBlocked ? `<li>${t('cw-blocked', { reason: esc(D.vbsBlocked) })}</li>` : ac ? `<li>${t('cw-anticheat', { name: esc(ac.name) })}</li>` : '');
     });
 
-    setText('.affNote', d.affinityWarning ? `⚠ Con ${cpu.cores.length} núcleos físicos, reservar núcleos a mano suele empeorar el rendimiento` : 'Opcional en todos los niveles');
+    setText('.affNote', d.affinityWarning ? t('aff-warning', { n: cpu.cores.length }) : t('aff-optional'));
     renderAffinity();
     if (S.lastSensors) onSensors(S.lastSensors);
   }
@@ -276,7 +277,7 @@
     const cpu = D.device.cpu, on = new Set(D.device.affinity.value);
     const cpus = cpu ? cpu.cores.flatMap((c, k) => c.logical.map(i => ({ i, k, e: c.efficiency }))) : [];
     b.innerHTML = cpus.sort((x, y) => x.i - y.i).map(({ i, k, e }) =>
-      `<input type="checkbox" id="core${i}" ${on.has(i) ? 'checked' : ''}><label for="core${i}" title="Núcleo físico ${k} · CPU lógica ${i}">${e ? 'E' : 'P'}${i}</label>`).join('');
+      `<input type="checkbox" id="core${i}" ${on.has(i) ? 'checked' : ''}><label for="core${i}" title="${t('core-title', { core: k, cpu: i })}">${e ? 'E' : 'P'}${i}</label>`).join('');
     syncAffinityCores();
   }
   function syncAffinityCores() {
@@ -289,7 +290,7 @@
   function renderPerf() {
     $('#perfBefore').setAttribute('points', '');
     $('#perfAfter').setAttribute('points', '');
-    setText('.perfSum', 'aún no se miden los FPS');
+    setText('.perfSum', t('perf-none'));
   }
 
   /* ---------- Sesión ---------- */
@@ -300,33 +301,35 @@
   /* Lo seleccionado en la UI; lo aplicado de verdad lo da `framerush status` hasta que la app aplique. */
   function statusText() {
     const pw = D.device.power, g = game();
-    return [
-      `Nivel         : ${LV_NAME[S.level]}`,
-      `Procesos      : ${S.chk.filter(Boolean).length} marcados`,
-      `Energía       : ${pw && S.plan != null ? pw.plans[S.plan] : 'sin cambios'}${active('custom-power-plan') ? ' + FrameRush Max' : ''}`,
-      `Prioridad     : ${S.rt ? 'Tiempo real' : priorityValue() === 'normal' ? 'Normal' : 'Alta'}${active('game-priority-persistent') ? ' (siempre, hasta Restaurar)' : ''}`,
-      `Refresco      : ${active('refresh-rate-max') ? 'máximo' : 'sin cambios'}`,
-      `Juego         : ${g.name}`,
-      `No pausar     : ${first('keep-alive-list')?.value || '—'}`,
-      `Sesión previa : ${D.pendingSession ? D.pendingSession.changes + ' cambios sin restaurar' : 'no'}`,
-    ].join('\n');
+    const rows = [
+      [t('st-level'), LV_NAME[S.level]],
+      [t('st-processes'), t('st-checked', { n: S.chk.filter(Boolean).length })],
+      [t('st-power'), (pw && S.plan != null ? pw.plans[S.plan] : t('st-no-change')) + (active('custom-power-plan') ? ' + FrameRush Max' : '')],
+      [t('st-priority'), (S.rt ? t('prio-realtime') : priorityValue() === 'normal' ? t('prio-normal') : t('prio-high')) + (active('game-priority-persistent') ? ' ' + t('st-always') : '')],
+      [t('st-refresh'), active('refresh-rate-max') ? t('st-max') : t('st-no-change')],
+      [t('st-game'), g.name],
+      [t('st-keep-alive'), first('keep-alive-list')?.value || '—'],
+      [t('st-previous'), D.pendingSession ? t('st-unrestored', { n: D.pendingSession.changes }) : t('st-no')],
+    ];
+    const pad = Math.max(...rows.map(r => r[0].length));
+    return rows.map(([k, v]) => `${k.padEnd(pad)} : ${v}`).join('\n');
   }
 
   /* Vista Estado: lo elegido, lo aplicado (journal) y el equipo ahora, leído por el backend. */
   async function showStatus(v) {
-    v.textContent = statusText() + '\n\nLeyendo el estado del equipo…';
+    v.textContent = statusText() + '\n\n' + t('st-reading');
     try {
       const st = await window.FrameRushApi.status();
-      const scope = { session: 'sesión', persistent: 'persistente' };
-      const state = { done: 'hecho', pending: 'pendiente', failed: 'fallido' };
+      const scope = { session: t('scope-session'), persistent: t('scope-persistent') };
+      const state = { done: t('state-done'), pending: t('state-pending'), failed: t('state-failed') };
       const applied = st.session.length
-        ? st.session.map(l => `  lote ${l.batch} · ${scope[l.scope] || l.scope} · ${state[l.status] || l.status} · ${l.what}`)
-        : ['  nada'];
+        ? st.session.map(l => '  ' + t('st-batch', { batch: l.batch, scope: scope[l.scope] || l.scope, state: state[l.status] || l.status, what: l.what }))
+        : ['  ' + t('st-nothing')];
       const pad = Math.max(...st.system.map(l => l.label.length), 0);
-      v.textContent = [statusText(), '', 'Aplicado por FrameRush:', ...applied, '', 'Equipo (ahora):',
+      v.textContent = [statusText(), '', t('st-applied'), ...applied, '', t('st-system'),
         ...st.system.map(l => `  ${l.label.padEnd(pad)}  ${l.value}`)].join('\n');
     } catch (err) {
-      v.textContent = statusText() + `\n\nNo se pudo leer el estado: ${err && err.message ? err.message : err}`;
+      v.textContent = statusText() + '\n\n' + t('st-error', { error: String(err && err.message ? err.message : err) });
     }
   }
 
@@ -335,7 +338,7 @@
     DS('session-status').forEach(e => {
       e.classList.toggle('on', on);
       const t = e.querySelector('.sessT');
-      if (t) t.textContent = on ? `Sesión activa · ${S.hist.reduce((a, b) => a + b, 0)} cambios · ${S.hist.length} aplicación(es)${S.watching ? ' · se deshace al cerrar el juego' : ''}` : 'Sin cambios activos';
+      if (t) t.textContent = on ? I18N.t('session-on', { changes: S.hist.reduce((a, b) => a + b, 0), applies: S.hist.length }) + (S.watching ? ' · ' + I18N.t('session-watching') : '') : I18N.t('session-off');
     });
     DS('restore').forEach(b => { b.disabled = !on && !D.pendingSession; });
     DS('undo-last').forEach(b => { b.disabled = !on; });
@@ -346,12 +349,12 @@
   /* Informe de apply/undo/revert: hechos, fallidos y lo que no se pudo (sin inventar nada). */
   function report(verb, r) {
     const fails = r.lines.filter(l => l.outcome === 'failed');
-    let msg = `${verb}: ${r.done} hecho(s)${r.failed ? ` · ${r.failed} fallido(s)` : ''}.`;
-    if (fails.length) msg += ` Primer fallo: ${fails[0].what} (${fails[0].detail}).`;
-    if (r.needsAdmin.length) msg += ` Necesitan administrador (pulsa «${ELEVATE_LABEL[D.os].replace(/^\S+ /, '')}»): ${r.needsAdmin.join(', ')}.`;
-    if (r.notWired.length) msg += ` Aún no funciona en esta versión, no se aplicó: ${r.notWired.join(', ')}.`;
-    if (r.notes.length) msg += ` No aplicado: ${r.notes.join('; ')}.`;
-    if (!r.lines.length && !r.notWired.length && !r.needsAdmin.length && !r.notes.length) msg = `${verb}: no había nada que hacer.`;
+    let msg = t('rep-done', { verb, done: r.done }) + (r.failed ? ' · ' + t('rep-failed', { n: r.failed }) : '') + '.';
+    if (fails.length) msg += ' ' + t('rep-first-fail', { what: fails[0].what, detail: fails[0].detail });
+    if (r.needsAdmin.length) msg += ' ' + t('rep-needs-admin', { button: ELEVATE_LABEL[D.os].replace(/^\S+ /, ''), list: r.needsAdmin.join(', ') });
+    if (r.notWired.length) msg += ' ' + t('rep-not-wired', { list: r.notWired.join(', ') });
+    if (r.notes.length) msg += ' ' + t('rep-notes', { list: r.notes.join('; ') });
+    if (!r.lines.length && !r.notWired.length && !r.needsAdmin.length && !r.notes.length) msg = t('rep-nothing', { verb });
     /* reboot-required: lo que el backend marca como «surte efecto al reiniciar» (SETTINGS §4.7). */
     r.lines.filter(l => l.outcome === 'done' && l.what.includes('reiniciar'))
       .forEach(l => Object.keys(REBOOT).filter(id => l.what.includes(id) && !S.rb.includes(id)).forEach(id => S.rb.push(id)));
@@ -380,7 +383,7 @@
       D.processes.forEach(p => { p.limited = ids.includes(p.id); });
       S.released = S.released.filter(id => !ids.includes(id));
       render();
-    } catch (err) { toast(`No se pudo leer qué procesos están limitados: ${err && err.message ? err.message : err}`); }
+    } catch (err) { toast(t('err-limited', { error: String(err && err.message ? err.message : err) })); }
   }
 
   /*
@@ -399,16 +402,16 @@
       S.chk = D.processes.map(p => !locked(p) && (was.has(p.id) ? was.get(p.id) : p.checked[S.level - 1]));
       S.released = S.released.filter(id => D.processes.some(p => p.id === id));
       render();
-      toast(added || gone ? `Lista actualizada: ${added} nueva(s), ${gone} ya cerrada(s).` : 'Lista actualizada: no hay cambios.');
+      toast(added || gone ? t('list-updated', { added, gone }) : t('list-unchanged'));
     } catch (err) {
-      toast(`No se pudo actualizar la lista: ${err && err.message ? err.message : err}`);
+      toast(t('err-list', { error: String(err && err.message ? err.message : err) }));
     } finally {
       btn.disabled = false;
     }
   }
 
   async function releaseRow(id) {
-    const r = await run('Reanudar', () => api.releaseRow(id));
+    const r = await run(t('verb-release'), () => api.releaseRow(id));
     if (!r) return;
     if (!r.failed) S.released.push(id);
     if (!r.sessionOpen) { S.hist = []; D.pendingSession = null; }
@@ -416,14 +419,14 @@
   }
 
   async function limitRow(id) {
-    const r = await run('Limitar', () => api.limitRow(id, S.level, keepAliveList()));
+    const r = await run(t('verb-limit'), () => api.limitRow(id, S.level, keepAliveList()));
     if (!r) return;
     if (r.done) S.hist.push(r.done);
     sess(); syncLimited();
   }
 
   async function undo() {
-    const r = await run('Deshacer', api.undo);
+    const r = await run(t('verb-undo'), api.undo);
     if (!r) return;
     S.hist.pop();
     if (!r.sessionOpen) { S.hist = []; D.pendingSession = null; }
@@ -431,7 +434,7 @@
   }
 
   async function revert() {
-    const r = await run('Restaurar', api.revert);
+    const r = await run(t('verb-restore'), api.revert);
     if (!r) return;
     S.watching = false;
     if (!r.sessionOpen) { S.hist = []; D.pendingSession = null; DS('restore-after-crash').forEach(x => { x.hidden = true; }); }
@@ -440,14 +443,14 @@
   }
 
   /* El backend vuelve a planificar con el equipo de ahora y aplica solo lo marcado. */
-  async function apply(force, verb = 'Aplicar', turbo = false) {
+  async function apply(force, verb = t('verb-apply'), turbo = false) {
     const n = S.chk.filter(Boolean).length + S.stc.filter(Boolean).length + levelToggles().length;
-    if (first('dry-run')?.checked) { toast(`Simulación: se aplicarían ${n} cambios. No se ha modificado nada.`); return; }
+    if (first('dry-run')?.checked) { toast(t('dry-apply', { n })); return; }
     if (!force && active('vbs-hvci-off')) { /* SETTINGS §4.8 */
       /* La confirmación vuelve a aplicar igual: con Turbo si esto era Turbo. */
       S.cwRetry = { verb, turbo };
       DS('compat-warning').forEach(e => { e.hidden = false; });
-      toast('Lee y confirma el aviso de compatibilidad de arriba para aplicar.');
+      toast(t('cw-read-first'));
       return;
     }
     const r = await run(verb, () => api.apply({
@@ -514,9 +517,9 @@
     if (D.games[S.game]) D.games[S.game].running = false;
     const resumedOnly = S.turbo && !first('auto-revert-on-exit')?.checked;
     S.turbo = false;
-    if (e.error) toast(`Juego cerrado, pero no se pudieron deshacer los cambios: ${e.error}`);
+    if (e.error) toast(t('exit-error', { error: e.error }));
     else {
-      report(resumedOnly ? 'Juego cerrado, Turbo reanudó lo pausado' : 'Juego cerrado, cambios temporales deshechos', e.outcomes);
+      report(resumedOnly ? t('exit-turbo') : t('exit-undone'), e.outcomes);
       if (!e.outcomes.sessionOpen) { S.hist = []; D.pendingSession = null; }
     }
     S.released = []; sess(); syncLimited();
@@ -535,14 +538,14 @@
     const p = S.profiles[e.appid];
     if (!p || !first('profile-auto-apply')?.checked) {
       if (S.game === i) caps();
-      toast(`${D.games[i].name} se ha iniciado${p ? ' (auto-aplicar desactivado)' : ' · sin perfil guardado'}.`);
+      toast(t('game-started', { name: D.games[i].name }) + ' ' + (p ? t('game-started-no-auto') : t('game-started-no-profile')) + '.');
       return;
     }
     S.game = i;
     DS('game-target').forEach(s => { s.value = String(i); });
     caps();
     useProfile(e.appid, true);
-    apply(false, `${p.name} iniciado, perfil aplicado`);
+    apply(false, t('game-started-applied', { name: p.name }));
   }
 
   async function copyLaunchOptions() {
@@ -550,9 +553,9 @@
     if (!a) return;
     try {
       await navigator.clipboard.writeText(a.launchOptions);
-      toast(`Copiado al portapapeles: ${a.launchOptions} (opciones de lanzamiento de ${game().name} en Steam).`);
+      toast(t('copied', { options: a.launchOptions, game: game().name }));
     } catch (err) {
-      toast(`No se pudo copiar (${err && err.message ? err.message : err}): ${a.launchOptions}`);
+      toast(t('err-copy', { error: String(err && err.message ? err.message : err), options: a.launchOptions }));
     }
   }
 
@@ -564,8 +567,8 @@
    */
   async function launchGame() {
     const g = D.games[S.game];
-    if (!g) { toast('Elige un juego de Steam en «Juego».'); return; }
-    if (!api.inTauri) { toast('Jugar ahora solo funciona dentro de la app.'); return; }
+    if (!g) { toast(t('pick-game')); return; }
+    if (!api.inTauri) { toast(t('play-only-app')); return; }
     const dry = !!first('dry-run')?.checked;
     /* Se marca antes de lanzar: game-launched puede llegar antes de que vuelva la llamada. */
     S.turboPending = dry ? null : g.appid;
@@ -575,19 +578,19 @@
       running = await api.launchGame(g.appid);
     } catch (err) {
       S.turboPending = null;
-      toast(`No se pudo lanzar ${g.name}: ${err && err.message ? err.message : err}`);
+      toast(t('err-launch', { name: g.name, error: String(err && err.message ? err.message : err) }));
       return;
     }
     g.running = running;
     if (running) {
       S.turboPending = null;
-      if (dry) toast(`Simulación: ${g.name} ya está abierto; Turbo no pausaría nada en este modo.`);
+      if (dry) toast(t('dry-running', { name: g.name }));
       else startTurbo(S.game);
       return;
     }
     toast(dry
-      ? `Simulación: lanzando ${g.name} sin pausar nada (${S.chk.filter(Boolean).length} fila(s) marcada(s)).`
-      : `Lanzando ${g.name} con Steam… Turbo se aplica en cuanto arranque.`);
+      ? t('dry-launch', { name: g.name, n: S.chk.filter(Boolean).length })
+      : t('launching', { name: g.name }));
   }
 
   /*
@@ -602,14 +605,14 @@
     caps();
     /* P4: con el perfil del juego ya elegido no se recarga, para no perder lo marcado después a mano. */
     if (S.profiles[g.appid] && first('profile')?.value !== String(g.appid)) useProfile(g.appid, true);
-    await apply(false, `Turbo · ${g.name}`, true);
+    await apply(false, t('turbo-verb', { name: g.name }), true);
     if (!S.turbo && retry) S.turboPending = g.appid;
   }
 
   /* Re-escaneo de Turbo: solo avisa si congeló algo nuevo. */
   function onTurboRescan(e) {
-    if (e.error) { toast(`Turbo: no se pudo re-escanear (${e.error}).`); return; }
-    if (e.outcomes && e.outcomes.done) { toast(`Turbo: ${e.outcomes.done} programa(s) nuevo(s) en pausa.`); syncLimited(); }
+    if (e.error) { toast(t('turbo-rescan-error', { error: e.error })); return; }
+    if (e.outcomes && e.outcomes.done) { toast(t('turbo-rescan-done', { n: e.outcomes.done })); syncLimited(); }
   }
 
   /* ---------- Perfiles por juego (It3.2) ---------- */
@@ -662,15 +665,15 @@
     /* Las mismas reglas que al tocar a mano: P10 y P1. */
     if (antiCheat()) setCheck('vbs-hvci-off', false);
     if (priorityValue() === 'normal') setCheck('game-priority-persistent', false);
-    setText('[data-setting="apply"] .lbl', first('dry-run')?.checked ? 'Simular optimización' : 'Aplicar optimización');
+    setText('[data-setting="apply"] .lbl', first('dry-run')?.checked ? t('apply-dry') : t('apply-label'));
     syncAffinityCores(); renderPower(); render(); sess();
   }
 
   function fillProfiles(selected) {
     DS('profile').forEach(s => {
-      s.innerHTML = '<option value="global">Global</option>' +
+      s.innerHTML = `<option value="global">${t('profile-global')}</option>` +
         Object.entries(S.profiles).map(([id, p]) => `<option value="${esc(id)}">${esc(p.name)}</option>`).join('') +
-        (D.games.length ? '<option value="nuevo">Nuevo: guardar el juego elegido…</option>' : '');
+        (D.games.length ? `<option value="nuevo">${t('profile-new')}</option>` : '');
       s.value = selected in S.profiles ? String(selected) : 'global';
     });
   }
@@ -680,20 +683,20 @@
     const p = S.profiles[appid];
     loadProfile(p ? p.data : S.base);
     fillProfiles(p ? appid : 'global');
-    if (!quiet) toast(p ? `Perfil de «${p.name}» cargado.` : 'Perfil Global: valores por defecto del nivel.');
+    if (!quiet) toast(p ? t('profile-loaded', { name: p.name }) : t('profile-global-loaded'));
   }
 
   async function saveProfile() {
     const g = D.games[S.game];
-    if (!g) { toast('Elige un juego de Steam para guardar su perfil.'); return; }
+    if (!g) { toast(t('profile-pick-game')); return; }
     const data = profileState();
     try {
       await api.saveProfile(g.appid, g.name, data);
       S.profiles[g.appid] = { name: g.name, data };
       fillProfiles(g.appid);
-      toast(`Perfil de «${g.name}» guardado: se carga al elegir el juego${first('profile-auto-apply')?.checked ? ' y se aplica al iniciarlo' : ''}.`);
+      toast(t('profile-saved', { name: g.name }) + (first('profile-auto-apply')?.checked ? ' ' + t('profile-saved-auto') : '') + '.');
     } catch (err) {
-      toast(`No se pudo guardar el perfil: ${err && err.message ? err.message : err}`);
+      toast(t('err-profile-save', { error: String(err && err.message ? err.message : err) }));
       fillProfiles(g.appid);
     }
   }
@@ -712,12 +715,12 @@
         box.hidden = true;
         if (b.dataset.v !== 'realtime') S.rt = false;
       }
-      if (b.dataset.v === 'normal') { setCheck('game-priority-persistent', false); toast('Prioridad Normal: se desmarca «Prioridad Alta siempre».'); }
+      if (b.dataset.v === 'normal') { setCheck('game-priority-persistent', false); toast(t('prio-normal-unchecks')); }
     }
   }
 
   /* ---------- Sensores y FPS (eventos) ---------- */
-  const fmtSensor = s => (s.value == null ? 'No disponible' : s.unit === 'c' ? Math.round(s.value) + ' °C' : s.unit === 'pct' ? Math.round(s.value) + ' %' : Math.round(s.value).toLocaleString('es') + ' rpm');
+  const fmtSensor = s => (s.value == null ? t('unavailable') : s.unit === 'c' ? Math.round(s.value) + ' °C' : s.unit === 'pct' ? Math.round(s.value) + ' %' : Math.round(s.value).toLocaleString(I18N.lang) + ' rpm');
 
   /* Filas de ventiladores: se rehacen solo si cambia la lista de sensores. */
   function renderFans(fans) {
@@ -738,20 +741,20 @@
     const fans = list.filter(s => s.kind === 'fan');
     renderFans(fans);
     ['cpu', 'gpu'].forEach(k => {
-      const s = pick(k), t = s && s.value != null ? Math.round(s.value) : null;
-      const c = t == null ? null : t >= a ? 'bad' : t >= w ? 'warn' : 'ok';
+      const s = pick(k), temp = s && s.value != null ? Math.round(s.value) : null;
+      const c = temp == null ? null : temp >= a ? 'bad' : temp >= w ? 'warn' : 'ok';
       $$(`[data-temp="${k}"]`).forEach(e => {
         e.className = e.className.replace(/\s*(c-\w+|na)\b/g, '');
-        if (t == null) { e.textContent = 'No disponible'; e.classList.add('na'); } else { e.textContent = t + ' °C'; e.classList.add('c-' + c); }
+        if (temp == null) { e.textContent = t('unavailable'); e.classList.add('na'); } else { e.textContent = temp + ' °C'; e.classList.add('c-' + c); }
       });
-      $$(`[data-meter="${k}"]`).forEach(m => { m.style.width = t == null ? '0' : Math.min(t, 100) + '%'; m.className = c ? 'bg-' + c : ''; });
-      setText(`.${k}Src`, s ? s.source : 'sin sensor');
-      if (c === 'bad' && first('thermal-alerts')?.checked && !S.alerted) { S.alerted = true; toast(`${k.toUpperCase()} a ${t} °C: supera la temperatura de alerta. Te recomendamos bajar al nivel Normal.`); }
+      $$(`[data-meter="${k}"]`).forEach(m => { m.style.width = temp == null ? '0' : Math.min(temp, 100) + '%'; m.className = c ? 'bg-' + c : ''; });
+      setText(`.${k}Src`, s ? s.source : t('no-sensor'));
+      if (c === 'bad' && first('thermal-alerts')?.checked && !S.alerted) { S.alerted = true; toast(t('thermal-alert', { part: k.toUpperCase(), temp })); }
     });
     fans.forEach((f, i) => {
       $$(`[data-fan="${i}"]`).forEach(e => {
         e.className = 'v' + (f.value == null ? ' na' : f.value === 0 ? ' c-bad' : '');
-        e.innerHTML = f.value === 0 ? '0 rpm · parado' : esc(fmtSensor(f)) + (f.target ? ' <span class="na" title="El controlador da las RPM objetivo, no las reales">objetivo</span>' : '');
+        e.innerHTML = f.value === 0 ? t('fan-stopped') : esc(fmtSensor(f)) + (f.target ? ` <span class="na" title="${t('fan-target-title')}">${t('fan-target')}</span>` : '');
       });
       /* Solo hay escala si la fuente da %; las RPM no tienen máximo conocido. */
       $$(`[data-fanbar="${i}"]`).forEach(b => { b.innerHTML = f.unit === 'pct' && f.value != null ? `<i class="bg-ok" style="width:${Math.min(100, f.value)}%"></i>` : ''; });
@@ -759,19 +762,19 @@
     $$('.fanCount').forEach(e => {
       const ok = fans.filter(x => x.value != null).length;
       e.innerHTML = fans.length ? `${ok}<span class="na"> / ${fans.length}</span>`
-        : `<span class="na">No disponible${D.device.laptop ? ' · portátil' : ''}</span>`;
+        : `<span class="na">${t('unavailable')}${D.device.laptop ? ' · ' + t('laptop') : ''}</span>`;
     });
     const src = [...new Set(list.map(s => s.source))];
     /* Sin ventiladores se dice por qué: en un portátil (PCSystemType = Mobile) ninguna fuente los expone. */
-    const where = D.sensorSources.join(', ') || 'ninguna';
+    const where = D.sensorSources.join(', ') || t('sources-none');
     const admin = D.sensorNeedsAdmin.length && !S.admin
-      ? ` ${D.sensorNeedsAdmin.join(', ')} solo se puede leer con permisos de administrador: pulsa «${ELEVATE_LABEL[D.os].replace(/^\S+ /, '')}».` : '';
+      ? ' ' + t('sensors-need-admin', { list: D.sensorNeedsAdmin.join(', '), button: ELEVATE_LABEL[D.os].replace(/^\S+ /, '') }) : '';
     const noFans = admin || (fans.length ? ''
-      : D.device.laptop ? ` Es un portátil (según Windows): ni el sistema ni la GPU informan de sus ventiladores (consultado: ${where}).`
-        : ` No se encontró ningún ventilador, tampoco en la GPU (consultado: ${where}).`);
+      : D.device.laptop ? ' ' + t('fans-laptop', { where })
+        : ' ' + t('fans-none', { where }));
     DS('sensor-backend-notice').forEach(e => {
-      e.textContent = src.length ? `Sensores leídos de: ${src.join(', ')}.${pick('cpu') ? '' : ' Todavía no se puede leer la temperatura de la CPU en este equipo.'}${noFans}`
-        : 'No se encontró ningún sensor de CPU, GPU ni ventiladores en este equipo.' + (D.device.laptop ? ' Es un portátil (según Windows).' : '') + admin;
+      e.textContent = src.length ? t('sensors-from', { list: src.join(', ') }) + (pick('cpu') ? '' : ' ' + t('sensors-no-cpu')) + noFans
+        : t('sensors-none') + (D.device.laptop ? ' ' + t('sensors-laptop') : '') + admin;
     });
   }
 
@@ -795,9 +798,9 @@
     const sg = t.closest('.win .seg>button');
     if (sg && !sg.disabled) { const g = sg.parentElement; [...g.children].forEach(x => x.classList.toggle('on', x === sg)); onSeg(g.dataset.setting, sg); }
     if (t.closest('[data-cwok]')) {
-      if (!$('#cwAck').checked) { toast('Marca «Entiendo lo que deja de funcionar».'); return; }
+      if (!$('#cwAck').checked) { toast(I18N.t('cw-ack-first')); return; }
       DS('compat-warning').forEach(x => { x.hidden = true; }); $('#cwAck').checked = false;
-      const cw = S.cwRetry || { verb: 'Aplicar', turbo: false }; S.cwRetry = null;
+      const cw = S.cwRetry || { verb: I18N.t('verb-apply'), turbo: false }; S.cwRetry = null;
       apply(true, cw.verb, cw.turbo); return;
     }
     if (t.closest('[data-cw]')) { S.cwRetry = null; DS('compat-warning').forEach(x => { x.hidden = true; }); return; }
@@ -805,11 +808,11 @@
     const cr = t.closest('[data-crash]');
     if (cr) {
       DS('restore-after-crash').forEach(x => { x.hidden = true; });
-      if (cr.dataset.crash === 'restore') revert(); else toast('Aviso descartado. Los cambios siguen anotados: puedes deshacerlos cuando quieras con «Restaurar».');
+      if (cr.dataset.crash === 'restore') revert(); else toast(I18N.t('crash-ignored'));
       return;
     }
     const wb = t.closest('[data-win]');
-    if (wb) { if (!api.inTauri) toast('Minimizar y cerrar solo funcionan dentro de la app.'); else api.win(wb.dataset.win); return; } /* La bandeja llega con el overlay (M6) */
+    if (wb) { if (!api.inTauri) toast(I18N.t('win-only-app')); else api.win(wb.dataset.win); return; } /* La bandeja llega con el overlay (M6) */
 
     const el = t.closest('button[data-setting]'); if (!el) return;
     const id = el.dataset.setting;
@@ -819,15 +822,15 @@
     if (id === 'launch-game') launchGame();
     if (id === 'status-view') { const v = $('#stv'); v.hidden = !v.hidden; if (!v.hidden) showStatus(v); }
     if (id === 'realtime-confirm') {
-      if (!$('#rtAck').checked) { toast('Marca «Entiendo el riesgo» para confirmar.'); return; }
+      if (!$('#rtAck').checked) { toast(I18N.t('rt-ack-first')); return; }
       S.rt = true; $$('[data-setting="game-priority"] button').forEach(x => x.classList.toggle('on', x.dataset.v === 'realtime'));
-      $('#rtBox').hidden = true; $('#rtAck').checked = false; toast('Prioridad Tiempo real confirmada: se usará al aplicar.');
+      $('#rtBox').hidden = true; $('#rtAck').checked = false; toast(I18N.t('rt-confirmed'));
     }
     if (id === 'run-as-admin') elevate();
     if (id === 'process-refresh') refreshList(el);
     if (id === 'profile-save') saveProfile();
     if (id === 'launch-options-copy') copyLaunchOptions();
-    if (id === 'export-diagnostics') toast(`Exportar el diagnóstico ${NOT_WIRED}`);
+    if (id === 'export-diagnostics') toast(I18N.t('diag-export', { notWired: NOT_WIRED }));
     if (id === 'always-on-top') { const on = el.getAttribute('aria-pressed') !== 'true'; el.setAttribute('aria-pressed', on); el.classList.toggle('on', on); api.win('always-on-top', on); }
   });
 
@@ -844,13 +847,13 @@
       const g = game();
       /* Sin perfil propio, un perfil de otro juego no se queda puesto: vuelve a Global. */
       if (g.appid in S.profiles || first('profile')?.value !== 'global') useProfile(g.appid, true); else setLevel(S.level);
-      toast(`Juego: ${g.name}${g.appid in S.profiles ? ' · perfil cargado' : ''}`);
+      toast(I18N.t('game-picked', { name: g.name }) + (g.appid in S.profiles ? ' · ' + I18N.t('profile-loaded-short') : ''));
     }
     if (id === 'cpu-affinity') syncAffinityCores();
     if (id === 'custom-power-plan') renderPower();
-    if (id === 'game-priority-persistent' && t.checked && priorityValue() === 'normal') { t.checked = false; toast('«Prioridad Alta siempre» solo guarda la prioridad Alta: elige Alta primero.'); }
-    if (id === 'vbs-hvci-off' && t.checked) toast('Desactivar VBS/HVCI: al aplicar tendrás que confirmar qué deja de funcionar.');
-    if (id === 'fps-cap' && +t.value > 0) toast(`Límite de FPS ${t.value}: al aplicar se guarda como fps_max en framerush.cfg.`);
+    if (id === 'game-priority-persistent' && t.checked && priorityValue() === 'normal') { t.checked = false; toast(I18N.t('persistent-needs-high')); }
+    if (id === 'vbs-hvci-off' && t.checked) toast(I18N.t('vbs-confirm-later'));
+    if (id === 'fps-cap' && +t.value > 0) toast(I18N.t('fps-cap-set', { value: t.value }));
     if (id === 'profile') {
       if (t.value === 'nuevo') saveProfile();
       else if (t.value === 'global') useProfile(null);
@@ -861,8 +864,8 @@
         useProfile(+t.value);
       }
     }
-    if (id === 'language') toast(t.value === 'en' ? 'Language: English (vista previa; i18n pendiente)' : 'Idioma: español');
-    if (id === 'dry-run') setText('[data-setting="apply"] .lbl', t.checked ? 'Simular optimización' : 'Aplicar optimización');
+    if (id === 'language') I18N.setLanguage(t.value); /* recarga la ventana con el idioma nuevo */
+    if (id === 'dry-run') setText('[data-setting="apply"] .lbl', t.checked ? I18N.t('apply-dry') : I18N.t('apply-label'));
     if (id === 'auto-revert-on-exit') sess();
     if (id === 'thermal-alerts' || id === 'thermal-alert-threshold') S.alerted = false;
   });
@@ -875,16 +878,16 @@
     DS('run-as-admin').forEach(b => { b.disabled = true; });
     try {
       await api.elevate();
-      toast('Permisos de administrador activos: ya se leen los sensores que los necesitan.');
+      toast(t('admin-on'));
       await init();
     } catch (err) {
-      toast(`No se pudieron obtener permisos de administrador: ${err && err.message ? err.message : err}`);
+      toast(t('err-admin', { error: String(err && err.message ? err.message : err) }));
       elevateButton();
     }
   }
 
   function elevateButton() {
-    DS('run-as-admin').forEach(b => { b.disabled = S.admin; b.textContent = S.admin ? '✓ Permisos de administrador activos' : ELEVATE_LABEL[D.os]; });
+    DS('run-as-admin').forEach(b => { b.disabled = S.admin; b.textContent = S.admin ? t('admin-active') : ELEVATE_LABEL[D.os]; });
   }
 
   async function init() {
@@ -902,7 +905,7 @@
 
     DS('game-target').forEach(s => {
       s.innerHTML = D.games.length
-        ? D.games.map((g, i) => `<option value="${i}">${esc(g.name)}${g.running ? ' (en ejecución)' : ''}${g.antiCheat ? ' · ' + esc(g.antiCheat.name) : ''}</option>`).join('')
+        ? D.games.map((g, i) => `<option value="${i}">${esc(g.name)}${g.running ? ' ' + t('game-running') : ''}${g.antiCheat ? ' · ' + esc(g.antiCheat.name) : ''}</option>`).join('')
         : `<option value="0">${esc(NO_GAME.name)}</option>`;
       s.value = String(S.game);
       s.disabled = !D.games.length;
@@ -917,12 +920,13 @@
     setLevel(DEFAULT_LEVEL); sess(); renderPerf();
     /* Global = lo de arriba; el perfil del juego en marcha, si lo hay, se carga encima. */
     S.base = profileState();
-    try { S.profiles = await api.profiles(); } catch (err) { S.profiles = {}; toast(`No se pudieron leer los perfiles: ${err && err.message ? err.message : err}`); }
+    try { S.profiles = await api.profiles(); } catch (err) { S.profiles = {}; toast(t('err-profiles', { error: String(err && err.message ? err.message : err) })); }
     const g = D.games[S.game];
     if (g && g.appid in S.profiles) useProfile(g.appid); else fillProfiles('global');
     stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited), api.onGameLaunched(onGameLaunched), api.onTurboRescan(onTurboRescan));
   }
 
-  DS('hardware-profile').forEach(e => { e.textContent = 'Leyendo el equipo…'; });
+  DS('hardware-profile').forEach(e => { e.textContent = t('reading-device'); });
+  DS('language').forEach(x => { x.value = I18N.lang; });
   init();
 })();
