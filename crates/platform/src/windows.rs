@@ -19,6 +19,7 @@ mod cpus;
 mod defender;
 mod display;
 mod effects;
+mod frozen;
 mod hardware;
 mod helper;
 mod integrity;
@@ -381,6 +382,10 @@ impl ProcessControl for WindowsPlatform {
             return Ok(None);
         }
         Ok(target_of(pid))
+    }
+
+    fn suspended(&self) -> Result<Vec<u32>> {
+        frozen::suspended_pids()
     }
 }
 

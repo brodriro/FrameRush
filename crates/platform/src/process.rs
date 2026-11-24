@@ -69,4 +69,7 @@ pub trait ProcessControl {
     fn kill(&self, target: &Target) -> Result<()>;
     /// Proceso dueño de la ventana en primer plano, o `None` si no hay ninguna.
     fn foreground(&self) -> Result<Option<Target>>;
+    /// PID de los procesos congelados (todos sus hilos suspendidos), sin los que congela el
+    /// propio SO: en Windows, las apps empaquetadas (Store). Solo lee.
+    fn suspended(&self) -> Result<Vec<u32>>;
 }

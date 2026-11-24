@@ -323,6 +323,16 @@ impl ProcessControl for MockPlatform {
             .clone()
             .filter(|t| s.processes.iter().any(|p| p.info.target == *t)))
     }
+
+    fn suspended(&self) -> Result<Vec<u32>> {
+        Ok(self
+            .lock()
+            .processes
+            .iter()
+            .filter(|p| p.suspended)
+            .map(|p| p.info.target.pid)
+            .collect())
+    }
 }
 
 impl ServiceControl for MockPlatform {
