@@ -74,7 +74,7 @@ pub fn export() -> Result<PathBuf> {
         Ok(home) => redact(&text, &home),
         Err(_) => text,
     };
-    let dir = downloads()
+    let dir = framerush_platform::downloads_dir()
         .or_else(data_dir)
         .context("no hay carpeta donde guardar")?;
     std::fs::create_dir_all(&dir).with_context(|| format!("no se pudo crear {}", dir.display()))?;
@@ -83,17 +83,6 @@ pub fn export() -> Result<PathBuf> {
         .with_context(|| format!("no se pudo escribir {}", path.display()))?;
     tracing::info!(path = %path.display(), "diagnóstico exportado");
     Ok(path)
-}
-
-#[cfg(windows)]
-fn downloads() -> Option<PathBuf> {
-    framerush_platform::downloads_dir()
-}
-
-/// Fuera de Windows aún no se busca Descargas: va a la carpeta de datos.
-#[cfg(not(windows))]
-fn downloads() -> Option<PathBuf> {
-    None
 }
 
 fn read_json(path: &Path) -> Option<serde_json::Value> {

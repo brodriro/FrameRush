@@ -3,6 +3,10 @@
 //! El código `unsafe` o específico de un SO solo vive en este crate.
 
 mod error;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(any(test, feature = "mock"))]
 pub mod mock;
 mod os;
@@ -11,8 +15,14 @@ mod scan;
 mod system;
 #[cfg(windows)]
 mod windows;
+#[cfg(any(test, target_os = "linux"))]
+mod xdg;
 
 pub use error::{PlatformError, Result};
+#[cfg(target_os = "linux")]
+pub use linux::downloads_dir;
+#[cfg(target_os = "macos")]
+pub use macos::downloads_dir;
 pub use os::Os;
 pub use process::{Priority, ProcessControl, ProcessInfo, StartTime, Target};
 pub use scan::scan_processes;
