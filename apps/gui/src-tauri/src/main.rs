@@ -20,6 +20,8 @@
 //!   vez muestra la ventana que vigila.
 //! - Overlay (It3.5): atajo global (`set_overlay_hotkey`) que muestra u oculta la ventana e
 //!   icono en la bandeja con «Mostrar u ocultar» y «Salir» (deshace antes lo que vigila).
+//! - evento `device-changed` (It6.1): cambió la pantalla, la alimentación o los dispositivos; la
+//!   UI vuelve a leer el equipo.
 //! - `export_diagnostics` (It4.5): informe JSON en Descargas con los logs locales de `tracing`.
 
 // Sin consola en las compilaciones de release de Windows.
@@ -77,6 +79,51 @@ fn start(
         helper,
     }
 }
+
+/// Espera sin avisos nuevos antes de releer el equipo: conectar un dispositivo manda varios.
+#[cfg(windows)]
+const HARDWARE_SETTLE: Duration = Duration::from_millis(1500);
+
+/// Vigila los cambios de hardware y emite `device-changed` con lo que cambió (`display`,
+/// `power`, `devices`) cuando paran los avisos. La vigilancia dura lo que el valor devuelto.
+#[cfg(windows)]
+fn watch_hardware(app: &AppHandle) -> Option<framerush_platform::HardwareWatch> {
+    use framerush_platform::HardwareChange;
+    let (tx, rx) = mpsc::channel::<HardwareChange>();
+    let watch = framerush_platform::watch_hardware(move |change| {
+        let _ = tx.send(change);
+    })
+    .inspect_err(|e| tracing::warn!(error = %e, "sin avisos de cambio de hardware"))
+    .ok()?;
+    let app = app.clone();
+    // Termina cuando se suelta la vigilancia (se cierra el canal).
+    std::thread::spawn(move || {
+        while let Ok(first) = rx.recv() {
+            let mut kinds = vec![first];
+            while let Ok(next) = rx.recv_timeout(HARDWARE_SETTLE) {
+                if !kinds.contains(&next) {
+                    kinds.push(next);
+                }
+            }
+            tracing::info!(?kinds, "cambio de hardware");
+            let names: Vec<&str> = kinds
+                .iter()
+                .map(|k| match k {
+                    HardwareChange::Display => "display",
+                    HardwareChange::Power => "power",
+                    HardwareChange::Devices => "devices",
+                })
+                .collect();
+            let _ = app.emit("device-changed", names);
+        }
+    });
+    Some(watch)
+}
+
+/// Mantiene viva la vigilancia de hardware mientras dure la app.
+#[cfg(windows)]
+struct HardwareWatch(#[allow(dead_code)] Option<framerush_platform::HardwareWatch>);
+// Fuera de Windows todavía no hay avisos de hardware.
 
 /// Cada cuánto mira el watchdog si el juego sigue en marcha.
 const WATCH_INTERVAL: Duration = Duration::from_secs(2);
@@ -526,6 +573,8 @@ fn main() -> anyhow::Result<()> {
             app.manage(Closed(AtomicBool::new(false)));
             launch::spawn(app.handle().clone());
             overlay::tray(app)?;
+            #[cfg(windows)]
+            app.manage(HardwareWatch(watch_hardware(app.handle())));
             Ok(())
         })
         .run(tauri::generate_context!())?;

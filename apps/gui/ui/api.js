@@ -54,6 +54,15 @@
      * Evento `background`: se cerró la ventana con el juego vigilado. La app sigue oculta y se
      * cierra sola cuando termine el juego (abrirla otra vez muestra esta ventana).
      */
+    /*
+     * Evento `device-changed` (It6.1): cambió la pantalla, la alimentación o los dispositivos.
+     * Payload: ['display' | 'power' | 'devices'].
+     */
+    onDeviceChanged(cb) {
+      let stop = () => {};
+      T.event.listen('device-changed', e => cb(e.payload)).then(un => { stop = un; });
+      return () => stop();
+    },
     onBackground(cb) {
       let stop = () => {};
       T.event.listen('background', () => cb()).then(un => { stop = un; });

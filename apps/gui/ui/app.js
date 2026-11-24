@@ -732,6 +732,29 @@
     });
   }
 
+  /*
+   * Cambió el hardware (It6.1): se vuelve a leer el equipo y se rehace lo que depende de él
+   * (batería, monitores y Hz, planes, GPU, recomendaciones), sin tocar lo que eligió el usuario
+   * si sigue existiendo.
+   */
+  async function onDeviceChanged(kinds) {
+    try {
+      const fresh = await api.load();
+      const pw0 = D.device.power, planName = pw0 && S.plan != null ? pw0.plans[S.plan] : null;
+      const keep = ['gpu-preference', 'resolution-override'].map(id => [id, first(id)?.value]);
+      Object.assign(D, { device: fresh.device, recommendations: fresh.recommendations, vbsBlocked: fresh.vbsBlocked });
+      const pw = D.device.power;
+      const i = pw && planName != null ? pw.plans.indexOf(planName) : -1;
+      S.plan = !pw ? null : i >= 0 ? i : pw.forLevel[S.level - 1];
+      device();
+      keep.forEach(([id, v]) => DS(id).forEach(s => { if (v != null && [...s.options].some(o => o.value === v)) s.value = v; }));
+      renderPower();
+      toast(t('device-changed', { what: kinds.map(k => t('hw-' + k)).join(', ') }));
+    } catch (err) {
+      console.warn('releer el equipo:', err);
+    }
+  }
+
   /* La ventana se ocultó con el juego vigilado: se avisa fuera de ella. */
   function onBackground() {
     api.notify('FrameRush', t('background-watching')).catch(err => console.warn('notificación:', err));
@@ -954,7 +977,7 @@
     try { S.profiles = await api.profiles(); } catch (err) { S.profiles = {}; toast(t('err-profiles', { error: String(err && err.message ? err.message : err) })); }
     const g = D.games[S.game];
     if (g && g.appid in S.profiles) useProfile(g.appid); else fillProfiles('global');
-    stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited), api.onBackground(onBackground), api.onGameLaunched(onGameLaunched), api.onTurboRescan(onTurboRescan));
+    stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited), api.onBackground(onBackground), api.onDeviceChanged(onDeviceChanged), api.onGameLaunched(onGameLaunched), api.onTurboRescan(onTurboRescan));
   }
 
   /* Atajo del overlay (It3.5): de la app, no del perfil; se recuerda en este equipo. */
