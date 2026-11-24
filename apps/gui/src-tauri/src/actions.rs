@@ -195,7 +195,7 @@ struct Line {
 }
 
 fn store() -> Result<FileStore> {
-    let dir = data_dir().context("no hay carpeta de datos (LOCALAPPDATA)")?;
+    let dir = data_dir().context("no hay carpeta de datos: fija FRAMERUSH_DATA_DIR")?;
     Ok(FileStore::new(dir.join("session.json")))
 }
 

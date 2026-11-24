@@ -2,7 +2,7 @@
 //!
 //! `scan` lista procesos y `plan --level` muestra qué se haría (dry-run, PLAN.md It3.3).
 //! `apply` aplica el plan (solo con `--yes`), `undo` deshace el último apply y `revert` toda la
-//! sesión. Todo cambio pasa por el journal `%LOCALAPPDATA%/framerush/session.json`; la variable
+//! sesión. Todo cambio pasa por el journal `session.json` de la carpeta de datos del SO; la variable
 //! `FRAMERUSH_DATA_DIR` cambia esa carpeta (tests). `power` lista los planes de energía y `power
 //! set` activa uno como un apply más (journal, `undo`). Desde Agresivo, `apply` duplica el plan
 //! del nivel como «FrameRush Max» (`custom-power-plan`; `--exclude` lo quita) y sube cada
@@ -1872,14 +1872,11 @@ fn native_memory() -> Vec<MemoryOp> {
     vec![]
 }
 
-/// Carpeta de datos: `FRAMERUSH_DATA_DIR` o `%LOCALAPPDATA%/framerush` (PLAN.md It1.1).
+/// Carpeta de datos (PLAN.md It1.1): `FRAMERUSH_DATA_DIR` o la del SO
+/// ([`framerush_platform::data_dir`]).
 fn data_dir() -> Result<PathBuf> {
-    if let Some(dir) = std::env::var_os("FRAMERUSH_DATA_DIR") {
-        return Ok(PathBuf::from(dir));
-    }
-    let base = std::env::var_os("LOCALAPPDATA")
-        .context("no se encontró %LOCALAPPDATA% para guardar el journal")?;
-    Ok(PathBuf::from(base).join("framerush"))
+    framerush_platform::data_dir()
+        .context("no hay carpeta de datos para el journal: fija FRAMERUSH_DATA_DIR")
 }
 
 #[cfg(windows)]

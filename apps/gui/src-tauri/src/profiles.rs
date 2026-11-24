@@ -24,7 +24,7 @@ pub struct Profile {
 pub type Profiles = BTreeMap<u32, Profile>;
 
 fn path() -> Result<PathBuf> {
-    let dir = data_dir().context("no hay carpeta de datos (LOCALAPPDATA)")?;
+    let dir = data_dir().context("no hay carpeta de datos: fija FRAMERUSH_DATA_DIR")?;
     Ok(dir.join("profiles.json"))
 }
 

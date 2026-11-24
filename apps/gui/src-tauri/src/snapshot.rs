@@ -540,12 +540,10 @@ fn protected(processes: &[ProcessInfo]) -> Vec<Protected> {
     out
 }
 
-/// Carpeta de datos, la misma que la CLI: `FRAMERUSH_DATA_DIR` o `%LOCALAPPDATA%/framerush`.
+/// Carpeta de datos, la misma que la CLI: `FRAMERUSH_DATA_DIR` o la del SO
+/// ([`framerush_platform::data_dir`]).
 pub(crate) fn data_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("FRAMERUSH_DATA_DIR") {
-        return Some(PathBuf::from(dir));
-    }
-    std::env::var_os("LOCALAPPDATA").map(|base| PathBuf::from(base).join("framerush"))
+    framerush_platform::data_dir()
 }
 
 #[derive(Debug, Serialize)]
