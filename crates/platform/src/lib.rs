@@ -2,6 +2,7 @@
 //!
 //! El código `unsafe` o específico de un SO solo vive en este crate.
 
+mod data;
 mod error;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -18,6 +19,7 @@ mod windows;
 #[cfg(any(test, target_os = "linux"))]
 mod xdg;
 
+pub use data::data_dir;
 pub use error::{PlatformError, Result};
 #[cfg(target_os = "linux")]
 pub use linux::downloads_dir;

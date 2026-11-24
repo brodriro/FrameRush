@@ -41,6 +41,16 @@ pub(crate) fn user_dir(text: &str, key: &str, home: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
+/// Carpeta base de la XDG Base Directory Specification: `value` (p. ej. `$XDG_DATA_HOME`) si
+/// es una ruta absoluta o, si no está, está vacía o es relativa («should consider the path invalid
+/// and ignore it»), `home` + `default` (p. ej. `.local/share`).
+pub(crate) fn base_dir(value: Option<&str>, home: &str, default: &str) -> PathBuf {
+    match value.filter(|v| v.starts_with('/')) {
+        Some(v) => PathBuf::from(v),
+        None => PathBuf::from(format!("{}/{default}", home.trim_end_matches('/'))),
+    }
+}
+
 /// Contenido de un valor entre comillas dobles, sin las barras de escape de POSIX §2.2.3.
 fn unquote(value: &str) -> Option<String> {
     let inner = value.strip_prefix('"')?.strip_suffix('"')?;
@@ -67,6 +77,15 @@ fn unquote(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_dir_uses_an_absolute_value_or_the_default() {
+        let dir = |v| base_dir(v, "/home/ana/", ".local/share");
+        assert_eq!(dir(Some("/datos")), PathBuf::from("/datos"));
+        assert_eq!(dir(None), PathBuf::from("/home/ana/.local/share"));
+        assert_eq!(dir(Some("")), PathBuf::from("/home/ana/.local/share"));
+        assert_eq!(dir(Some("rel/x")), PathBuf::from("/home/ana/.local/share"));
+    }
 
     const KEY: &str = "XDG_DOWNLOAD_DIR";
     const HOME: &str = "/home/ana";

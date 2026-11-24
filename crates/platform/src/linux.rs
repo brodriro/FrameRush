@@ -1,6 +1,6 @@
 //! Implementaciones para Linux.
 
-use crate::xdg::user_dir;
+use crate::xdg::{base_dir, user_dir};
 use std::path::PathBuf;
 
 /// Carpeta «Descargas» del usuario según xdg-user-dirs (`XDG_DOWNLOAD_DIR` de
@@ -12,10 +12,23 @@ use std::path::PathBuf;
 /// vacía se usa `$HOME/.config`, y una ruta relativa no es válida y se ignora.
 pub fn downloads_dir() -> Option<PathBuf> {
     let home = std::env::var("HOME").ok().filter(|h| !h.is_empty())?;
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .unwrap_or_else(|| PathBuf::from(&home).join(".config"));
+    let config = base_dir(
+        std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
+        &home,
+        ".config",
+    );
     let text = std::fs::read_to_string(config.join("user-dirs.dirs")).ok()?;
     user_dir(&text, "XDG_DOWNLOAD_DIR", &home)
+}
+
+/// Base de la carpeta de datos: `$XDG_DATA_HOME` o `$HOME/.local/share` (XDG Base Directory
+/// Specification, «$XDG_DATA_HOME defines the base directory relative to which user-specific data
+/// files should be stored»).
+pub(crate) fn data_home() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok().filter(|h| !h.is_empty())?;
+    Some(base_dir(
+        std::env::var("XDG_DATA_HOME").ok().as_deref(),
+        &home,
+        ".local/share",
+    ))
 }

@@ -12,3 +12,10 @@ pub fn downloads_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").filter(|h| !h.is_empty())?;
     Some(PathBuf::from(home).join("Downloads"))
 }
+
+/// Base de la carpeta de datos: `~/Library/Application Support`. Apple, File System Programming
+/// Guide («macOS Library Directory Details»): «Contains all app-specific data and support files».
+pub(crate) fn data_home() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").filter(|h| !h.is_empty())?;
+    Some(PathBuf::from(home).join("Library/Application Support"))
+}
