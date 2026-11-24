@@ -16,12 +16,13 @@
 //!   `turbo` y el watchdog congela cada `turbo-rescan` las instancias nuevas (evento
 //!   `turbo-rescan`) y al salir reanuda siempre lo congelado (P5).
 //!
-//! El diagnóstico aún no está conectado: la UI lo dice.
+//! - `export_diagnostics` (It4.5): informe JSON en Descargas con los logs locales de `tracing`.
 
 // Sin consola en las compilaciones de release de Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod actions;
+mod diagnostics;
 mod launch;
 mod profiles;
 mod snapshot;
@@ -123,33 +124,37 @@ fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> 
                     .filter(|t| last_rescan.elapsed() >= t.every)
                 {
                     last_rescan = Instant::now();
-                    let payload = match actions::turbo_rescan(turbo, helper.clone()) {
+                    let payload = match logged(
+                        "turbo-rescan",
+                        actions::turbo_rescan(turbo, helper.clone()).map_err(|e| format!("{e:#}")),
+                    ) {
                         Ok(outcomes) => GameExited {
                             outcomes: Some(outcomes),
                             error: None,
                         },
                         Err(e) => GameExited {
                             outcomes: None,
-                            error: Some(format!("{e:#}")),
+                            error: Some(e),
                         },
                     };
                     let _ = app.emit("turbo-rescan", payload);
                 }
                 continue;
             }
+            tracing::info!(revert_session = plan.revert_session, "el juego se cerró");
             let result = if plan.revert_session {
                 actions::revert_session(helper)
             } else {
                 actions::resume_frozen(helper)
             };
-            let payload = match result {
+            let payload = match logged("game-exited", result.map_err(|e| format!("{e:#}"))) {
                 Ok(outcomes) => GameExited {
                     outcomes: Some(outcomes),
                     error: None,
                 },
                 Err(e) => GameExited {
                     outcomes: None,
-                    error: Some(format!("{e:#}")),
+                    error: Some(e),
                 },
             };
             // Sin ventana que escuche (al cerrar) no hay nada que hacer con el error.
@@ -206,6 +211,18 @@ fn helper(sensors: &Sensors) -> Result<Option<Elevated>, String> {
         .clone())
 }
 
+/// Deja `result` en el log de diagnóstico y lo devuelve.
+fn logged(
+    op: &str,
+    result: Result<actions::Outcomes, String>,
+) -> Result<actions::Outcomes, String> {
+    match &result {
+        Ok(out) => out.log(op),
+        Err(e) => tracing::error!(op, error = %e, "falló"),
+    }
+    result
+}
+
 /// Corre `op` fuera del hilo de la UI (escanea procesos y toca el sistema).
 async fn blocking<T: Send + 'static>(
     op: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
@@ -225,7 +242,10 @@ async fn apply(
 ) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
     let for_apply = helper.clone();
-    let mut out = blocking(move || actions::apply(&selection, for_apply)).await?;
+    let mut out = logged(
+        "apply",
+        blocking(move || actions::apply(&selection, for_apply)).await,
+    )?;
     let plan = out.take_watch();
     stop_watch(&watchdog)?;
     if let Some(plan) = plan {
@@ -235,6 +255,7 @@ async fn apply(
             .lock()
             .map_err(|_| "estado del watchdog roto".to_owned())? = Some(w);
         out.set_watching(true);
+        tracing::info!("watchdog vigilando el juego");
     }
     Ok(out)
 }
@@ -254,7 +275,7 @@ fn save_profile(appid: u32, profile: profiles::Profile) -> Result<(), String> {
 #[tauri::command]
 async fn undo(sensors: tauri::State<'_, Sensors>) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
-    blocking(move || actions::undo(helper)).await
+    logged("undo", blocking(move || actions::undo(helper)).await)
 }
 
 /// «Jugar ahora» (Turbo): pide a Steam que lance el juego `appid`, salvo que ya esté en marcha
@@ -277,7 +298,10 @@ async fn release_row(
     sensors: tauri::State<'_, Sensors>,
 ) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
-    blocking(move || actions::release_row(&id, helper)).await
+    logged(
+        "release_row",
+        blocking(move || actions::release_row(&id, helper)).await,
+    )
 }
 
 /// Vuelve a limitar una fila reanudada con la acción del nivel (sin cerrar procesos).
@@ -289,7 +313,10 @@ async fn limit_row(
     sensors: tauri::State<'_, Sensors>,
 ) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
-    blocking(move || actions::limit_row(&id, level, keep_alive.as_deref(), helper)).await
+    logged(
+        "limit_row",
+        blocking(move || actions::limit_row(&id, level, keep_alive.as_deref(), helper)).await,
+    )
 }
 
 /// Restaurar: deshace toda la sesión y para el watchdog (ya no queda nada que revertir).
@@ -300,7 +327,7 @@ async fn revert(
 ) -> Result<actions::Outcomes, String> {
     stop_watch(&watchdog)?;
     let helper = helper(&sensors)?;
-    blocking(move || actions::revert(helper)).await
+    logged("revert", blocking(move || actions::revert(helper)).await)
 }
 
 /// Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él.
@@ -309,7 +336,9 @@ async fn elevate(app: AppHandle) -> Result<(), String> {
     let (sources, helper) = tauri::async_runtime::spawn_blocking(elevated_sources)
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|e| format!("{e:#}"))?;
+        .map_err(|e| format!("{e:#}"))
+        .inspect_err(|e| tracing::error!(error = %e, "no se pudo abrir el helper"))?;
+    tracing::info!("helper elevado abierto");
     let state = start(&app, sources, Some(helper));
     let sensors = app.state::<Sensors>();
     let mut current = sensors
@@ -355,7 +384,16 @@ fn notify(app: tauri::AppHandle, title: String, body: String) -> Result<(), Stri
         .map_err(|e| e.to_string())
 }
 
+/// Informe de diagnóstico (It4.5): devuelve la ruta del archivo guardado.
+#[tauri::command]
+async fn export_diagnostics() -> Result<String, String> {
+    blocking(|| diagnostics::export().map(|p| p.display().to_string())).await
+}
+
 fn main() -> anyhow::Result<()> {
+    if let Some(log) = diagnostics::init_logs() {
+        tracing::info!(version = env!("CARGO_PKG_VERSION"), log = %log.display(), "FrameRush arranca");
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
@@ -371,7 +409,8 @@ fn main() -> anyhow::Result<()> {
             limit_row,
             profiles,
             save_profile,
-            notify
+            notify,
+            export_diagnostics
         ])
         .setup(|app| {
             let state = start(app.handle(), framerush_sensors::detect(), None);

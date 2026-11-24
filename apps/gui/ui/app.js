@@ -49,8 +49,6 @@
     'scheduler-foreground-boost', 'power-throttling-off', 'mmcss-games', 'defender-exclusions', 'hags', 'vbs-hvci-off', 'cstates-off',
     'memory-trim', 'standby-purge', 'custom-power-plan', 'refresh-rate-max', 'game-priority-persistent', 'fullscreen-optimizations-off',
     'gpu-preference', 'cpu-affinity', 'timer-resolution'];
-  /* Lo que la app aún no hace: se dice en vez de simularlo. */
-  const NOT_WIRED = t('not-wired');
   const NO_GAME = { name: t('no-game'), exe: '', appid: '', pids: [] };
   const GB = 1024 ** 3, MB = 1024 ** 2;
 
@@ -70,11 +68,11 @@
   const gb = bytes => `${Math.round(bytes / GB * 10) / 10} GB`;
   const avail = id => D.available.includes(id);
 
-  function toast(msg) {
+  function toast(msg, ms = 3200) {
     let t = $('#toast');
     if (!t) { t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
     t.textContent = msg; t.classList.add('show');
-    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 3200);
+    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), ms);
   }
   const setCheck = (id, v) => DS(id).forEach(x => { x.checked = v; });
 
@@ -806,6 +804,15 @@
   }
 
   /* ---------- Eventos de la UI ---------- */
+  /* Diagnóstico (It4.5): el backend guarda el informe y la UI dice dónde. */
+  async function exportDiagnostics(btn) {
+    btn.disabled = true;
+    toast(I18N.t('diag-exporting'));
+    try { toast(I18N.t('diag-saved', { path: await api.exportDiagnostics() }), 10000); }
+    catch (e) { toast(I18N.t('diag-failed', { error: String(e) }), 8000); }
+    finally { btn.disabled = false; }
+  }
+
   document.addEventListener('click', e => {
     const t = e.target;
     const rel = t.closest('[data-release]'); if (rel) { e.preventDefault(); releaseRow(rel.dataset.release); return; }
@@ -848,7 +855,7 @@
     if (id === 'process-refresh') refreshList(el);
     if (id === 'profile-save') saveProfile();
     if (id === 'launch-options-copy') copyLaunchOptions();
-    if (id === 'export-diagnostics') toast(I18N.t('diag-export', { notWired: NOT_WIRED }));
+    if (id === 'export-diagnostics') exportDiagnostics(el);
     if (id === 'always-on-top') { const on = el.getAttribute('aria-pressed') !== 'true'; el.setAttribute('aria-pressed', on); el.classList.toggle('on', on); api.win('always-on-top', on); }
   });
 

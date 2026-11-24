@@ -843,6 +843,12 @@ pub struct StatusView {
 
 /// Lee el journal y vuelve a detectar el equipo (plan, Hz y VBS pueden haber cambiado).
 pub fn status() -> Result<StatusView> {
+    let os = Os::current().context("sistema operativo no admitido")?;
+    status_of(&native_device(os))
+}
+
+/// Vista Estado con un `device` ya detectado (el diagnóstico no lo detecta dos veces).
+pub(crate) fn status_of(device: &DeviceProfile) -> Result<StatusView> {
     let session = match data_dir() {
         Some(dir) => framerush_core::status_lines(
             &FileStore::new(dir.join("session.json"))
@@ -851,8 +857,7 @@ pub fn status() -> Result<StatusView> {
         ),
         None => vec![],
     };
-    let os = Os::current().context("sistema operativo no admitido")?;
-    let mut system = framerush_core::system_state(&native_device(os));
+    let mut system = framerush_core::system_state(device);
     system.extend(game_configs());
     Ok(StatusView { session, system })
 }
@@ -883,7 +888,7 @@ fn game_configs() -> Vec<framerush_core::StateLine> {
 
 /// Perfil del equipo con la plataforma nativa (R8), como en la CLI.
 #[cfg(windows)]
-fn native_device(os: Os) -> DeviceProfile {
+pub(crate) fn native_device(os: Os) -> DeviceProfile {
     let mut device = framerush_device::detect(&framerush_platform::WindowsPlatform::new(), os);
     // El umbral de slowdown viene de NVML (sensores), no de la plataforma.
     if let Ok(nvidia) = framerush_sensors::NvidiaGpus::open() {
@@ -894,7 +899,7 @@ fn native_device(os: Os) -> DeviceProfile {
 
 /// Fuera de Windows aún no hay plataforma nativa: solo el SO.
 #[cfg(not(windows))]
-fn native_device(os: Os) -> DeviceProfile {
+pub(crate) fn native_device(os: Os) -> DeviceProfile {
     DeviceProfile::undetected(os)
 }
 

@@ -168,6 +168,22 @@ impl Outcomes {
     pub fn set_watching(&mut self, watching: bool) {
         self.watching = watching;
     }
+
+    /// Deja en el log de diagnóstico el resumen de `op` y cada acción fallida.
+    pub fn log(&self, op: &str) {
+        tracing::info!(
+            op,
+            done = self.done,
+            failed = self.failed,
+            not_wired = ?self.not_wired,
+            needs_admin = ?self.needs_admin,
+            notes = ?self.notes,
+            "resultado"
+        );
+        for line in self.lines.iter().filter(|l| l.outcome == "failed") {
+            tracing::warn!(op, what = %line.what, detail = ?line.detail, "acción fallida");
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

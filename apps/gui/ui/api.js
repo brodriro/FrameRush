@@ -82,6 +82,12 @@
     status() { return T.core.invoke('status'); },
 
     /*
+     * Diagnóstico (It4.5): guarda en Descargas un JSON con versión, equipo, Estado, journal y
+     * logs locales (la carpeta del usuario sale como %USERPROFILE%). Devuelve la ruta.
+     */
+    exportDiagnostics() { return T.core.invoke('export_diagnostics'); },
+
+    /*
      * Perfiles por juego (It3.2): { [appid]: { name, data } }. data es el estado de la UI
      * (profileState en app.js); el backend lo guarda tal cual en profiles.json.
      */
