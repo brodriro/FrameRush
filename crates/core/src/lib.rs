@@ -8,6 +8,7 @@ mod journal;
 mod model;
 mod plan;
 mod protected;
+mod recommendation;
 mod rule;
 mod status;
 mod watchdog;
@@ -24,6 +25,7 @@ pub use plan::{
     tweak_optional, tweak_requires_reboot, tweak_scope,
 };
 pub use protected::{ProtectedReason, is_protected, protected_reason};
+pub use recommendation::{Condition, Recommendation, recommendations_for};
 pub use rule::{OsNames, Rule};
 pub use status::{StateLine, game_config_state, system_state};
 pub use watchdog::game_running;
