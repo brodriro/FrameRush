@@ -5,7 +5,7 @@
 //! resultado se valida entero: la lista de protegidos y los invariantes de `core` no se pueden
 //! anular desde TOML.
 
-use framerush_core::{Action, Category, Level, Risk, Rule, is_protected};
+use framerush_core::{Action, Category, Level, Recommendation, Risk, Rule, is_protected};
 use serde::Deserialize;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -21,6 +21,17 @@ const EMBEDDED: &[(&str, &str)] = &[
     ("service.toml", include_str!("../../../rules/service.toml")),
     ("sync.toml", include_str!("../../../rules/sync.toml")),
 ];
+
+/// Recomendaciones manuales (`manual-recommendations`, It5.8), embebidas aparte: no son
+/// reglas del checklist.
+const RECOMMENDATIONS: &str = include_str!("../../../rules/recommendations.toml");
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecommendationFile {
+    #[serde(default)]
+    recommendation: Vec<Recommendation>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +85,15 @@ pub fn merge(mut base: Vec<Rule>, overrides: Vec<Rule>) -> Vec<Rule> {
     base
 }
 
+const ID_RULE: &str = "el id solo admite minúsculas, dígitos, '-' y '_'";
+
+fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
 /// Comprueba los invariantes de todas las reglas y devuelve todos los problemas juntos.
 pub fn validate(rules: &[Rule]) -> Result<(), RulesError> {
     let mut problems = vec![];
@@ -88,13 +108,8 @@ pub fn validate(rules: &[Rule]) -> Result<(), RulesError> {
         if !seen.insert(r.id.as_str()) {
             bad("id repetido");
         }
-        if r.id.is_empty()
-            || !r
-                .id
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
-        {
-            bad("el id solo admite minúsculas, dígitos, '-' y '_'");
+        if !valid_id(&r.id) {
+            bad(ID_RULE);
         }
         if r.description.trim().is_empty() {
             bad("falta la descripción");
@@ -122,6 +137,56 @@ pub fn validate(rules: &[Rule]) -> Result<(), RulesError> {
     } else {
         Err(RulesError::Invalid(problems))
     }
+}
+
+fn validate_recommendations(recs: &[Recommendation]) -> Result<(), RulesError> {
+    let mut problems = vec![];
+    let mut seen = std::collections::BTreeSet::new();
+    for r in recs {
+        let mut bad = |m: &str| {
+            problems.push(Problem {
+                rule_id: r.id.clone(),
+                message: m.to_owned(),
+            })
+        };
+        if !seen.insert(r.id.as_str()) {
+            bad("id repetido");
+        }
+        if !valid_id(&r.id) {
+            bad(ID_RULE);
+        }
+        if r.title.trim().is_empty() {
+            bad("falta el título");
+        }
+        if r.steps.is_empty() || r.steps.iter().any(|s| s.trim().is_empty()) {
+            bad("faltan pasos o hay uno vacío");
+        }
+        if r.source.trim().is_empty() {
+            bad("falta la fuente");
+        }
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(RulesError::Invalid(problems))
+    }
+}
+
+/// Lee y valida un archivo de recomendaciones manuales.
+pub fn parse_recommendations(file: &str, text: &str) -> Result<Vec<Recommendation>, RulesError> {
+    let recs = toml::from_str::<RecommendationFile>(text)
+        .map(|f| f.recommendation)
+        .map_err(|e| RulesError::Parse {
+            file: file.to_owned(),
+            message: e.to_string(),
+        })?;
+    validate_recommendations(&recs)?;
+    Ok(recs)
+}
+
+/// Recomendaciones manuales embebidas, ya validadas.
+pub fn recommendations() -> Result<Vec<Recommendation>, RulesError> {
+    parse_recommendations("recommendations.toml", RECOMMENDATIONS)
 }
 
 /// Reglas embebidas, ya validadas.
@@ -266,6 +331,39 @@ description = "Indexador de búsqueda."
                 .filter(|r| ["chrome", "firefox", "edge"].contains(&r.id.as_str()))
                 .all(|r| r.optional)
         );
+    }
+
+    #[test]
+    fn embedded_recommendations_are_valid_and_filtered_by_device() {
+        use framerush_core::recommendations_for;
+        use framerush_device::samples;
+        let recs = recommendations().unwrap();
+        assert_eq!(recs.len(), 3);
+        let mut d = samples::hybrid_laptop();
+        d.os = framerush_platform::Os::Windows;
+        d.laptop = Some(true);
+        let ids = |appid| -> Vec<String> {
+            recommendations_for(&recs, &d, appid)
+                .into_iter()
+                .map(|r| r.id.clone())
+                .collect()
+        };
+        assert_eq!(ids(None), ["play-plugged-in", "nvidia-driver-update"]);
+        assert!(ids(Some(730)).contains(&"nvidia-panel-cs2".to_owned()));
+    }
+
+    #[test]
+    fn recommendations_without_steps_or_source_are_rejected() {
+        let text = "[[recommendation]]
+id = \"A\"
+title = \"\"
+steps = []
+source = \" \"
+";
+        match parse_recommendations("x.toml", text) {
+            Err(RulesError::Invalid(ps)) => assert_eq!(ps.len(), 4, "{ps:?}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

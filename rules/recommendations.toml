@@ -1,0 +1,34 @@
+# Recomendaciones manuales de FrameRush (`manual-recommendations`, PLAN.md It5.8): lo que
+# no se puede automatizar de forma segura. Cada una solo se muestra si el equipo cumple su
+# `when` (os, gpu_vendor, laptop, appid); un dato que no se pudo detectar no la cumple.
+# Fuente: proyecto de referencia CS2-FPS-Boost, LEEME.md, «Lo que tienes que hacer a mano».
+# Sin fuente todavía (PLAN.md §6, «Por verificar»): paneles de AMD e Intel y el software de
+# cada fabricante del equipo.
+
+[[recommendation]]
+id = "play-plugged-in"
+title = "Juega enchufado"
+steps = ["Con batería el portátil rinde mucho menos: conecta el cargador antes de jugar."]
+when = { laptop = true }
+source = "CS2-FPS-Boost, LEEME.md («Laptop»)"
+
+[[recommendation]]
+id = "nvidia-driver-update"
+title = "Actualiza el driver de NVIDIA"
+steps = ["Actualiza el driver desde la NVIDIA App."]
+when = { os = ["windows"], gpu_vendor = "nvidia" }
+source = "CS2-FPS-Boost, LEEME.md («Laptop»)"
+
+[[recommendation]]
+id = "nvidia-panel-cs2"
+title = "Panel de control de NVIDIA para CS2"
+steps = [
+    "Panel de control de NVIDIA → Administrar configuración 3D → cs2.exe",
+    "Modo de administración de energía: Preferir rendimiento máximo",
+    "Modo de baja latencia: Desactivado (Reflex ya lo hace)",
+    "Calidad del filtrado de texturas: Alto rendimiento",
+    "Sincronización vertical: Desactivada · Frecuencia preferida: La más alta disponible",
+    "Tamaño de caché de sombreador: Predeterminado del controlador",
+]
+when = { os = ["windows"], gpu_vendor = "nvidia", appid = 730 }
+source = "CS2-FPS-Boost, LEEME.md («Panel de control NVIDIA»)"
