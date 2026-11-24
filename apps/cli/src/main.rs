@@ -428,7 +428,8 @@ fn adapter_plan(
     if !args.wants_adapter() {
         if args.appid.is_some() && !args.defender_exclusions {
             bail!(
-                "--appid solo sirve con --tune, --lock, --fps-cap, --bench, --resolution o                  --defender-exclusions"
+                "--appid solo sirve con --tune, --lock, --fps-cap, --bench, --resolution o \
+                 --defender-exclusions"
             );
         }
         return Ok(None);
