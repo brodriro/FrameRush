@@ -101,6 +101,15 @@ enum Command {
     /// Ctrl+C. Sin `--yes` solo muestra el plan. Solo Windows por ahora.
     #[cfg(windows)]
     Turbo(TurboArgs),
+    /// Procesos congelados por otro programa: todos sus hilos suspendidos y no los congeló
+    /// FrameRush (p. ej. un script «Turbo» que se cerró sin reanudarlos). Con `--resume` los
+    /// reanuda. Solo Windows por ahora.
+    #[cfg(windows)]
+    Frozen {
+        /// Reanudarlos.
+        #[arg(long)]
+        resume: bool,
+    },
     /// Steam: juegos instalados y el que está en marcha (`RunningAppID` o la ventana en primer
     /// plano bajo la carpeta del juego). No toca el sistema.
     Steam,
@@ -289,7 +298,49 @@ fn run_command(command: Command) -> Result<()> {
         Command::Steam => steam(),
         #[cfg(windows)]
         Command::Turbo(args) => turbo(&args),
+        #[cfg(windows)]
+        Command::Frozen { resume } => frozen(resume),
     }
+}
+
+/// `framerush frozen`: lista los congelados por otro programa y, con `resume`, los reanuda.
+#[cfg(windows)]
+fn frozen(resume: bool) -> Result<()> {
+    use framerush_platform::{ProcessControl, WindowsPlatform};
+
+    let processes = scan_processes().context("no se pudo listar los procesos")?;
+    let suspended = WindowsPlatform::new()
+        .suspended()
+        .context("no se pudo leer qué procesos están congelados")?;
+    let journal = store()?.load()?;
+    let found = framerush_core::foreign_frozen(&processes, &suspended, &journal);
+    tracing::info!(count = found.len(), "congelados por otro programa");
+    if found.is_empty() {
+        println!("No hay procesos congelados por otro programa.");
+        return Ok(());
+    }
+    println!("Congelados por otro programa (no los congeló FrameRush):");
+    for p in &found {
+        // P12: lo que no es propio pide admin.
+        let admin = if p.own == Some(true) {
+            ""
+        } else {
+            " · requiere admin"
+        };
+        println!(
+            "{:>7}  {:>6.0} MB  {}{admin}",
+            p.target.pid,
+            mib(p.memory_bytes),
+            p.name
+        );
+    }
+    if !resume {
+        println!("\nReanúdalos con `framerush frozen --resume`.");
+        return Ok(());
+    }
+    let targets = found.iter().map(|p| p.target.clone()).collect();
+    print_report(&run(Op::ResumeForeign(targets))?);
+    Ok(())
 }
 
 fn mib(bytes: u64) -> f64 {
@@ -1651,6 +1702,8 @@ enum Op<'a> {
     RevertSession,
     /// Solo reanudar lo congelado (Turbo sin `auto-revert-on-exit`, P5).
     ResumeFrozen,
+    /// Reanudar lo que congeló otro programa (`framerush frozen --resume`).
+    ResumeForeign(Vec<framerush_platform::Target>),
 }
 
 #[cfg(windows)]
@@ -1699,6 +1752,7 @@ fn platform_for(op: &Op<'_>) -> Result<framerush_platform::WindowsPlatform> {
                 _ => false,
             }) || foreign(pending.iter().filter_map(|c| c.target()))?
         }
+        Op::ResumeForeign(targets) => foreign(targets.iter())?,
     };
     Ok(if needs_helper {
         println!("Hay cambios que piden admin: se abre el helper elevado (UAC).");
@@ -1724,6 +1778,9 @@ fn run_on(platform: &framerush_platform::WindowsPlatform, op: Op<'_>) -> Result<
         Op::ResumeFrozen => engine
             .resume_frozen()
             .context("no se pudo reanudar lo congelado")?,
+        Op::ResumeForeign(targets) => engine
+            .resume_foreign(&targets)
+            .context("no se pudo reanudar lo congelado por otro programa")?,
     })
 }
 
