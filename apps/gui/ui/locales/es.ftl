@@ -339,6 +339,7 @@ crash-ignored = Aviso descartado. Los cambios siguen anotados: puedes deshacerlo
 win-only-app = Minimizar y cerrar solo funcionan dentro de la app.
 rt-ack-first = Marca «Entiendo el riesgo» para confirmar.
 rt-confirmed = Prioridad Tiempo real confirmada: se usará al aplicar.
+background-watching = FrameRush sigue en segundo plano: deshará los cambios temporales al cerrar el juego y después se cerrará. Ábrelo otra vez para ver la ventana.
 diag-exporting = Generando el informe de diagnóstico…
 diag-saved = Informe guardado en { $path }
 diag-failed = No se pudo exportar el diagnóstico: { $error }

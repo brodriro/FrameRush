@@ -51,6 +51,15 @@
       return () => stop();
     },
     /*
+     * Evento `background`: se cerró la ventana con el juego vigilado. La app sigue oculta y se
+     * cierra sola cuando termine el juego (abrirla otra vez muestra esta ventana).
+     */
+    onBackground(cb) {
+      let stop = () => {};
+      T.event.listen('background', () => cb()).then(un => { stop = un; });
+      return () => stop();
+    },
+    /*
      * Evento `game-launched`: arrancó un juego de Steam (no cuenta el que ya corría al abrir la app).
      * { appid, pids }.
      */

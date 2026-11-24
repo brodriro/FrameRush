@@ -339,6 +339,7 @@ crash-ignored = Warning dismissed. The changes are still recorded: you can undo 
 win-only-app = Minimize and close only work inside the app.
 rt-ack-first = Check “I understand the risk” to confirm.
 rt-confirmed = Realtime priority confirmed: it will be used when applying.
+background-watching = FrameRush keeps running in the background: it will undo the temporary changes when the game closes and then quit. Open it again to see the window.
 diag-exporting = Generating the diagnostics report…
 diag-saved = Report saved to { $path }
 diag-failed = Could not export the diagnostics: { $error }

@@ -15,7 +15,9 @@
 //! - Turbo (It5.2): `launch_game` pide a Steam que lance el juego; al arrancar, la UI aplica con
 //!   `turbo` y el watchdog congela cada `turbo-rescan` las instancias nuevas (evento
 //!   `turbo-rescan`) y al salir reanuda siempre lo congelado (P5).
-//! - Una sola instancia: abrir la app otra vez muestra la ventana abierta.
+//! - Segundo plano: cerrar la ventana con el watchdog en marcha solo la oculta (evento
+//!   `background`) y la app termina al cerrarse el juego. Una sola instancia: abrir la app otra
+//!   vez muestra la ventana que vigila.
 //! - `export_diagnostics` (It4.5): informe JSON en Descargas con los logs locales de `tracing`.
 
 // Sin consola en las compilaciones de release de Windows.
@@ -81,6 +83,13 @@ struct Watchdog(Mutex<Option<GameWatch>>);
 struct GameWatch {
     stop: Option<Sender<()>>,
     thread: Option<JoinHandle<()>>,
+}
+
+impl GameWatch {
+    /// El hilo sigue vigilando (termina solo al cerrarse el juego).
+    fn running(&self) -> bool {
+        self.thread.as_ref().is_some_and(|t| !t.is_finished())
+    }
 }
 
 impl Drop for GameWatch {
@@ -159,6 +168,11 @@ fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> 
             };
             // Sin ventana que escuche (al cerrar) no hay nada que hacer con el error.
             let _ = app.emit("game-exited", payload);
+            // La ventana se cerró mientras vigilaba: ya no queda nada que hacer.
+            if !main_visible(&app) {
+                tracing::info!("vigilancia en segundo plano terminada: la app se cierra");
+                app.exit(0);
+            }
             return;
         }
     });
@@ -168,12 +182,36 @@ fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> 
     }
 }
 
+/// La ventana principal está a la vista (oculta = segundo plano).
+fn main_visible(app: &AppHandle) -> bool {
+    app.get_webview_window("main")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false)
+}
+
 /// Trae al frente la ventana principal (otra instancia de la app pidió abrirse).
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+    }
+}
+
+/// Al cerrar la ventana con el watchdog vigilando, se oculta en vez de cerrarse: el juego
+/// sigue y lo de sesión se deshace cuando termine.
+fn on_close(window: &tauri::Window, api: &tauri::CloseRequestApi) {
+    let watching = window
+        .state::<Watchdog>()
+        .0
+        .lock()
+        .map(|w| w.as_ref().is_some_and(GameWatch::running))
+        .unwrap_or(false);
+    if watching {
+        api.prevent_close();
+        let _ = window.hide();
+        tracing::info!("ventana cerrada con el juego vigilado: sigue en segundo plano");
+        let _ = window.emit("background", ());
     }
 }
 
@@ -406,6 +444,11 @@ fn main() -> anyhow::Result<()> {
             show_main(app)
         }))
         .plugin(tauri_plugin_notification::init())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                on_close(window, api);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             snapshot,
             status,

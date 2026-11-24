@@ -732,6 +732,11 @@
     });
   }
 
+  /* La ventana se ocultó con el juego vigilado: se avisa fuera de ella. */
+  function onBackground() {
+    api.notify('FrameRush', t('background-watching')).catch(err => console.warn('notificación:', err));
+  }
+
   /* Alerta (It3.6): en la ventana y como notificación del sistema. */
   function raiseAlert(msg) {
     toast(msg);
@@ -948,7 +953,7 @@
     try { S.profiles = await api.profiles(); } catch (err) { S.profiles = {}; toast(t('err-profiles', { error: String(err && err.message ? err.message : err) })); }
     const g = D.games[S.game];
     if (g && g.appid in S.profiles) useProfile(g.appid); else fillProfiles('global');
-    stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited), api.onGameLaunched(onGameLaunched), api.onTurboRescan(onTurboRescan));
+    stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited), api.onBackground(onBackground), api.onGameLaunched(onGameLaunched), api.onTurboRescan(onTurboRescan));
   }
 
   DS('hardware-profile').forEach(e => { e.textContent = t('reading-device'); });
