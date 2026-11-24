@@ -252,8 +252,12 @@
     setText('.thrNote', d.thermalAlert.estimated ? 'Valores estimados: no se pudo leer la temperatura máxima de la CPU (TjMax) ni la de la GPU.'
       : `Calculado: TjMax ${cpu?.tjmax ?? '—'} °C − 10 · límite de la GPU ${slowdown ?? '—'} °C − 5 → ${Math.round(d.thermalAlert.value)} °C`);
 
-    /* manual-recommendations: todavía no hay reglas de recomendaciones manuales */
-    DS('manual-recommendations').forEach(e => { e.innerHTML = ''; e.closest('details').hidden = true; });
+    /* manual-recommendations (It5.8): rules/recommendations.toml filtradas por core para este equipo y el juego elegido */
+    const recs = [...D.recommendations, ...(game().recommendations || [])];
+    DS('manual-recommendations').forEach(e => {
+      e.innerHTML = recs.map(r => `<label><input type="checkbox"><span><b>${esc(r.title)}</b>${r.steps.map(s => `<br>${esc(s)}`).join('')}<br><small>Fuente: ${esc(r.source)}</small></span></label>`).join('');
+      e.closest('details').hidden = !recs.length;
+    });
 
     /* compat-warning: solo lo que está instalado */
     $$('.cwList').forEach(e => {

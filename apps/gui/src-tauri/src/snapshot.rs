@@ -37,6 +37,8 @@ pub struct View {
     sensor_needs_admin: Vec<&'static str>,
     /// Juegos de Steam instalados, por nombre (`game-target`).
     games: Vec<GameView>,
+    /// Recomendaciones manuales de este equipo que no dependen del juego (It5.8).
+    recommendations: Vec<RecView>,
     /// Por qué no hay juegos (Steam no instalado o ilegible); `null` si se leyó Steam.
     games_note: Option<String>,
     /// Journal sin cerrar (restore-after-crash).
@@ -303,7 +305,20 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
     if caps.defender_exclusions && device.defender_active == Some(true) {
         available.push("defender-exclusions");
     }
-    let games = steam_games(&processes);
+    let (mut games, games_note) = steam_games(&processes);
+    let recs = framerush_rules::recommendations()
+        .context("las recomendaciones embebidas no son válidas")?;
+    for g in &mut games {
+        g.recommendations = framerush_core::recommendations_for(&recs, &device, Some(g.appid))
+            .into_iter()
+            .filter(|r| r.when.appid.is_some())
+            .map(RecView::from)
+            .collect();
+    }
+    let recommendations = framerush_core::recommendations_for(&recs, &device, None)
+        .into_iter()
+        .map(RecView::from)
+        .collect();
 
     Ok(View {
         os: match os {
@@ -332,8 +347,9 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
         sensor_needs_admin: sensors.needs_admin,
         pending_session: pending_session(),
         elevated: sensors.elevated,
-        games: games.0,
-        games_note: games.1,
+        games,
+        recommendations,
+        games_note,
         device: device_view(&device, gpu_pref.as_deref()),
     })
 }
@@ -545,6 +561,27 @@ struct GameView {
     pids: Vec<u32>,
     /// Adaptador del juego (It5.1); sin él, sus ajustes se ocultan (SETTINGS.md §4.11).
     adapter: Option<AdapterView>,
+    /// Recomendaciones manuales solo para este juego (las generales van en `View`).
+    recommendations: Vec<RecView>,
+}
+
+/// Recomendación manual para la UI (`manual-recommendations`).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecView {
+    title: String,
+    steps: Vec<String>,
+    source: String,
+}
+
+impl From<&framerush_core::Recommendation> for RecView {
+    fn from(r: &framerush_core::Recommendation) -> Self {
+        Self {
+            title: r.title.clone(),
+            steps: r.steps.clone(),
+            source: r.source.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -709,6 +746,7 @@ fn steam_games(processes: &[ProcessInfo]) -> (Vec<GameView>, Option<String>) {
                     running: detected == Some(app.appid) || !procs.is_empty(),
                     pids: procs.iter().map(|p| p.target.pid).collect(),
                     adapter: adapter_view(&root, app),
+                    recommendations: vec![],
                 }
             })
             .collect();
