@@ -2025,6 +2025,41 @@ mod tests {
         }
     }
 
+    /// P6: en Turbo solo cerrar pasa a congelar; las demás acciones (bajar prioridad, detener
+    /// un servicio) siguen su propia fila.
+    #[test]
+    fn p6_turbo_turns_kill_into_freeze_only() {
+        let row = |action, subject| PlanItem {
+            rule_id: "r".into(),
+            category: framerush_core::Category::Updater,
+            subject,
+            action,
+            risk: framerush_core::Risk::Low,
+            min_level: Level::Normal,
+            description: String::new(),
+            requires_admin: false,
+            locked: false,
+            default_checked: true,
+        };
+        let procs = || Subject::Processes(vec![proc(1, "updater.exe")]);
+        let cases = [
+            (Action::Kill, procs(), Action::Suspend),
+            (Action::Suspend, procs(), Action::Suspend),
+            (Action::LowerPriority, procs(), Action::LowerPriority),
+            (
+                Action::StopService,
+                Subject::Services(vec!["WSearch".into()]),
+                Action::StopService,
+            ),
+        ];
+        for (action, subject, expected) in cases {
+            let item = row(action, subject);
+            let frozen = freeze_instead_of_kill(item.clone());
+            assert_eq!(frozen.action, expected, "{action:?}");
+            assert_eq!(frozen.subject, item.subject, "mismos objetivos");
+        }
+    }
+
     #[test]
     fn finds_the_game_by_name_or_pid() {
         let ps = [proc(1, "Game.exe"), proc(2, "other.exe")];

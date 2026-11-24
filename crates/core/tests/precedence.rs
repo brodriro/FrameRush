@@ -1,15 +1,19 @@
 //! Tabla de precedencia P1–P15 (PLAN.md §3): un test por regla que ya tiene código.
 //!
-//! Las reglas que dependen de piezas que aún no existen (Turbo,
-//! `steamwebhelper`, VBS, GPU) se prueban en su hito; tareas.md las lista.
+//! Las reglas que dependen de piezas que aún no existen en Rust (P4: `launch-game` con
+//! `profile-auto-apply`; P8: `steamwebhelper` y el overlay de Steam) se prueban en su hito;
+//! tareas.md las lista.
 
 use framerush_core::{
     Action, ApplyRequest, Category, Engine, EngineError, FileStore, GameBoost, JournalStore, Level,
-    OsNames, Plan, PlanOptions, Risk, Rule, Scope, Snapshot, persistent_priority_default, plan,
+    MemoryOp, OsNames, Plan, PlanItem, PlanOptions, Risk, Rule, Scope, Snapshot,
+    persistent_priority_default, plan,
 };
 use framerush_device::{DeviceProfile, samples};
 use framerush_platform::mock::MockPlatform;
-use framerush_platform::{GameTuning, Os, Priority, ProcessControl, ServiceState, Tweak};
+use framerush_platform::{
+    GameTuning, Os, Priority, ProcessControl, ServiceControl, ServiceState, Tweak,
+};
 use std::path::PathBuf;
 
 fn rule(id: &str, name: &str, action: Action, min_level: Level, risk: Risk) -> Rule {
@@ -507,4 +511,282 @@ fn p3_custom_power_plan_duplicates_the_level_plan() {
     engine.revert_all().unwrap();
     assert_eq!(m.active_power_plan().unwrap().id, original);
     assert_eq!(m.power_plans().unwrap(), laptop.power_plans);
+}
+
+/// Filas que Turbo manda al motor: las marcadas, con cerrar convertido en congelar. Reproduce
+/// `freeze_instead_of_kill` de la CLI y de la GUI, que viven en binarios y no se pueden importar
+/// aquí; la CLI prueba la suya en `apps/cli`.
+fn freeze_instead_of_kill(mut item: PlanItem) -> PlanItem {
+    if item.action == Action::Kill {
+        item.action = Action::Suspend;
+    }
+    item
+}
+
+fn turbo_items(p: &Plan) -> Vec<PlanItem> {
+    p.checked().cloned().map(freeze_instead_of_kill).collect()
+}
+
+fn turbo_request(items: &[PlanItem]) -> ApplyRequest<'_> {
+    ApplyRequest {
+        items: items.iter().collect(),
+        ..ApplyRequest::default()
+    }
+}
+
+/// P6: Turbo congela las filas marcadas con `suspend` o `kill` (kill pasa a congelar) y nada
+/// más: ni las desmarcadas, ni los protegidos, ni `keep-alive-list`; los servicios siguen su
+/// propia fila (se detienen, no se congelan). Al salir se reanuda todo lo congelado.
+#[test]
+fn p6_turbo_freezes_checked_rows_and_kill_becomes_freeze() {
+    let m = MockPlatform::new(4);
+    let killed = m.spawn(1, "killer.exe", "/killer.exe", 1);
+    let frozen = m.spawn(2, "updater.exe", "/updater.exe", 1);
+    let unchecked = m.spawn(3, "later.exe", "/later.exe", 1);
+    let voice = m.spawn(4, "Discord.exe", "/Discord.exe", 1);
+    let critical = m.spawn(5, "csrss.exe", "/csrss.exe", 1);
+    m.add_service("WSearch", ServiceState::Running);
+    let mut optional = rule("later", "later", Action::Suspend, Level::Normal, Risk::Low);
+    optional.optional = true;
+    let rules = [
+        rule("kill", "killer", Action::Kill, Level::Extremo, Risk::Low),
+        rule(
+            "freeze",
+            "updater",
+            Action::Suspend,
+            Level::Normal,
+            Risk::Low,
+        ),
+        optional,
+        rule("voice", "Discord", Action::Kill, Level::Normal, Risk::Low),
+        rule("os", "csrss", Action::Suspend, Level::Normal, Risk::Low),
+        rule(
+            "search",
+            "WSearch",
+            Action::StopService,
+            Level::Normal,
+            Risk::Low,
+        ),
+    ];
+    let snap = Snapshot {
+        services: vec![("WSearch".into(), ServiceState::Running)],
+        ..snapshot(&m)
+    };
+    let options = PlanOptions {
+        elevated: true,
+        keep_alive: vec!["discord".into()],
+    };
+    let p = plan_for(Level::Extremo, &snap, &rules, &options);
+    assert!(
+        p.items.iter().all(|i| i.rule_id != "os"),
+        "el protegido no entra en el plan"
+    );
+    let kill_row = p.items.iter().find(|i| i.rule_id == "kill");
+    assert_eq!(kill_row.map(|i| i.action), Some(Action::Kill));
+
+    let items = turbo_items(&p);
+    let actions: Vec<(&str, Action)> = items
+        .iter()
+        .map(|i| (i.rule_id.as_str(), i.action))
+        .collect();
+    assert_eq!(
+        actions,
+        [
+            ("kill", Action::Suspend),
+            ("freeze", Action::Suspend),
+            ("voice", Action::LowerPriority),
+            ("search", Action::StopService),
+        ]
+    );
+
+    let s = store("p6");
+    let engine = Engine::new(&m, &s);
+    engine.apply(&turbo_request(&items)).unwrap();
+    assert!(m.is_suspended(&killed).unwrap(), "congelado, no cerrado");
+    assert!(m.is_suspended(&frozen).unwrap());
+    assert!(!m.is_suspended(&unchecked).unwrap(), "desmarcada");
+    assert!(!m.is_suspended(&voice).unwrap(), "keep-alive-list");
+    assert_ne!(m.priority(&voice).unwrap(), Priority::Normal);
+    assert!(!m.is_suspended(&critical).unwrap(), "protegido");
+    assert_eq!(
+        m.service_state("WSearch").unwrap(),
+        Some(ServiceState::Stopped)
+    );
+
+    engine.resume_frozen().unwrap();
+    assert!(!m.is_suspended(&killed).unwrap(), "lo congelado vuelve");
+    assert!(!m.is_suspended(&frozen).unwrap());
+    assert_eq!(
+        m.service_state("WSearch").unwrap(),
+        Some(ServiceState::Stopped),
+        "el servicio sigue su fila, no la de los congelados"
+    );
+    engine.revert_all().unwrap();
+}
+
+/// P6 y `turbo-rescan`: las instancias nuevas de las filas congeladas se congelan también; las
+/// de filas que no se congelaron, no. Lo ya congelado no se congela dos veces y al salir todo se
+/// reanuda.
+#[test]
+fn p6_turbo_rescan_freezes_new_instances_of_frozen_rows() {
+    let m = MockPlatform::new(4);
+    let first = m.spawn(1, "updater.exe", "/updater.exe", 1);
+    let mut optional = rule("later", "later", Action::Suspend, Level::Normal, Risk::Low);
+    optional.optional = true;
+    let rules = [
+        rule("freeze", "updater", Action::Kill, Level::Normal, Risk::Low),
+        optional,
+    ];
+    let options = PlanOptions {
+        elevated: true,
+        ..PlanOptions::default()
+    };
+    let p = plan_for(Level::Extremo, &snapshot(&m), &rules, &options);
+    let items = turbo_items(&p);
+    let s = store("p6-rescan");
+    let engine = Engine::new(&m, &s);
+    engine.apply(&turbo_request(&items)).unwrap();
+    let rows: Vec<String> = items
+        .iter()
+        .filter(|i| i.action == Action::Suspend)
+        .map(|i| i.rule_id.clone())
+        .collect();
+    assert_eq!(rows, ["freeze"]);
+
+    // Re-escaneo (como `rescan` de la CLI): aparecen otra instancia de la fila congelada y una
+    // de la desmarcada.
+    let second = m.spawn(2, "updater.exe", "/updater.exe", 1);
+    let later = m.spawn(3, "later.exe", "/later.exe", 1);
+    let again = plan_for(Level::Extremo, &snapshot(&m), &rules, &options);
+    let rescan: Vec<PlanItem> = again
+        .items
+        .into_iter()
+        .filter(|i| !i.locked && rows.contains(&i.rule_id))
+        .map(freeze_instead_of_kill)
+        .filter(|i| i.action == Action::Suspend)
+        .collect();
+    engine.apply(&turbo_request(&rescan)).unwrap();
+    assert!(m.is_suspended(&first).unwrap());
+    assert!(
+        m.is_suspended(&second).unwrap(),
+        "instancia nueva congelada"
+    );
+    assert!(!m.is_suspended(&later).unwrap(), "fila no congelada");
+
+    engine.resume_frozen().unwrap();
+    assert!(!m.is_suspended(&first).unwrap(), "no se congeló dos veces");
+    assert!(!m.is_suspended(&second).unwrap());
+    engine.revert_all().unwrap();
+}
+
+/// P5 con Turbo: lo congelado se reanuda al salir con el toggle apagado (`resume_frozen`) y
+/// encendido (`revert_session`). El toggle decide el resto de la sesión; lo persistente nunca
+/// se revierte al salir.
+#[test]
+fn p5_turbo_frozen_always_resume_and_the_toggle_rules_the_rest() {
+    for auto_revert in [false, true] {
+        let m = MockPlatform::new(4);
+        let killed = m.spawn(1, "killer.exe", "/killer.exe", 1);
+        let lowered = m.spawn(2, "sync.exe", "/sync.exe", 1);
+        let rules = [
+            rule("kill", "killer", Action::Kill, Level::Extremo, Risk::Low),
+            rule(
+                "lower",
+                "sync",
+                Action::LowerPriority,
+                Level::Normal,
+                Risk::Low,
+            ),
+        ];
+        let p = plan_for(
+            Level::Extremo,
+            &snapshot(&m),
+            &rules,
+            &PlanOptions::default(),
+        );
+        let items = turbo_items(&p);
+        let s = store(&format!("p5-turbo-{auto_revert}"));
+        let engine = Engine::new(&m, &s);
+        let request = ApplyRequest {
+            tweaks: vec![Tweak::GameDvrOff],
+            ..turbo_request(&items)
+        };
+        engine.apply(&request).unwrap();
+        assert!(m.is_suspended(&killed).unwrap());
+        assert_ne!(m.priority(&lowered).unwrap(), Priority::Normal);
+
+        if auto_revert {
+            engine.revert_session().unwrap();
+        } else {
+            engine.resume_frozen().unwrap();
+        }
+        assert!(
+            !m.is_suspended(&killed).unwrap(),
+            "congelado reanudado (auto_revert = {auto_revert})"
+        );
+        assert_eq!(
+            m.priority(&lowered).unwrap() == Priority::Normal,
+            auto_revert,
+            "el toggle gobierna el resto de la sesión"
+        );
+        assert_eq!(
+            m.value(r"mock\game-dvr-off"),
+            Some(1),
+            "lo persistente no se revierte al salir"
+        );
+        assert!(engine.has_open_session().unwrap());
+        engine.revert_all().unwrap();
+        assert_eq!(m.value(r"mock\game-dvr-off"), None);
+    }
+}
+
+/// P9: Turbo libera memoria solo si `memory-trim`/`standby-purge` están en el plan: desde
+/// Agresivo y con elevación. En Normal, o sin admin (candado), Turbo solo congela.
+#[test]
+fn p9_turbo_frees_memory_only_from_agresivo_with_admin() {
+    let cases = [
+        (Level::Normal, true, false),
+        (Level::Agresivo, false, false),
+        (Level::Agresivo, true, true),
+        (Level::Extremo, true, true),
+    ];
+    for (level, elevated, frees) in cases {
+        let m = MockPlatform::new(4);
+        let frozen = m.spawn(1, "updater.exe", "/updater.exe", 1);
+        let background = m.spawn(2, "notes.exe", "/notes.exe", 1);
+        let rules = [rule(
+            "freeze",
+            "updater",
+            Action::Suspend,
+            Level::Normal,
+            Risk::Low,
+        )];
+        let snap = Snapshot {
+            memory: MemoryOp::ALL.to_vec(),
+            ..snapshot(&m)
+        };
+        let options = PlanOptions {
+            elevated,
+            ..PlanOptions::default()
+        };
+        let p = plan_for(level, &snap, &rules, &options);
+        assert_eq!(!p.memory.is_empty(), frees, "{level:?}, admin {elevated}");
+        if !elevated && level != Level::Normal {
+            assert_eq!(p.locked_memory, MemoryOp::ALL, "con candado sin admin");
+        }
+
+        let items = turbo_items(&p);
+        let s = store(&format!("p9-{level:?}-{elevated}"));
+        let engine = Engine::new(&m, &s);
+        let request = ApplyRequest {
+            memory: p.memory.clone(),
+            ..turbo_request(&items)
+        };
+        engine.apply(&request).unwrap();
+        assert!(m.is_suspended(&frozen).unwrap(), "Turbo congela siempre");
+        let expected = u32::from(frees);
+        assert_eq!(m.standby_purges(), expected, "{level:?}, admin {elevated}");
+        assert_eq!(m.trims(&background).unwrap(), expected);
+        engine.revert_all().unwrap();
+    }
 }
