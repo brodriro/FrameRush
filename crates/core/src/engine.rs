@@ -546,6 +546,41 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         self.revert_where(|e| matches!(e.change, Change::Suspend { .. }))
     }
 
+    /// Reanuda procesos que congeló otro programa ([`crate::foreign_frozen`]). No pasa por el
+    /// journal: no es un cambio de FrameRush y no hay nada que deshacer. Lo que sí congeló
+    /// FrameRush se salta (se reanuda al deshacer su sesión).
+    pub fn resume_foreign(&self, targets: &[Target]) -> Result<Report, EngineError> {
+        let journal = self.store.load()?;
+        let mut report = Report::default();
+        for target in targets {
+            let what = format!(
+                "reanudar {} (pid {})",
+                target.exe_path.display(),
+                target.pid
+            );
+            let ours = journal
+                .entries
+                .iter()
+                .any(|e| matches!(&e.change, Change::Suspend { target: t } if t == target));
+            let outcome = if ours {
+                Outcome::Skipped("lo congeló FrameRush: se reanuda al deshacer la sesión".into())
+            } else {
+                match self.platform.is_same_process(target) {
+                    Ok(false) => Outcome::Skipped(
+                        "el proceso ya no existe o su PID es de otro proceso".into(),
+                    ),
+                    Ok(true) => match self.platform.resume(target) {
+                        Ok(()) => Outcome::Done,
+                        Err(e) => Outcome::Failed(e),
+                    },
+                    Err(e) => Outcome::Failed(e),
+                }
+            };
+            report.push(what, outcome);
+        }
+        Ok(report)
+    }
+
     /// Deshace solo el último lote (`undo-last`).
     pub fn undo_last(&self) -> Result<Report, EngineError> {
         match self.store.load()?.last_batch() {
@@ -1751,6 +1786,29 @@ mod tests {
         assert!(!m.is_suspended(&a).unwrap());
         assert_eq!(m.priority(&b).unwrap(), lowered);
         assert!(engine.has_open_session().unwrap());
+    }
+
+    /// Congelados por otro programa: se reanudan sin tocar el journal; los de FrameRush, no.
+    #[test]
+    fn resume_foreign_skips_what_framerush_froze() {
+        let m = MockPlatform::new(4);
+        let ours = m.spawn(1, "a.exe", "/a", 1);
+        let other = m.spawn(2, "b.exe", "/b", 1);
+        let items = [item(Action::Suspend, procs(&m, &[&ours]))];
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        engine.apply(&request(&items)).unwrap();
+        m.suspend(&other).unwrap();
+        let before = store.load().unwrap();
+
+        let report = engine
+            .resume_foreign(&[other.clone(), ours.clone()])
+            .unwrap();
+        assert_eq!((report.done(), report.failed()), (1, 0), "{report:?}");
+        assert!(!m.is_suspended(&other).unwrap());
+        assert!(m.is_suspended(&ours).unwrap());
+        assert_eq!(store.load().unwrap(), before);
+        assert_eq!(m.suspended().unwrap(), [ours.pid]);
     }
 
     #[test]

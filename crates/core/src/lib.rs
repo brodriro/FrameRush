@@ -4,6 +4,7 @@
 
 pub mod defaults;
 mod engine;
+mod frozen;
 mod journal;
 mod model;
 mod plan;
@@ -17,6 +18,7 @@ pub use engine::{
     ApplyRequest, CUSTOM_POWER_PLAN_NAME, Engine, EngineError, GameBoost, GameFileWrite,
     LOWERED_PRIORITY, Outcome, RefreshRate, Report, ReportLine, StatusLine, describe, status_lines,
 };
+pub use frozen::foreign_frozen;
 pub use journal::{Change, Entry, EntryStatus, FileStore, Journal, JournalError, JournalStore};
 pub use model::{Action, Category, Level, ParseError, Risk, Scope};
 pub use plan::{
