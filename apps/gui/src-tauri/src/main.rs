@@ -15,7 +15,7 @@
 //! - Turbo (It5.2): `launch_game` pide a Steam que lance el juego; al arrancar, la UI aplica con
 //!   `turbo` y el watchdog congela cada `turbo-rescan` las instancias nuevas (evento
 //!   `turbo-rescan`) y al salir reanuda siempre lo congelado (P5).
-//!
+//! - Una sola instancia: abrir la app otra vez muestra la ventana abierta.
 //! - `export_diagnostics` (It4.5): informe JSON en Descargas con los logs locales de `tracing`.
 
 // Sin consola en las compilaciones de release de Windows.
@@ -165,6 +165,15 @@ fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> 
     GameWatch {
         stop: Some(stop),
         thread: Some(thread),
+    }
+}
+
+/// Trae al frente la ventana principal (otra instancia de la app pidió abrirse).
+fn show_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
     }
 }
 
@@ -391,10 +400,11 @@ async fn export_diagnostics() -> Result<String, String> {
 }
 
 fn main() -> anyhow::Result<()> {
-    if let Some(log) = diagnostics::init_logs() {
-        tracing::info!(version = env!("CARGO_PKG_VERSION"), log = %log.display(), "FrameRush arranca");
-    }
     tauri::Builder::default()
+        // Debe ser el primer plugin (documentación de Tauri).
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main(app)
+        }))
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             snapshot,
@@ -413,6 +423,11 @@ fn main() -> anyhow::Result<()> {
             export_diagnostics
         ])
         .setup(|app| {
+            // Aquí y no antes: una segunda instancia ya ha salido (single-instance) y no pisa el
+            // log de la que está abierta.
+            if let Some(log) = diagnostics::init_logs() {
+                tracing::info!(version = env!("CARGO_PKG_VERSION"), log = %log.display(), "FrameRush arranca");
+            }
             let state = start(app.handle(), framerush_sensors::detect(), None);
             app.manage(Sensors(Mutex::new(state)));
             app.manage(Watchdog(Mutex::new(None)));

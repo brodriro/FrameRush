@@ -36,6 +36,7 @@ tauri = "2.12"
 tauri-build = "2.7"
 # Notificaciones del sistema para las alertas térmicas (It3.6), plugin oficial.
 tauri-plugin-notification = "2.8"
+tauri-plugin-single-instance = "2.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [workspace.lints.rust]
