@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+ctrlc.workspace = true
 framerush-core.workspace = true
 framerush-device.workspace = true
 framerush-games.workspace = true

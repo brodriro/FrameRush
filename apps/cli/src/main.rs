@@ -8,6 +8,7 @@
 //! del nivel como «FrameRush Max» (`custom-power-plan`; `--exclude` lo quita) y sube cada
 //! monitor a su máxima frecuencia (`refresh-rate-max`). `sensors` llega
 //! en M2.
+//! `turbo` (solo Windows) lanza el juego de Steam, congela el fondo y lo deshace al salir.
 //!
 //! Lo que pide admin lo hace `framerush-helper` (junto al ejecutable), que se abre con UAC solo
 //! cuando hace falta: `apply --admin` con ajustes que lo piden, o `undo`/`revert` de cambios
@@ -23,13 +24,16 @@
 //! Las opciones del adaptador del juego (`--tune`, `--lock`, `--fps-cap`, `--bench`) son opt-in
 //! y van al juego de `--appid` (aunque esté cerrado) o al de Steam en marcha.
 
+#[cfg(windows)]
+mod turbo;
+
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use framerush_core::{
-    ApplyRequest, CUSTOM_POWER_PLAN_NAME, Change, EntryStatus, FileStore, GameBoost, JournalStore,
-    Level, MemoryOp, Outcome, Plan, PlanItem, PlanOptions, RefreshRate, Report, Scope, Snapshot,
-    StateLine, Subject, defaults, is_protected, persistent_priority_default, plan, status_lines,
-    system_state, tweak_requires_reboot, tweak_scope,
+    Action, ApplyRequest, CUSTOM_POWER_PLAN_NAME, Change, EntryStatus, FileStore, GameBoost,
+    JournalStore, Level, MemoryOp, Outcome, Plan, PlanItem, PlanOptions, RefreshRate, Report,
+    Scope, Snapshot, StateLine, Subject, defaults, is_protected, persistent_priority_default, plan,
+    status_lines, system_state, tweak_requires_reboot, tweak_scope,
 };
 use framerush_device::{CoreKind, DeviceProfile};
 use framerush_platform::{
@@ -38,6 +42,8 @@ use framerush_platform::{
 };
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
+#[cfg(windows)]
+use turbo::{TurboArgs, turbo};
 
 /// Sube los FPS limitando procesos de fondo por niveles.
 #[derive(Debug, Parser)]
@@ -90,6 +96,11 @@ enum Command {
         #[command(subcommand)]
         command: Option<PowerCommand>,
     },
+    /// Turbo (It5.2): lanza el juego de Steam si no está abierto, aplica el nivel congelando en
+    /// vez de cerrar, congela cada `--rescan` lo nuevo y lo deshace al cerrar el juego o con
+    /// Ctrl+C. Sin `--yes` solo muestra el plan. Solo Windows por ahora.
+    #[cfg(windows)]
+    Turbo(TurboArgs),
     /// Steam: juegos instalados y el que está en marcha (`RunningAppID` o la ventana en primer
     /// plano bajo la carpeta del juego). No toca el sistema.
     Steam,
@@ -276,6 +287,8 @@ fn run_command(command: Command) -> Result<()> {
             Some(PowerCommand::Set { id, yes }) => power_set(&id, yes),
         },
         Command::Steam => steam(),
+        #[cfg(windows)]
+        Command::Turbo(args) => turbo(&args),
     }
 }
 
@@ -428,6 +441,7 @@ fn build_plan(
     level: Level,
     admin: bool,
     game: Option<&str>,
+    keep_alive: Option<&[String]>,
 ) -> Result<(Plan, Option<Game>, DeviceProfile)> {
     let Some(os) = Os::current() else {
         bail!("sistema operativo no admitido");
@@ -450,7 +464,8 @@ fn build_plan(
     };
     let options = PlanOptions {
         elevated: admin,
-        keep_alive: defaults::keep_alive(&device).value,
+        keep_alive: keep_alive
+            .map_or_else(|| defaults::keep_alive(&device).value, <[String]>::to_vec),
     };
     let plan = plan(level, &snapshot, &rules, &device, &options);
     Ok((plan, game, device))
@@ -1007,7 +1022,7 @@ fn print_game(
 
 fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     notify_open_session();
-    let (plan, game, device) = build_plan(level, admin, args.game.as_deref())?;
+    let (plan, game, device) = build_plan(level, admin, args.game.as_deref(), None)?;
     require_game(args, game.as_ref())?;
     let affinity = game_affinity(args, &plan, &device)?;
     check_gpu_preference(args, &device)?;
@@ -1106,13 +1121,58 @@ fn select<'a>(plan: &'a Plan, include: &[String], exclude: &[String]) -> Result<
 }
 
 fn apply(args: &ApplyArgs) -> Result<()> {
+    apply_with(args, None, run).map(drop)
+}
+
+/// Turbo (It5.2, P6): en su `apply`, cerrar pasa a congelar y `keep-alive-list` puede venir de
+/// la línea de órdenes.
+#[cfg_attr(
+    not(windows),
+    expect(dead_code, reason = "Turbo solo existe en Windows por ahora")
+)]
+struct TurboApply<'a> {
+    keep_alive: Option<&'a [String]>,
+}
+
+/// Lo que Turbo vigila tras aplicar: las reglas congeladas y los procesos del juego.
+#[cfg_attr(
+    not(windows),
+    expect(dead_code, reason = "Turbo solo existe en Windows por ahora")
+)]
+struct Applied {
+    suspended: Vec<String>,
+    game: Vec<framerush_platform::Target>,
+}
+
+/// En Turbo, cerrar pasa a congelar (P6): se reanuda al salir y cerrar no se deshace.
+fn freeze_instead_of_kill(mut item: PlanItem) -> PlanItem {
+    if item.action == Action::Kill {
+        item.action = Action::Suspend;
+    }
+    item
+}
+
+/// `apply` con `exec` como ejecutor del motor. Devuelve `None` si no aplicó nada (sin `--yes`
+/// o sin nada marcado).
+fn apply_with(
+    args: &ApplyArgs,
+    turbo: Option<&TurboApply<'_>>,
+    exec: impl FnOnce(Op<'_>) -> Result<Report>,
+) -> Result<Option<Applied>> {
     notify_open_session();
     let level = args.level;
-    let (plan, game, device) = build_plan(level, args.admin, args.game.game.as_deref())?;
+    let keep_alive = turbo.and_then(|t| t.keep_alive);
+    let (plan, game, device) =
+        build_plan(level, args.admin, args.game.game.as_deref(), keep_alive)?;
     require_game(&args.game, game.as_ref())?;
     let affinity = game_affinity(&args.game, &plan, &device)?;
     check_gpu_preference(&args.game, &device)?;
-    let adapter = adapter_plan(&args.game, game.as_ref(), &device)?;
+    // En Turbo, `--appid` elige el juego aunque no se toque su config.
+    let adapter = if turbo.is_some() && !args.game.wants_adapter() {
+        None
+    } else {
+        adapter_plan(&args.game, game.as_ref(), &device)?
+    };
     let defender = defender_plan(&args.game, game.as_ref(), &device)?;
     if !defender.is_empty() && !args.admin && args.yes {
         bail!("--defender-exclusions requiere admin: usa --admin");
@@ -1157,6 +1217,17 @@ fn apply(args: &ApplyArgs) -> Result<()> {
             .collect()
     };
     let (checked, tweaks, memory) = select(&plan, &others(&args.include), &others(&args.exclude))?;
+    let frozen: Vec<PlanItem> = match turbo {
+        Some(_) => checked
+            .iter()
+            .map(|i| freeze_instead_of_kill((*i).clone()))
+            .collect(),
+        None => vec![],
+    };
+    let checked: Vec<&PlanItem> = match turbo {
+        Some(_) => frozen.iter().collect(),
+        None => checked,
+    };
     if args.game.game_priority == GamePriority::Realtime && !args.game.confirm_realtime {
         bail!("Tiempo real puede congelar el equipo: confírmalo con --confirm-realtime");
     }
@@ -1176,7 +1247,7 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         print_power(&power, &device);
         print_plan(&plan, &checked, &tweaks, &memory, &device);
         println!("\nRevisa las filas y repite con --yes para aplicarlas.");
-        return Ok(());
+        return Ok(None);
     }
     if checked.is_empty()
         && tweaks.is_empty()
@@ -1189,8 +1260,19 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         && defender.is_empty()
     {
         println!("No hay filas ni ajustes marcados ni juego: no se toca nada.");
-        return Ok(());
+        return Ok(None);
     }
+    let applied = Applied {
+        suspended: checked
+            .iter()
+            .filter(|i| i.action == Action::Suspend)
+            .map(|i| i.rule_id.clone())
+            .collect(),
+        game: game
+            .iter()
+            .flat_map(|g| g.processes.iter().map(|p| p.target.clone()))
+            .collect(),
+    };
     let request = ApplyRequest {
         memory,
         custom_power_plan: power.custom_base.filter(|_| power.custom_checked),
@@ -1211,16 +1293,16 @@ fn apply(args: &ApplyArgs) -> Result<()> {
         game_files: adapter.map(|a| a.plan.writes).unwrap_or_default(),
         defender_exclusions: defender,
     };
-    let report = run(Op::Apply(Box::new(request)))?;
+    let report = exec(Op::Apply(Box::new(request)))?;
     print_report(&report);
     // Lo que no deja estado (memoria) no abre sesión: entonces no hay nada que deshacer.
     let journal = FileStore::new(data_dir()?.join("session.json")).load()?;
-    if journal.is_open() {
+    if journal.is_open() && turbo.is_none() {
         println!(
             "Deshacer: `framerush undo` (último apply) o `framerush revert` (toda la sesión)."
         );
     }
-    Ok(())
+    Ok(Some(applied))
 }
 
 fn power_get() -> Result<()> {
@@ -1569,10 +1651,22 @@ enum Op<'a> {
     Apply(Box<ApplyRequest<'a>>),
     Undo,
     Revert,
+    /// Lo de sesión (Turbo al cerrarse el juego, `auto-revert-on-exit`).
+    RevertSession,
+    /// Solo reanudar lo congelado (Turbo sin `auto-revert-on-exit`, P5).
+    ResumeFrozen,
 }
 
 #[cfg(windows)]
 fn run(op: Op<'_>) -> Result<Report> {
+    let platform = platform_for(&op)?;
+    run_on(&platform, op)
+}
+
+/// Plataforma para `op`: con el helper elevado (UAC) si algo lo pide. Turbo la guarda para toda
+/// la sesión y así no pide UAC en cada re-escaneo.
+#[cfg(windows)]
+fn platform_for(op: &Op<'_>) -> Result<framerush_platform::WindowsPlatform> {
     use framerush_platform::{Helper, SystemTweaks, WindowsPlatform};
 
     let store = store()?;
@@ -1591,14 +1685,14 @@ fn run(op: Op<'_>) -> Result<Report> {
                 })
                 || foreign(request.game.iter().flat_map(|g| &g.targets))?
         }
-        Op::Undo | Op::Revert => {
+        Op::Undo | Op::Revert | Op::RevertSession | Op::ResumeFrozen => {
             let journal = store.load()?;
             let last = journal.last_batch();
             let pending: Vec<&Change> = journal
                 .entries
                 .iter()
                 .filter(|e| e.status != EntryStatus::Failed)
-                .filter(|e| matches!(op, Op::Revert) || Some(e.batch) == last)
+                .filter(|e| !matches!(op, Op::Undo) || Some(e.batch) == last)
                 .map(|e| &e.change)
                 .collect();
             pending.iter().any(|c| match c {
@@ -1610,18 +1704,30 @@ fn run(op: Op<'_>) -> Result<Report> {
             }) || foreign(pending.iter().filter_map(|c| c.target()))?
         }
     };
-    let platform = if needs_helper {
+    Ok(if needs_helper {
         println!("Hay cambios que piden admin: se abre el helper elevado (UAC).");
         let helper = Helper::launch(&helper_exe()?).context("no se pudo abrir el helper")?;
         WindowsPlatform::with_helper(helper)
     } else {
         unelevated
-    };
-    let engine = framerush_core::Engine::new(&platform, &store);
+    })
+}
+
+/// Ejecuta `op` con el journal de la CLI sobre `platform`.
+#[cfg(windows)]
+fn run_on(platform: &framerush_platform::WindowsPlatform, op: Op<'_>) -> Result<Report> {
+    let store = store()?;
+    let engine = framerush_core::Engine::new(platform, &store);
     Ok(match op {
         Op::Apply(request) => engine.apply(&request).context("no se pudo aplicar")?,
         Op::Undo => engine.undo_last().context("no se pudo deshacer")?,
         Op::Revert => engine.revert_all().context("no se pudo restaurar")?,
+        Op::RevertSession => engine
+            .revert_session()
+            .context("no se pudo deshacer lo de sesión")?,
+        Op::ResumeFrozen => engine
+            .resume_frozen()
+            .context("no se pudo reanudar lo congelado")?,
     })
 }
 
