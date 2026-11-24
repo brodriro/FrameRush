@@ -57,7 +57,7 @@
   /* ---------- Estado ---------- */
   let D = null;           /* snapshot del backend */
   let stopStreams = [];
-  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, profiles: {}, base: null, rt: false, alerted: false, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '', protOpen: false, released: [], turboPending: null };
+  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, profiles: {}, base: null, rt: false, alerts: {}, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '', protOpen: false, released: [], turboPending: null };
 
   const game = () => D.games[S.game] || { ...NO_GAME, exe: D.gamesNote || '' };
   /* Anticheat del juego o, sin adaptador, los que están en ejecución (cuentan para cualquier juego, It1.3). */
@@ -734,11 +734,18 @@
     });
   }
 
+  /* Alerta (It3.6): en la ventana y como notificación del sistema. */
+  function raiseAlert(msg) {
+    toast(msg);
+    api.notify('FrameRush', msg).catch(err => console.warn('notificación:', err));
+  }
+
   function onSensors(list) {
     S.lastSensors = list;
     const w = +(first('thermal-warn-threshold')?.value || 0), a = +(first('thermal-alert-threshold')?.value || 0);
     const pick = k => list.find(s => s.kind === k && s.value != null) || list.find(s => s.kind === k);
     const fans = list.filter(s => s.kind === 'fan');
+    const temps = {};
     renderFans(fans);
     ['cpu', 'gpu'].forEach(k => {
       const s = pick(k), temp = s && s.value != null ? Math.round(s.value) : null;
@@ -749,8 +756,19 @@
       });
       $$(`[data-meter="${k}"]`).forEach(m => { m.style.width = temp == null ? '0' : Math.min(temp, 100) + '%'; m.className = c ? 'bg-' + c : ''; });
       setText(`.${k}Src`, s ? s.source : t('no-sensor'));
-      if (c === 'bad' && first('thermal-alerts')?.checked && !S.alerted) { S.alerted = true; toast(t('thermal-alert', { part: k.toUpperCase(), temp })); }
+      temps[k] = temp;
+      /* thermal-alerts: una vez al pasar la de alerta; se vuelve a armar al bajar de la de aviso. */
+      if (temp == null || temp < w) S.alerts[k] = false;
+      else if (c === 'bad' && first('thermal-alerts')?.checked && !S.alerts[k]) { S.alerts[k] = true; raiseAlert(t('thermal-alert', { part: k.toUpperCase(), temp })); }
     });
+    /* fan-stop-alert: un ventilador a 0 rpm con la CPU o la GPU en la temperatura de aviso o más. */
+    const hot = ['cpu', 'gpu'].filter(k => temps[k] != null && temps[k] >= w).sort((x, y) => temps[y] - temps[x])[0];
+    const stopped = fans.filter(f => f.value === 0);
+    if (!hot || !stopped.length) S.alerts.fan = false;
+    else if (first('fan-stop-alert')?.checked && !S.alerts.fan) {
+      S.alerts.fan = true;
+      raiseAlert(t('fan-stop-alert', { fans: stopped.map(f => f.label).join(', '), part: hot.toUpperCase(), temp: temps[hot] }));
+    }
     fans.forEach((f, i) => {
       $$(`[data-fan="${i}"]`).forEach(e => {
         e.className = 'v' + (f.value == null ? ' na' : f.value === 0 ? ' c-bad' : '');
@@ -867,7 +885,7 @@
     if (id === 'language') I18N.setLanguage(t.value); /* recarga la ventana con el idioma nuevo */
     if (id === 'dry-run') setText('[data-setting="apply"] .lbl', t.checked ? I18N.t('apply-dry') : I18N.t('apply-label'));
     if (id === 'auto-revert-on-exit') sess();
-    if (id === 'thermal-alerts' || id === 'thermal-alert-threshold') S.alerted = false;
+    if (['thermal-alerts', 'thermal-alert-threshold', 'thermal-warn-threshold', 'fan-stop-alert'].includes(id)) S.alerts = {};
   });
 
   document.addEventListener('keydown', e => { if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); apply(); } }); /* shortcut-apply */
@@ -900,7 +918,7 @@
     }
     /* Juegos de Steam del equipo; adaptadores y recomendaciones llegan en M4. */
     D.steamRecs = D.steamRecs || [];
-    Object.assign(S, { admin: D.elevated, game: Math.max(0, D.games.findIndex(g => g.running)), hist: [], rt: false, alerted: false, rb: [], turbo: false, fps: [], lastSensors: null, fanIds: '', released: [], chk: [], stc: D.steamRecs.map(s => !!s.checked) });
+    Object.assign(S, { admin: D.elevated, game: Math.max(0, D.games.findIndex(g => g.running)), hist: [], rt: false, alerts: {}, rb: [], turbo: false, fps: [], lastSensors: null, fanIds: '', released: [], chk: [], stc: D.steamRecs.map(s => !!s.checked) });
     $$('[data-touched]').forEach(x => { delete x.dataset.touched; });
 
     DS('game-target').forEach(s => {

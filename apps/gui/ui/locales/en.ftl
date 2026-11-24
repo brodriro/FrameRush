@@ -353,6 +353,8 @@ game-running = (running)
 err-profiles = The profiles could not be read: { $error }
 reading-device = Reading the computer…
 
+fan-stop-alert = Fan at 0 rpm ({ $fans }) with the { $part } at { $temp } °C: check that the fan works.
+
 # api.js
 
 api-not-tauri = Open FrameRush as an app to see this computer's data.

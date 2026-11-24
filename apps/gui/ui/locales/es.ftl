@@ -353,6 +353,8 @@ game-running = (en ejecución)
 err-profiles = No se pudieron leer los perfiles: { $error }
 reading-device = Leyendo el equipo…
 
+fan-stop-alert = Ventilador a 0 rpm ({ $fans }) con la { $part } a { $temp } °C: comprueba que el ventilador funciona.
+
 # api.js
 
 api-not-tauri = Abre FrameRush como app para ver los datos de este equipo.
