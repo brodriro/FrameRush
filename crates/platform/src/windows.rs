@@ -826,6 +826,29 @@ pub fn steam_running_app() -> Result<Option<u32>> {
     Ok(registry::read_dword(HKCU, STEAM, "RunningAppID")?.filter(|&id| id != 0))
 }
 
+/// Carpeta «Descargas» del usuario (`SHGetKnownFolderPath(FOLDERID_Downloads)`), o `None` si
+/// Windows no la da. Es la real aunque el usuario la haya movido.
+pub fn downloads_dir() -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_Downloads, SHGetKnownFolderPath};
+    let mut raw: windows_sys::core::PWSTR = std::ptr::null_mut();
+    // SAFETY: el GUID vive durante la llamada, el token nulo es el usuario actual y `raw` es un
+    // puntero de salida válido.
+    let hr =
+        unsafe { SHGetKnownFolderPath(&FOLDERID_Downloads, 0, std::ptr::null_mut(), &mut raw) };
+    let path = (hr >= 0 && !raw.is_null()).then(|| {
+        // SAFETY: si la llamada tiene éxito, `raw` es una cadena UTF-16 terminada en nulo.
+        let len = (0..).take_while(|&i| unsafe { *raw.add(i) } != 0).count();
+        // SAFETY: `raw` tiene `len` unidades válidas antes del nulo.
+        let units = unsafe { std::slice::from_raw_parts(raw, len) };
+        PathBuf::from(std::ffi::OsString::from_wide(units))
+    });
+    // SAFETY: la documentación pide liberar `raw` con CoTaskMemFree haya éxito o no; acepta nulo.
+    unsafe { CoTaskMemFree(raw as *const core::ffi::c_void) };
+    path
+}
+
 /// Dato que pone un ajuste en un valor.
 #[derive(Debug)]
 enum RegData {
