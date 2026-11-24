@@ -72,6 +72,13 @@
 
     /* Alertas (It3.6): notificación del sistema. Fuera de la app no hace nada. */
     notify(title, body) { return inTauri ? T.core.invoke('notify', { title, body }) : Promise.resolve(); },
+
+    /*
+     * Overlay (It3.5): atajo global que muestra u oculta la ventana ('' = sin atajo; rechaza si
+     * no es válido o ya lo usa otro programa) y textos del menú de la bandeja.
+     */
+    setOverlayHotkey(accel) { return inTauri ? T.core.invoke('set_overlay_hotkey', { accel }) : Promise.resolve(); },
+    trayLabels(toggle, quit) { return inTauri ? T.core.invoke('tray_labels', { toggle, quit }) : Promise.resolve(); },
     onTurboRescan(cb) {
       let stop = () => {};
       T.event.listen('turbo-rescan', e => cb(e.payload)).then(un => { stop = un; });

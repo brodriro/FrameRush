@@ -615,7 +615,7 @@
 
   /* ---------- Perfiles por juego (It3.2) ---------- */
   /* No van en el perfil: la clave (juego), el propio perfil, ajustes de la app y lo que se guarda aparte. */
-  const PROFILE_SKIP = new Set(['profile', 'profile-auto-apply', 'game-target', 'language', 'perf-metric', 'power-plan', 'game-priority']);
+  const PROFILE_SKIP = new Set(['profile', 'profile-auto-apply', 'game-target', 'language', 'overlay-hotkey', 'perf-metric', 'power-plan', 'game-priority']);
 
   /* Todo lo elegible de la UI salvo lo de solo lectura (SETTINGS.md, profile-save). */
   function profileState() {
@@ -842,7 +842,7 @@
       return;
     }
     const wb = t.closest('[data-win]');
-    if (wb) { if (!api.inTauri) toast(I18N.t('win-only-app')); else api.win(wb.dataset.win); return; } /* La bandeja llega con el overlay (M6) */
+    if (wb) { if (!api.inTauri) toast(I18N.t('win-only-app')); else api.win(wb.dataset.win); return; }
 
     const el = t.closest('button[data-setting]'); if (!el) return;
     const id = el.dataset.setting;
@@ -895,6 +895,7 @@
       }
     }
     if (id === 'language') I18N.setLanguage(t.value); /* recarga la ventana con el idioma nuevo */
+    if (id === 'overlay-hotkey') setHotkey(t.value, true);
     if (id === 'dry-run') setText('[data-setting="apply"] .lbl', t.checked ? I18N.t('apply-dry') : I18N.t('apply-label'));
     if (id === 'auto-revert-on-exit') sess();
     if (['thermal-alerts', 'thermal-alert-threshold', 'thermal-warn-threshold', 'fan-stop-alert'].includes(id)) S.alerts = {};
@@ -954,6 +955,26 @@
     const g = D.games[S.game];
     if (g && g.appid in S.profiles) useProfile(g.appid); else fillProfiles('global');
     stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited), api.onBackground(onBackground), api.onGameLaunched(onGameLaunched), api.onTurboRescan(onTurboRescan));
+  }
+
+  /* Atajo del overlay (It3.5): de la app, no del perfil; se recuerda en este equipo. */
+  const HOTKEY_KEY = 'framerush.overlayHotkey';
+  async function setHotkey(accel, announce) {
+    try {
+      await api.setOverlayHotkey(accel);
+      try { localStorage.setItem(HOTKEY_KEY, accel); } catch (_) { /* sin almacenamiento: dura esta sesión */ }
+      if (announce) toast(accel.trim() ? I18N.t('hotkey-set', { accel: accel.trim() }) : I18N.t('hotkey-off'));
+    } catch (e) {
+      toast(I18N.t('hotkey-error', { accel, error: String(e) }), 8000);
+    }
+  }
+  {
+    let saved = null;
+    try { saved = localStorage.getItem(HOTKEY_KEY); } catch (_) { /* sin almacenamiento */ }
+    const input = first('overlay-hotkey');
+    if (saved != null && input) input.value = saved;
+    if (input) setHotkey(input.value, false);
+    api.trayLabels(t('tray-toggle'), t('tray-quit')).catch(err => console.warn('bandeja:', err));
   }
 
   DS('hardware-profile').forEach(e => { e.textContent = t('reading-device'); });

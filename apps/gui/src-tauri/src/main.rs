@@ -18,6 +18,8 @@
 //! - Segundo plano: cerrar la ventana con el watchdog en marcha solo la oculta (evento
 //!   `background`) y la app termina al cerrarse el juego. Una sola instancia: abrir la app otra
 //!   vez muestra la ventana que vigila.
+//! - Overlay (It3.5): atajo global (`set_overlay_hotkey`) que muestra u oculta la ventana e
+//!   icono en la bandeja con «Mostrar u ocultar» y «Salir» (deshace antes lo que vigila).
 //! - `export_diagnostics` (It4.5): informe JSON en Descargas con los logs locales de `tracing`.
 
 // Sin consola en las compilaciones de release de Windows.
@@ -26,12 +28,14 @@
 mod actions;
 mod diagnostics;
 mod launch;
+mod overlay;
 mod profiles;
 mod snapshot;
 
 use actions::Elevated;
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -83,6 +87,8 @@ struct Watchdog(Mutex<Option<GameWatch>>);
 struct GameWatch {
     stop: Option<Sender<()>>,
     thread: Option<JoinHandle<()>>,
+    /// Lo que se hará al cerrarse el juego (`auto-revert-on-exit`), también al salir de la app.
+    revert_session: bool,
 }
 
 impl GameWatch {
@@ -115,6 +121,7 @@ struct GameExited {
 /// el `GameWatch` se suelta en el siguiente `apply` o `revert`.
 fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> GameWatch {
     let (stop, stopped) = mpsc::channel::<()>();
+    let revert_session = plan.revert_session;
     let thread = std::thread::spawn(move || {
         let mut last_rescan = Instant::now();
         loop {
@@ -169,7 +176,7 @@ fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> 
             // Sin ventana que escuche (al cerrar) no hay nada que hacer con el error.
             let _ = app.emit("game-exited", payload);
             // La ventana se cerró mientras vigilaba: ya no queda nada que hacer.
-            if !main_visible(&app) {
+            if app.state::<Closed>().0.load(Ordering::Relaxed) {
                 tracing::info!("vigilancia en segundo plano terminada: la app se cierra");
                 app.exit(0);
             }
@@ -179,14 +186,39 @@ fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> 
     GameWatch {
         stop: Some(stop),
         thread: Some(thread),
+        revert_session,
     }
 }
 
-/// La ventana principal está a la vista (oculta = segundo plano).
-fn main_visible(app: &AppHandle) -> bool {
-    app.get_webview_window("main")
-        .and_then(|w| w.is_visible().ok())
-        .unwrap_or(false)
+/// El usuario cerró la ventana con el juego vigilado: al cerrarse el juego, la app termina.
+/// Ocultarla con el atajo o la bandeja no cuenta (la app sigue en la bandeja).
+struct Closed(AtomicBool);
+
+/// «Salir» de la bandeja. Si el watchdog vigila, antes hace lo que haría al cerrarse el juego
+/// (deshacer lo de sesión o reanudar lo congelado), para no dejar procesos congelados.
+fn quit(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let watch = app
+            .state::<Watchdog>()
+            .0
+            .lock()
+            .ok()
+            .and_then(|mut w| w.take());
+        // Soltar el `GameWatch` para su hilo antes de deshacer.
+        let pending = watch.filter(GameWatch::running).map(|w| w.revert_session);
+        if let Some(revert_session) = pending {
+            let helper = helper(&app.state::<Sensors>()).ok().flatten();
+            let result = if revert_session {
+                actions::revert_session(helper)
+            } else {
+                actions::resume_frozen(helper)
+            };
+            let _ = logged("quit", result.map_err(|e| format!("{e:#}")));
+        }
+        tracing::info!("salir desde la bandeja");
+        app.exit(0);
+    });
 }
 
 /// Trae al frente la ventana principal (otra instancia de la app pidió abrirse).
@@ -196,6 +228,7 @@ fn show_main(app: &AppHandle) {
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
+    app.state::<Closed>().0.store(false, Ordering::Relaxed);
 }
 
 /// Al cerrar la ventana con el watchdog vigilando, se oculta en vez de cerrarse: el juego
@@ -209,6 +242,7 @@ fn on_close(window: &tauri::Window, api: &tauri::CloseRequestApi) {
         .unwrap_or(false);
     if watching {
         api.prevent_close();
+        window.state::<Closed>().0.store(true, Ordering::Relaxed);
         let _ = window.hide();
         tracing::info!("ventana cerrada con el juego vigilado: sigue en segundo plano");
         let _ = window.emit("background", ());
@@ -431,6 +465,18 @@ fn notify(app: tauri::AppHandle, title: String, body: String) -> Result<(), Stri
         .map_err(|e| e.to_string())
 }
 
+/// Atajo global del overlay (`overlay-hotkey`); vacío lo quita.
+#[tauri::command]
+fn set_overlay_hotkey(app: AppHandle, accel: String) -> Result<(), String> {
+    overlay::set_hotkey(&app, &accel)
+}
+
+/// Textos del menú de la bandeja en el idioma de la UI.
+#[tauri::command]
+fn tray_labels(app: AppHandle, toggle: String, quit: String) -> Result<(), String> {
+    overlay::set_labels(&app, &toggle, &quit)
+}
+
 /// Informe de diagnóstico (It4.5): devuelve la ruta del archivo guardado.
 #[tauri::command]
 async fn export_diagnostics() -> Result<String, String> {
@@ -444,6 +490,7 @@ fn main() -> anyhow::Result<()> {
             show_main(app)
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 on_close(window, api);
@@ -463,7 +510,9 @@ fn main() -> anyhow::Result<()> {
             profiles,
             save_profile,
             notify,
-            export_diagnostics
+            export_diagnostics,
+            set_overlay_hotkey,
+            tray_labels
         ])
         .setup(|app| {
             // Aquí y no antes: una segunda instancia ya ha salido (single-instance) y no pisa el
@@ -474,7 +523,9 @@ fn main() -> anyhow::Result<()> {
             let state = start(app.handle(), framerush_sensors::detect(), None);
             app.manage(Sensors(Mutex::new(state)));
             app.manage(Watchdog(Mutex::new(None)));
+            app.manage(Closed(AtomicBool::new(false)));
             launch::spawn(app.handle().clone());
+            overlay::tray(app)?;
             Ok(())
         })
         .run(tauri::generate_context!())?;
