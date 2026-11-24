@@ -342,8 +342,22 @@ fn elevated_sources() -> anyhow::Result<(framerush_sensors::Sources, Elevated)> 
     anyhow::bail!("en este sistema todavía no hay helper elevado")
 }
 
+/// Alerta térmica o de ventilador parado (It3.6): notificación del sistema, que se ve también
+/// con el juego a pantalla completa. Se llama desde Rust para no dar permisos del plugin a la UI.
+#[tauri::command]
+fn notify(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
+}
+
 fn main() -> anyhow::Result<()> {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             snapshot,
             status,
@@ -356,7 +370,8 @@ fn main() -> anyhow::Result<()> {
             limited_rows,
             limit_row,
             profiles,
-            save_profile
+            save_profile,
+            notify
         ])
         .setup(|app| {
             let state = start(app.handle(), framerush_sensors::detect(), None);

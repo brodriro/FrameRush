@@ -60,6 +60,9 @@
      * `turbo-rescan` llega en cada re-escaneo con { outcomes | null, error | null }.
      */
     launchGame(appid) { return T.core.invoke('launch_game', { appid }); },
+
+    /* Alertas (It3.6): notificación del sistema. Fuera de la app no hace nada. */
+    notify(title, body) { return inTauri ? T.core.invoke('notify', { title, body }) : Promise.resolve(); },
     onTurboRescan(cb) {
       let stop = () => {};
       T.event.listen('turbo-rescan', e => cb(e.payload)).then(un => { stop = un; });

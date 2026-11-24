@@ -25,6 +25,7 @@ framerush-steam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
+tauri-plugin-notification.workspace = true
 
 [lints]
 workspace = true
