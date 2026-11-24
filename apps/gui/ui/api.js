@@ -108,7 +108,7 @@
 
     /*
      * Diagnóstico (It4.5): guarda en Descargas un JSON con versión, equipo, Estado, journal y
-     * logs locales (la carpeta del usuario sale como %USERPROFILE%). Devuelve la ruta.
+     * logs locales (la carpeta del usuario sale como %USERPROFILE% o $HOME). Devuelve la ruta.
      */
     exportDiagnostics() { return T.core.invoke('export_diagnostics'); },
 

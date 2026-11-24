@@ -3,8 +3,8 @@
 //! Nada sale del equipo (sin telemetría). El log de cada ejecución va a
 //! `<datos>/logs/framerush-gui.log` y el de la anterior se guarda como `framerush-gui.old.log`.
 //! El informe junta versión, `DeviceProfile`, vista Estado, journal, los dos logs de la GUI y
-//! el de la CLI, con la carpeta del usuario sustituida por `%USERPROFILE%`, y se guarda en
-//! Descargas.
+//! el de la CLI, con la carpeta del usuario sustituida por `%USERPROFILE%` (Windows) o `$HOME`
+//! (Linux y macOS), y se guarda en Descargas.
 
 use crate::snapshot::{data_dir, native_device, status_of};
 use anyhow::{Context, Result};
@@ -17,6 +17,11 @@ const LOG: &str = "framerush-gui.log";
 const OLD_LOG: &str = "framerush-gui.old.log";
 /// Log de la CLI (`framerush`), en la misma carpeta.
 const CLI_LOG: &str = "framerush-cli.log";
+/// Variable de la carpeta del usuario y el texto que la sustituye en el informe.
+#[cfg(windows)]
+const HOME: (&str, &str) = ("USERPROFILE", "%USERPROFILE%");
+#[cfg(not(windows))]
+const HOME: (&str, &str) = ("HOME", "$HOME");
 /// Tope de líneas por log en el informe (las últimas).
 const LOG_LINES: usize = 5000;
 
@@ -70,8 +75,9 @@ pub fn export() -> Result<PathBuf> {
         "cli_log": log(CLI_LOG),
     });
     let text = serde_json::to_string_pretty(&report).context("no se pudo generar el informe")?;
-    let text = match std::env::var("USERPROFILE") {
-        Ok(home) => redact(&text, &home),
+    let (var, placeholder) = HOME;
+    let text = match std::env::var(var) {
+        Ok(home) => redact(&text, &home, placeholder),
         Err(_) => text,
     };
     let dir = framerush_platform::downloads_dir()
@@ -99,9 +105,9 @@ fn tail(path: &Path) -> Vec<String> {
     lines[skip..].iter().map(|l| (*l).to_owned()).collect()
 }
 
-/// Cambia la carpeta del usuario por `%USERPROFILE%` sin distinguir mayúsculas, tal cual, con
+/// Cambia la carpeta del usuario por `placeholder` sin distinguir mayúsculas, tal cual, con
 /// barras `/` y escapada en JSON (`\\`).
-fn redact(text: &str, home: &str) -> String {
+fn redact(text: &str, home: &str, placeholder: &str) -> String {
     let home = home.trim_end_matches(['\\', '/']);
     if home.is_empty() {
         return text.to_owned();
@@ -112,7 +118,7 @@ fn redact(text: &str, home: &str) -> String {
         home.to_owned(),
     ];
     forms.iter().fold(text.to_owned(), |t, from| {
-        replace_ignore_case(&t, from, "%USERPROFILE%")
+        replace_ignore_case(&t, from, placeholder)
     })
 }
 
@@ -167,7 +173,7 @@ mod tests {
     #[test]
     fn redact_hides_every_form_of_the_user_folder() {
         let text = r#"{"a":"C:\\Users\\Brian\\x","b":"c:/users/brian/y","c":"C:\Users\brian"}"#;
-        let out = redact(text, r"C:\Users\brian");
+        let out = redact(text, r"C:\Users\brian", "%USERPROFILE%");
         assert!(!out.to_lowercase().contains("brian"), "{out}");
         assert_eq!(
             out,
@@ -178,10 +184,19 @@ mod tests {
     #[test]
     fn redact_keeps_text_without_the_folder_and_non_ascii() {
         assert_eq!(
-            redact("ñandú C:\\Users\\otro", r"C:\Users\brian"),
+            redact("ñandú C:\\Users\\otro", r"C:\Users\brian", "%USERPROFILE%"),
             "ñandú C:\\Users\\otro"
         );
-        assert_eq!(redact("abc", ""), "abc");
+        assert_eq!(redact("abc", "", "%USERPROFILE%"), "abc");
+    }
+
+    #[test]
+    fn redact_hides_a_unix_home() {
+        let text = r#"{"log":"/home/ana/.local/share/framerush/logs","otro":"/home/luis"}"#;
+        assert_eq!(
+            redact(text, "/home/ana/", "$HOME"),
+            r#"{"log":"$HOME/.local/share/framerush/logs","otro":"/home/luis"}"#
+        );
     }
 
     #[test]
