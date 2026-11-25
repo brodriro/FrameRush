@@ -51,7 +51,8 @@ pub fn init_logs() -> Option<PathBuf> {
 pub fn export() -> Result<PathBuf> {
     let os = Os::current().context("sistema operativo no admitido")?;
     let device = native_device(os);
-    let status = status_of(&device).map_err(|e| format!("{e:#}"));
+    // El informe de diagnóstico es para depurar: va en español, como los logs.
+    let status = status_of(&device, framerush_core::Lang::Es).map_err(|e| format!("{e:#}"));
     let journal = data_dir().and_then(|d| read_json(&d.join("session.json")));
     let logs = logs_dir();
     let log = |name| {

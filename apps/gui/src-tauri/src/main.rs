@@ -35,6 +35,7 @@ mod profiles;
 mod snapshot;
 
 use actions::Elevated;
+use framerush_core::Lang;
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -136,6 +137,8 @@ struct GameWatch {
     thread: Option<JoinHandle<()>>,
     /// Lo que se hará al cerrarse el juego (`auto-revert-on-exit`), también al salir de la app.
     revert_session: bool,
+    /// Idioma del Aplicar que puso la vigilancia.
+    lang: Lang,
 }
 
 impl GameWatch {
@@ -168,7 +171,7 @@ struct GameExited {
 /// el `GameWatch` se suelta en el siguiente `apply` o `revert`.
 fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> GameWatch {
     let (stop, stopped) = mpsc::channel::<()>();
-    let revert_session = plan.revert_session;
+    let (revert_session, lang) = (plan.revert_session, plan.lang);
     let thread = std::thread::spawn(move || {
         let mut last_rescan = Instant::now();
         loop {
@@ -206,9 +209,9 @@ fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> 
             }
             tracing::info!(revert_session = plan.revert_session, "el juego se cerró");
             let result = if plan.revert_session {
-                actions::revert_session(helper)
+                actions::revert_session(helper, plan.lang)
             } else {
-                actions::resume_frozen(helper)
+                actions::resume_frozen(helper, plan.lang)
             };
             let payload = match logged("game-exited", result.map_err(|e| format!("{e:#}"))) {
                 Ok(outcomes) => GameExited {
@@ -234,6 +237,7 @@ fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> 
         stop: Some(stop),
         thread: Some(thread),
         revert_session,
+        lang,
     }
 }
 
@@ -253,13 +257,15 @@ fn quit(app: &AppHandle) {
             .ok()
             .and_then(|mut w| w.take());
         // Soltar el `GameWatch` para su hilo antes de deshacer.
-        let pending = watch.filter(GameWatch::running).map(|w| w.revert_session);
-        if let Some(revert_session) = pending {
+        let pending = watch
+            .filter(GameWatch::running)
+            .map(|w| (w.revert_session, w.lang));
+        if let Some((revert_session, lang)) = pending {
             let helper = helper(&app.state::<Sensors>()).ok().flatten();
             let result = if revert_session {
-                actions::revert_session(helper)
+                actions::revert_session(helper, lang)
             } else {
-                actions::resume_frozen(helper)
+                actions::resume_frozen(helper, lang)
             };
             let _ = logged("quit", result.map_err(|e| format!("{e:#}")));
         }
@@ -338,6 +344,7 @@ fn progress_to(app: AppHandle, op: &'static str) -> impl Fn(framerush_core::Prog
 #[tauri::command]
 async fn snapshot(
     app: AppHandle,
+    lang: Lang,
     sensors: tauri::State<'_, Sensors>,
 ) -> Result<snapshot::View, String> {
     let info = sensors
@@ -348,7 +355,7 @@ async fn snapshot(
         .clone();
     tauri::async_runtime::spawn_blocking(move || {
         let done = std::sync::atomic::AtomicUsize::new(0);
-        snapshot::build(info, &|phase| {
+        let phase = |phase: &'static str| {
             let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             let _ = app.emit(
                 "progress",
@@ -359,7 +366,8 @@ async fn snapshot(
                     what: phase.to_owned(),
                 },
             );
-        })
+        };
+        snapshot::build(info, &phase, lang)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -368,8 +376,8 @@ async fn snapshot(
 
 /// Vista Estado: journal y equipo ahora, fuera del hilo de la UI (WMI tarda).
 #[tauri::command]
-async fn status() -> Result<snapshot::StatusView, String> {
-    blocking(snapshot::status).await
+async fn status(lang: Lang) -> Result<snapshot::StatusView, String> {
+    blocking(move || snapshot::status(lang)).await
 }
 
 /// Helper elevado abierto, si lo hay (se comparte: un solo UAC).
@@ -450,11 +458,15 @@ fn save_profile(appid: u32, profile: profiles::Profile) -> Result<(), String> {
 #[tauri::command]
 async fn undo(
     app: AppHandle,
+    lang: Lang,
     sensors: tauri::State<'_, Sensors>,
 ) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
     let on = progress_to(app, "undo");
-    logged("undo", blocking(move || actions::undo(helper, &on)).await)
+    logged(
+        "undo",
+        blocking(move || actions::undo(helper, &on, lang)).await,
+    )
 }
 
 /// «Jugar ahora» (Turbo): pide a Steam que lance el juego `appid`, salvo que ya esté en marcha
@@ -474,12 +486,13 @@ async fn limited_rows() -> Result<Vec<String>, String> {
 #[tauri::command]
 async fn release_row(
     id: String,
+    lang: Lang,
     sensors: tauri::State<'_, Sensors>,
 ) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
     logged(
         "release_row",
-        blocking(move || actions::release_row(&id, helper)).await,
+        blocking(move || actions::release_row(&id, helper, lang)).await,
     )
 }
 
@@ -489,12 +502,13 @@ async fn limit_row(
     id: String,
     level: u8,
     keep_alive: Option<Vec<String>>,
+    lang: Lang,
     sensors: tauri::State<'_, Sensors>,
 ) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
     logged(
         "limit_row",
-        blocking(move || actions::limit_row(&id, level, keep_alive.as_deref(), helper)).await,
+        blocking(move || actions::limit_row(&id, level, keep_alive.as_deref(), helper, lang)).await,
     )
 }
 
@@ -509,12 +523,13 @@ async fn frozen_processes() -> Result<Vec<actions::Frozen>, String> {
 #[tauri::command]
 async fn resume_foreign(
     pids: Vec<u32>,
+    lang: Lang,
     sensors: tauri::State<'_, Sensors>,
 ) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
     logged(
         "resume_foreign",
-        blocking(move || actions::resume_foreign(&pids, helper)).await,
+        blocking(move || actions::resume_foreign(&pids, helper, lang)).await,
     )
 }
 
@@ -522,6 +537,7 @@ async fn resume_foreign(
 #[tauri::command]
 async fn revert(
     app: AppHandle,
+    lang: Lang,
     sensors: tauri::State<'_, Sensors>,
     watchdog: tauri::State<'_, Watchdog>,
 ) -> Result<actions::Outcomes, String> {
@@ -530,7 +546,7 @@ async fn revert(
     let on = progress_to(app, "revert");
     logged(
         "revert",
-        blocking(move || actions::revert(helper, &on)).await,
+        blocking(move || actions::revert(helper, &on, lang)).await,
     )
 }
 

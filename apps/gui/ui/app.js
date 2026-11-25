@@ -402,8 +402,9 @@
     if (r.notWired.length) msg += ' ' + t('rep-not-wired', { list: r.notWired.join(', ') });
     if (r.notes.length) msg += ' ' + t('rep-notes', { list: r.notes.join('; ') });
     if (!r.lines.length && !r.notWired.length && !r.needsAdmin.length && !r.notes.length) msg = t('rep-nothing', { verb });
-    /* reboot-required: lo que el backend marca como «surte efecto al reiniciar» (SETTINGS §4.7). */
-    r.lines.filter(l => l.outcome === 'done' && l.what.includes('reiniciar'))
+    /* reboot-required: los ajustes de REBOOT que se aplicaron (SETTINGS §4.7). El texto del informe
+       lleva el id del ajuste en cualquier idioma. */
+    r.lines.filter(l => l.outcome === 'done')
       .forEach(l => Object.keys(REBOOT).filter(id => l.what.includes(id) && !S.rb.includes(id)).forEach(id => S.rb.push(id)));
     rebootBanner();
     toast(msg);

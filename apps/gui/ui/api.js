@@ -8,6 +8,8 @@
 
   const T = window.__TAURI__;
   const inTauri = !!T;
+  /* Idioma de la UI: el backend escribe en él informes, motivos, Estado y descripciones. */
+  const lang = () => window.FrameRushI18n.lang;
 
   window.FrameRushApi = {
     inTauri,
@@ -15,7 +17,7 @@
     /* Snapshot del equipo: DeviceProfile, capacidades, plan, protegidos y sesión pendiente. */
     async load() {
       if (!inTauri) throw new Error(window.FrameRushI18n.t('api-not-tauri'));
-      return T.core.invoke('snapshot');
+      return T.core.invoke('snapshot', { lang: lang() });
     },
 
     /*
@@ -39,7 +41,7 @@
      * { lines: [{ what, outcome: done|skipped|failed, detail }], done, failed, notWired, needsAdmin, notes,
      *   sessionOpen, watching }. watching: el watchdog vigila el juego (solo en apply).
      */
-    apply(selection) { return T.core.invoke('apply', { selection }); },
+    apply(selection) { return T.core.invoke('apply', { selection: { ...selection, lang: lang() } }); },
 
     /*
      * Evento `game-exited` del watchdog: el juego se cerró y se revirtió lo de sesión.
@@ -107,13 +109,13 @@
       T.event.listen('game-launched', e => cb(e.payload)).then(un => { stop = un; });
       return () => stop();
     },
-    undo() { return T.core.invoke('undo'); },
+    undo() { return T.core.invoke('undo', { lang: lang() }); },
 
     /*
      * Vista Estado (It5.6): { session: [{ batch, what, scope, status }], system: [{ label, value }] }.
      * system: VBS/HVCI, plan de energía, Hz por monitor y config de los juegos, leídos ahora.
      */
-    status() { return T.core.invoke('status'); },
+    status() { return T.core.invoke('status', { lang: lang() }); },
 
     /*
      * Diagnóstico (It4.5): guarda en Descargas un JSON con versión, equipo, Estado, journal y
@@ -127,14 +129,14 @@
      */
     profiles() { return T.core.invoke('profiles'); },
     saveProfile(appid, name, data) { return T.core.invoke('save_profile', { appid, profile: { name, data } }); },
-    revert() { return T.core.invoke('revert'); },
+    revert() { return T.core.invoke('revert', { lang: lang() }); },
 
     /*
      * Reanudar una fila suelta (releaseRow) sin tocar el resto de la sesión, volver a limitarla
      * con la acción del nivel (limitRow; nunca cierra) y los ids de las filas limitadas ahora.
      */
-    releaseRow(id) { return T.core.invoke('release_row', { id }); },
-    limitRow(id, level, keepAlive) { return T.core.invoke('limit_row', { id, level, keepAlive }); },
+    releaseRow(id) { return T.core.invoke('release_row', { id, lang: lang() }); },
+    limitRow(id, level, keepAlive) { return T.core.invoke('limit_row', { id, level, keepAlive, lang: lang() }); },
     limitedRows() { return inTauri ? T.core.invoke('limited_rows') : Promise.resolve([]); },
 
     /*
@@ -142,7 +144,7 @@
      * y reanudarlos (pids vacío = todos). No pasa por la sesión de FrameRush.
      */
     frozenProcesses() { return inTauri ? T.core.invoke('frozen_processes') : Promise.resolve([]); },
-    resumeForeign(pids) { return T.core.invoke('resume_foreign', { pids }); },
+    resumeForeign(pids) { return T.core.invoke('resume_foreign', { pids, lang: lang() }); },
 
     /* Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él. */
     elevate() {

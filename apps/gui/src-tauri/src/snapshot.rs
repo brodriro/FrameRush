@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result, bail};
 use framerush_core::{
-    Category, EntryStatus, FileStore, JournalStore, Level, MemoryOp, Plan, PlanOptions,
+    Category, EntryStatus, FileStore, JournalStore, Lang, Level, MemoryOp, Plan, PlanOptions,
     ProtectedReason, Snapshot, Subject, defaults, plan, protected_reason,
 };
 use framerush_device::{CoreKind, DeviceProfile, Sourced};
@@ -266,7 +266,8 @@ fn inputs_with(phase: &dyn Fn(&'static str)) -> Result<Inputs> {
 
 /// Lee el equipo y arma el snapshot. Tarda (WMI, NVML, escaneo de procesos): se llama fuera
 /// del hilo de la UI. `phase` recibe cada una de las [`LOAD_PHASES`] fases al terminarla.
-pub fn build(sensors: SensorInfo, phase: &dyn Fn(&'static str)) -> Result<View> {
+/// Los textos (descripciones, recomendaciones, motivos) salen en `lang`.
+pub fn build(sensors: SensorInfo, phase: &dyn Fn(&'static str), lang: Lang) -> Result<View> {
     let Inputs {
         os,
         device,
@@ -281,7 +282,7 @@ pub fn build(sensors: SensorInfo, phase: &dyn Fn(&'static str)) -> Result<View> 
     let options = PlanOptions {
         elevated: sensors.elevated,
         keep_alive: defaults::keep_alive(&device).value,
-        ..PlanOptions::default()
+        lang,
     };
     let plans: Vec<Plan> = Level::ALL
         .iter()
@@ -317,7 +318,7 @@ pub fn build(sensors: SensorInfo, phase: &dyn Fn(&'static str)) -> Result<View> 
     if caps.defender_exclusions && device.defender_active == Some(true) {
         available.push("defender-exclusions");
     }
-    let (mut games, games_note) = steam_games(&processes);
+    let (mut games, games_note) = steam_games(&processes, lang);
     phase("steam");
     let recs = framerush_rules::recommendations()
         .context("las recomendaciones embebidas no son válidas")?;
@@ -325,12 +326,12 @@ pub fn build(sensors: SensorInfo, phase: &dyn Fn(&'static str)) -> Result<View> 
         g.recommendations = framerush_core::recommendations_for(&recs, &device, Some(g.appid))
             .into_iter()
             .filter(|r| r.when.appid.is_some())
-            .map(RecView::from)
+            .map(|r| RecView::new(r, lang))
             .collect();
     }
     let recommendations = framerush_core::recommendations_for(&recs, &device, None)
         .into_iter()
-        .map(RecView::from)
+        .map(|r| RecView::new(r, lang))
         .collect();
 
     Ok(View {
@@ -585,11 +586,11 @@ struct RecView {
     source: String,
 }
 
-impl From<&framerush_core::Recommendation> for RecView {
-    fn from(r: &framerush_core::Recommendation) -> Self {
+impl RecView {
+    fn new(r: &framerush_core::Recommendation, lang: Lang) -> Self {
         Self {
-            title: r.title.clone(),
-            steps: r.steps.clone(),
+            title: r.title_in(lang).to_owned(),
+            steps: r.steps_in(lang).to_vec(),
             source: r.source.clone(),
         }
     }
@@ -605,7 +606,11 @@ struct AdapterView {
     launch_options: &'static str,
 }
 
-fn adapter_view(root: &std::path::Path, app: &framerush_steam::App) -> Option<AdapterView> {
+fn adapter_view(
+    root: &std::path::Path,
+    app: &framerush_steam::App,
+    lang: Lang,
+) -> Option<AdapterView> {
     let adapter = framerush_games::adapter(app.appid)?;
     let files = adapter.config_files(framerush_games::Install {
         dir: &app.dir,
@@ -636,7 +641,10 @@ fn adapter_view(root: &std::path::Path, app: &framerush_steam::App) -> Option<Ad
     Some(AdapterView {
         name: adapter.name(),
         cfg,
-        bench: format!("{} en la consola", adapter.bench_command()),
+        bench: lang.pick(
+            format!("{} en la consola", adapter.bench_command()),
+            format!("{} in the console", adapter.bench_command()),
+        ),
         launch_options: adapter.launch_options(),
     })
 }
@@ -735,7 +743,7 @@ pub(crate) fn game_targets(appid: u32, processes: &[ProcessInfo]) -> Result<Vec<
 
 /// Juegos de Steam y, si no hay, el motivo. La GUI está en primer plano cuando se pide el
 /// snapshot, así que aquí solo cuenta `RunningAppID`.
-fn steam_games(processes: &[ProcessInfo]) -> (Vec<GameView>, Option<String>) {
+fn steam_games(processes: &[ProcessInfo], lang: Lang) -> (Vec<GameView>, Option<String>) {
     let read = || -> framerush_steam::Result<Option<Vec<GameView>>> {
         let Some((root, apps)) = steam_library()? else {
             return Ok(None);
@@ -756,7 +764,7 @@ fn steam_games(processes: &[ProcessInfo]) -> (Vec<GameView>, Option<String>) {
                         .to_string(),
                     running: detected == Some(app.appid) || !procs.is_empty(),
                     pids: procs.iter().map(|p| p.target.pid).collect(),
-                    adapter: adapter_view(&root, app),
+                    adapter: adapter_view(&root, app, lang),
                     recommendations: vec![],
                 }
             })
@@ -766,9 +774,30 @@ fn steam_games(processes: &[ProcessInfo]) -> (Vec<GameView>, Option<String>) {
     };
     match read() {
         Ok(Some(games)) if !games.is_empty() => (games, None),
-        Ok(Some(_)) => (vec![], Some("Steam no tiene juegos instalados".into())),
-        Ok(None) => (vec![], Some("Steam no está instalado".into())),
-        Err(e) => (vec![], Some(format!("no se pudo leer Steam: {e}"))),
+        Ok(Some(_)) => (
+            vec![],
+            Some(
+                lang.pick(
+                    "Steam no tiene juegos instalados",
+                    "Steam has no games installed",
+                )
+                .into(),
+            ),
+        ),
+        Ok(None) => (
+            vec![],
+            Some(
+                lang.pick("Steam no está instalado", "Steam is not installed")
+                    .into(),
+            ),
+        ),
+        Err(e) => (
+            vec![],
+            Some(lang.pick(
+                format!("no se pudo leer Steam: {e}"),
+                format!("could not read Steam: {e}"),
+            )),
+        ),
     }
 }
 
@@ -853,30 +882,30 @@ pub struct StatusView {
 }
 
 /// Lee el journal y vuelve a detectar el equipo (plan, Hz y VBS pueden haber cambiado).
-pub fn status() -> Result<StatusView> {
+pub fn status(lang: Lang) -> Result<StatusView> {
     let os = Os::current().context("sistema operativo no admitido")?;
-    status_of(&native_device(os))
+    status_of(&native_device(os), lang)
 }
 
 /// Vista Estado con un `device` ya detectado (el diagnóstico no lo detecta dos veces).
-pub(crate) fn status_of(device: &DeviceProfile) -> Result<StatusView> {
+pub(crate) fn status_of(device: &DeviceProfile, lang: Lang) -> Result<StatusView> {
     let session = match data_dir() {
         Some(dir) => framerush_core::status_lines(
             &FileStore::new(dir.join("session.json"))
                 .load()
                 .context("no se pudo leer el journal")?,
-            framerush_core::Lang::Es,
+            lang,
         ),
         None => vec![],
     };
-    let mut system = framerush_core::system_state(device, framerush_core::Lang::Es);
-    system.extend(game_configs());
+    let mut system = framerush_core::system_state(device, lang);
+    system.extend(game_configs(lang));
     Ok(StatusView { session, system })
 }
 
 /// Config de cada juego de Steam instalado con adaptador (`game-config-lock`).
 #[cfg(windows)]
-fn game_configs() -> Vec<framerush_core::StateLine> {
+fn game_configs(lang: Lang) -> Vec<framerush_core::StateLine> {
     let Ok(Some((root, apps))) = steam_library() else {
         return vec![];
     };
@@ -888,13 +917,13 @@ fn game_configs() -> Vec<framerush_core::StateLine> {
                 dir: &app.dir,
                 steam_root: &root,
             });
-            framerush_core::game_config_state(&w, adapter.name(), &files, framerush_core::Lang::Es)
+            framerush_core::game_config_state(&w, adapter.name(), &files, lang)
         })
         .collect()
 }
 
 #[cfg(not(windows))]
-fn game_configs() -> Vec<framerush_core::StateLine> {
+fn game_configs(_lang: Lang) -> Vec<framerush_core::StateLine> {
     vec![]
 }
 
@@ -1018,6 +1047,7 @@ mod tests {
                 elevated: false,
             },
             &|p| phases.borrow_mut().push(p),
+            Lang::En,
         )
         .unwrap();
         assert_eq!(view.os, "win");
@@ -1028,6 +1058,12 @@ mod tests {
         // Los juegos salen de Steam de este equipo (o no hay ninguno, con su motivo).
         let games = json["games"].as_array().unwrap();
         assert_eq!(games.is_empty(), !json["gamesNote"].is_null());
+        // En inglés, cada fila lleva la descripción en inglés de su regla.
+        let rules = framerush_rules::embedded().unwrap();
+        for row in json["processes"].as_array().unwrap() {
+            let rule = rules.iter().find(|r| r.id == row["id"]).unwrap();
+            assert_eq!(row["desc"], rule.description_in(Lang::En), "{row}");
+        }
         println!("{}", serde_json::to_string_pretty(&json).unwrap());
     }
 }

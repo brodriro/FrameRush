@@ -8,8 +8,8 @@
 use crate::snapshot::{Inputs, data_dir, game_targets, inputs, session_targets, steam_install};
 use anyhow::{Context, Result};
 use framerush_core::{
-    Action, ApplyRequest, FileStore, GameBoost, Level, OnProgress, Outcome, PlanItem, PlanOptions,
-    RefreshRate, Report, Subject, defaults, persistent_priority_default, plan,
+    Action, ApplyRequest, FileStore, GameBoost, Lang, Level, OnProgress, Outcome, PlanItem,
+    PlanOptions, RefreshRate, Report, Subject, defaults, persistent_priority_default, plan,
 };
 use framerush_platform::{DefenderExclusion, Priority, Target};
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,9 @@ pub struct Selection {
     /// `keep-alive-list` tal como la dejó el usuario (P7); `null` = la del equipo.
     #[serde(default)]
     keep_alive: Option<Vec<String>>,
+    /// Idioma de la UI: el informe y las notas salen en él.
+    #[serde(default)]
+    lang: Lang,
 }
 
 /// `keep-alive-list`: la de la UI o, sin ella, la del equipo (R8: la UI arranca con esa).
@@ -76,6 +79,8 @@ pub struct Turbo {
     /// `keep-alive-list` del Aplicar: también vale en cada re-escaneo (P7).
     keep_alive: Vec<String>,
     pub every: Duration,
+    /// Idioma del Aplicar, también para cada re-escaneo.
+    lang: Lang,
 }
 
 /// Lo que vigila el watchdog tras un Aplicar.
@@ -86,6 +91,8 @@ pub struct WatchPlan {
     /// congelados de Turbo (P5).
     pub revert_session: bool,
     pub turbo: Option<Turbo>,
+    /// Idioma del Aplicar: el informe de `game-exited` sale en él.
+    pub lang: Lang,
 }
 
 /// Panel del juego (R3).
@@ -214,6 +221,7 @@ pub fn apply(
     progress: OnProgress<'_>,
 ) -> Result<Outcomes> {
     let level = level(selection.level)?;
+    let lang = selection.lang;
     let Inputs {
         device,
         rules,
@@ -234,7 +242,7 @@ pub fn apply(
     let options = PlanOptions {
         elevated: helper.is_some(),
         keep_alive: keep_alive.clone(),
-        ..PlanOptions::default()
+        lang,
     };
     let plan = plan(level, &snapshot, &rules, &device, &options);
     let wanted = |id: &str| selection.settings.iter().any(|s| s == id);
@@ -311,16 +319,23 @@ pub fn apply(
     let mut notes = vec![];
     let game = selection.game.as_ref().and_then(|g| {
         if game_targets.is_empty() {
-            notes.push("el juego elegido no está en marcha: su prioridad no se toca".to_owned());
+            notes.push(
+                lang.pick(
+                    "el juego elegido no está en marcha: su prioridad no se toca",
+                    "the chosen game is not running: its priority is left alone",
+                )
+                .to_owned(),
+            );
             return None;
         }
         let priority = Priority::from(g.priority);
         let affinity = g.affinity.clone().filter(|_| {
             let allowed = plan.game_tuning_allowed();
             if !allowed {
-                notes.push(format!(
-                    "anticheat en ejecución ({}): afinidad desactivada (P2)",
-                    plan.anticheats.join(", ")
+                let names = plan.anticheats.join(", ");
+                notes.push(lang.pick(
+                    format!("anticheat en ejecución ({names}): afinidad desactivada (P2)"),
+                    format!("anticheat running ({names}): affinity turned off (P2)"),
                 ));
             }
             allowed
@@ -344,7 +359,10 @@ pub fn apply(
     if game.is_none() {
         for id in [FSO_OFF, PERSISTENT_PRIORITY] {
             if wanted(id) {
-                notes.push(format!("{id}: no hay juego en marcha"));
+                notes.push(lang.pick(
+                    format!("{id}: no hay juego en marcha"),
+                    format!("{id}: no game is running"),
+                ));
             }
         }
     }
@@ -362,7 +380,7 @@ pub fn apply(
                 fps_cap: Some(a.fps_cap),
                 bench: a.bench,
                 resolution: a.resolution,
-                lang: framerush_core::Lang::Es,
+                lang,
             };
             adapter_files(
                 g.appid,
@@ -370,6 +388,7 @@ pub fn apply(
                 options,
                 !game_targets.is_empty(),
                 &mut notes,
+                lang,
             )?
         }
         None => vec![],
@@ -383,6 +402,7 @@ pub fn apply(
             helper.is_some(),
             &mut needs_admin,
             &mut notes,
+            lang,
         )?
     } else {
         vec![]
@@ -420,7 +440,7 @@ pub fn apply(
         game_files,
         defender_exclusions,
     };
-    let report = run(helper, Op::Apply(Box::new(request)), Some(progress))?;
+    let report = run(helper, Op::Apply(Box::new(request)), Some(progress), lang)?;
     let mut out = outcomes(report, not_wired, needs_admin, notes)?;
     let turbo = selection
         .turbo
@@ -435,6 +455,7 @@ pub fn apply(
                 .collect(),
             keep_alive,
             every: Duration::from_secs(t.rescan_secs.max(1)),
+            lang,
         });
     // Solo hay algo que vigilar si el juego está en marcha y quedó una sesión abierta. Turbo
     // vigila siempre: sus congelados se reanudan al salir (P5).
@@ -443,6 +464,7 @@ pub fn apply(
             game: game_targets,
             revert_session: selection.auto_revert,
             turbo,
+            lang,
         });
     }
     Ok(out)
@@ -457,17 +479,22 @@ fn defender_exclusions(
     elevated: bool,
     needs_admin: &mut Vec<String>,
     notes: &mut Vec<String>,
+    lang: Lang,
 ) -> Result<Vec<DefenderExclusion>> {
+    let mut note =
+        |es: &str, en: &str| notes.push(format!("{DEFENDER_EXCLUSIONS}: {}", lang.pick(es, en)));
     if device.defender_active != Some(true) {
-        notes.push(format!(
-            "{DEFENDER_EXCLUSIONS}: Microsoft Defender no es el antivirus activo"
-        ));
+        note(
+            "Microsoft Defender no es el antivirus activo",
+            "Microsoft Defender is not the active antivirus",
+        );
         return Ok(vec![]);
     }
     let Some((_, app)) = appid.map(steam_install).transpose()?.flatten() else {
-        notes.push(format!(
-            "{DEFENDER_EXCLUSIONS}: elige un juego de Steam instalado"
-        ));
+        note(
+            "elige un juego de Steam instalado",
+            "choose an installed Steam game",
+        );
         return Ok(vec![]);
     };
     if !elevated {
@@ -484,9 +511,10 @@ fn defender_exclusions(
     exes.sort();
     exes.dedup();
     if exes.is_empty() {
-        notes.push(format!(
-            "{DEFENDER_EXCLUSIONS}: el juego no está en marcha; solo se excluye su carpeta"
-        ));
+        note(
+            "el juego no está en marcha; solo se excluye su carpeta",
+            "the game is not running; only its folder is excluded",
+        );
     }
     Ok(std::iter::once(DefenderExclusion::Path(app.dir))
         .chain(
@@ -521,7 +549,7 @@ pub fn turbo_rescan(turbo: &Turbo, helper: Option<Elevated>) -> Result<Outcomes>
     let options = PlanOptions {
         elevated: helper.is_some(),
         keep_alive: turbo.keep_alive.clone(),
-        ..PlanOptions::default()
+        lang: turbo.lang,
     };
     let owned: Vec<PlanItem> = plan(turbo.level, &snapshot, &rules, &device, &options)
         .items
@@ -537,13 +565,13 @@ pub fn turbo_rescan(turbo: &Turbo, helper: Option<Elevated>) -> Result<Outcomes>
         items: owned.iter().collect(),
         ..ApplyRequest::default()
     };
-    let report = run(helper, Op::Apply(Box::new(request)), None)?;
+    let report = run(helper, Op::Apply(Box::new(request)), None, turbo.lang)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
 /// Turbo sin `auto-revert-on-exit`: al cerrar el juego solo se reanudan los congelados (P5).
-pub fn resume_frozen(helper: Option<Elevated>) -> Result<Outcomes> {
-    let report = run(helper, Op::ResumeFrozen, None)?;
+pub fn resume_frozen(helper: Option<Elevated>, lang: Lang) -> Result<Outcomes> {
+    let report = run(helper, Op::ResumeFrozen, None, lang)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
@@ -578,12 +606,17 @@ fn adapter_files(
     options: framerush_games::GameOptions,
     running: bool,
     notes: &mut Vec<String>,
+    lang: Lang,
 ) -> Result<Vec<framerush_core::GameFileWrite>> {
     let Some(adapter) = framerush_games::adapter(appid) else {
         return Ok(vec![]);
     };
     let Some((root, app)) = steam_install(appid)? else {
-        notes.push(format!("{}: no está instalado en Steam", adapter.name()));
+        let name = adapter.name();
+        notes.push(lang.pick(
+            format!("{name}: no está instalado en Steam"),
+            format!("{name}: not installed in Steam"),
+        ));
         return Ok(vec![]);
     };
     let install = framerush_games::Install {
@@ -596,9 +629,14 @@ fn adapter_files(
     notes.extend(plan.notes);
     // El juego reescribe su config al salir (referencia CS2-FPS-Boost): sin bloqueo se pierde.
     if running && options.tune && !options.lock {
-        notes.push(format!(
-            "{} está abierto: al cerrarse puede reescribir su config de vídeo (ciérralo antes o marca «Bloquear config»)",
-            adapter.name()
+        let name = adapter.name();
+        notes.push(lang.pick(
+            format!(
+                "{name} está abierto: al cerrarse puede reescribir su config de vídeo (ciérralo antes o marca «Bloquear config»)"
+            ),
+            format!(
+                "{name} is open: when it closes it may rewrite its video config (close it first or tick “Lock config”)"
+            ),
         ));
     }
     Ok(plan.writes)
@@ -606,14 +644,14 @@ fn adapter_files(
 
 /// Watchdog: el juego se cerró y se deshace lo de sesión (lo persistente queda hasta
 /// Restaurar, P5).
-pub fn revert_session(helper: Option<Elevated>) -> Result<Outcomes> {
-    let report = run(helper, Op::RevertSession, None)?;
+pub fn revert_session(helper: Option<Elevated>, lang: Lang) -> Result<Outcomes> {
+    let report = run(helper, Op::RevertSession, None, lang)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
 /// Deshace el último `apply`.
-pub fn undo(helper: Option<Elevated>, progress: OnProgress<'_>) -> Result<Outcomes> {
-    let report = run(helper, Op::Undo, Some(progress))?;
+pub fn undo(helper: Option<Elevated>, progress: OnProgress<'_>, lang: Lang) -> Result<Outcomes> {
+    let report = run(helper, Op::Undo, Some(progress), lang)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
@@ -672,13 +710,13 @@ pub fn limited_rows() -> Result<Vec<String>> {
 }
 
 /// Reanuda los procesos de una fila y deja el resto de la sesión como está.
-pub fn release_row(id: &str, helper: Option<Elevated>) -> Result<Outcomes> {
+pub fn release_row(id: &str, helper: Option<Elevated>, lang: Lang) -> Result<Outcomes> {
     let item = row_item(id, Level::Extremo, helper.is_some(), None)?;
     let targets: Vec<Target> = match &item.subject {
         Subject::Processes(ps) => ps.iter().map(|p| p.target.clone()).collect(),
         Subject::Services(_) => vec![],
     };
-    let report = run(helper, Op::RevertProcesses(targets), None)?;
+    let report = run(helper, Op::RevertProcesses(targets), None, lang)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
@@ -690,6 +728,7 @@ pub fn limit_row(
     level_n: u8,
     keep_alive_list: Option<&[String]>,
     helper: Option<Elevated>,
+    lang: Lang,
 ) -> Result<Outcomes> {
     let mut item = row_item(id, level(level_n)?, helper.is_some(), keep_alive_list)?;
     if item.locked {
@@ -700,7 +739,7 @@ pub fn limit_row(
         items: vec![&item],
         ..ApplyRequest::default()
     };
-    let report = run(helper, Op::Apply(Box::new(request)), None)?;
+    let report = run(helper, Op::Apply(Box::new(request)), None, lang)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
@@ -762,19 +801,19 @@ pub fn frozen() -> Result<Vec<Frozen>> {
 
 /// Reanuda los congelados por otro programa de `pids` (todos si está vacío). Se vuelven a
 /// buscar ahora: un PID que ya no está congelado o es otro proceso no se toca.
-pub fn resume_foreign(pids: &[u32], helper: Option<Elevated>) -> Result<Outcomes> {
+pub fn resume_foreign(pids: &[u32], helper: Option<Elevated>, lang: Lang) -> Result<Outcomes> {
     let targets: Vec<Target> = foreign_frozen_now()?
         .into_iter()
         .filter(|p| pids.is_empty() || pids.contains(&p.target.pid))
         .map(|p| p.target)
         .collect();
-    let report = run(helper, Op::ResumeForeign(targets), None)?;
+    let report = run(helper, Op::ResumeForeign(targets), None, lang)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
 /// Deshace toda la sesión (Restaurar).
-pub fn revert(helper: Option<Elevated>, progress: OnProgress<'_>) -> Result<Outcomes> {
-    let report = run(helper, Op::Revert, Some(progress))?;
+pub fn revert(helper: Option<Elevated>, progress: OnProgress<'_>, lang: Lang) -> Result<Outcomes> {
+    let report = run(helper, Op::Revert, Some(progress), lang)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
@@ -837,13 +876,18 @@ enum Op<'a> {
 }
 
 #[cfg(windows)]
-fn run(helper: Option<Elevated>, op: Op<'_>, progress: Option<OnProgress<'_>>) -> Result<Report> {
+fn run(
+    helper: Option<Elevated>,
+    op: Op<'_>,
+    progress: Option<OnProgress<'_>>,
+    lang: Lang,
+) -> Result<Report> {
     let platform = match helper {
         Some(h) => framerush_platform::WindowsPlatform::with_helper(h),
         None => framerush_platform::WindowsPlatform::new(),
     };
     let store = store()?;
-    let mut engine = framerush_core::Engine::new(&platform, &store);
+    let mut engine = framerush_core::Engine::new(&platform, &store).with_lang(lang);
     if let Some(on) = progress {
         engine = engine.with_progress(on);
     }
@@ -871,6 +915,7 @@ fn run(
     _helper: Option<Elevated>,
     _op: Op<'_>,
     _progress: Option<OnProgress<'_>>,
+    _lang: Lang,
 ) -> Result<Report> {
     anyhow::bail!("aplicar, deshacer y restaurar solo están implementados en Windows por ahora")
 }
@@ -885,16 +930,32 @@ mod tests {
         let mut device =
             framerush_device::DeviceProfile::undetected(framerush_platform::Os::Windows);
         let (mut admin, mut notes) = (vec![], vec![]);
-        let none = defender_exclusions(Some(730), &[], &device, true, &mut admin, &mut notes);
+        let none = defender_exclusions(
+            Some(730),
+            &[],
+            &device,
+            true,
+            &mut admin,
+            &mut notes,
+            Lang::Es,
+        );
         assert!(none.unwrap().is_empty());
         assert!(notes[0].contains("no es el antivirus activo"), "{notes:?}");
 
         device.defender_active = Some(true);
         notes.clear();
-        let none = defender_exclusions(None, &[], &device, true, &mut admin, &mut notes);
+        let none = defender_exclusions(None, &[], &device, true, &mut admin, &mut notes, Lang::Es);
         assert!(none.unwrap().is_empty());
         assert!(notes[0].contains("juego de Steam"), "{notes:?}");
         assert!(admin.is_empty());
+
+        notes.clear();
+        let en = defender_exclusions(None, &[], &device, true, &mut admin, &mut notes, Lang::En);
+        assert!(en.unwrap().is_empty());
+        assert_eq!(
+            notes,
+            ["defender-exclusions: choose an installed Steam game"]
+        );
     }
 
     /// El JSON que manda `api.apply` en app.js.
@@ -904,7 +965,7 @@ mod tests {
             r#"{"level":2,"rows":["sync-onedrive"],"settings":["game-dvr-off"],"powerPlan":null,
                 "game":{"appid":70,"priority":"realtime","realtimeConfirmed":true,
                         "affinity":[2,3],"highPerformanceGpu":false},
-                "autoRevert":true,"keepAlive":["discord"," teams"]}"#,
+                "autoRevert":true,"keepAlive":["discord"," teams"],"lang":"en"}"#,
         )
         .unwrap();
         assert_eq!(level(s.level).unwrap(), Level::Agresivo);
@@ -916,6 +977,7 @@ mod tests {
         assert_eq!(s.settings, ["game-dvr-off"]);
         assert_eq!(s.power_plan, None);
         assert!(s.auto_revert);
+        assert_eq!(s.lang, Lang::En);
         let g = s.game.unwrap();
         assert_eq!(
             (g.appid, Priority::from(g.priority)),
