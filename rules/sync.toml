@@ -2,15 +2,18 @@
 # Fuente de los nombres de Windows: proyecto de referencia CS2-FPS-Boost ($SuspendNames).
 # Los nombres de Linux y macOS faltan hasta verificarlos (PLAN.md §6, V20).
 
+# OneDrive.Sync.Service: proceso del modo sin conexión de OneDrive desde la versión
+# 25.149.0803.0003 (sustituye a Microsoft.SharePoint.exe). Fuente: notas de versión de OneDrive,
+# learn.microsoft.com/sharepoint/sync-release-notes (verificado el 2026-11-25).
 [[rule]]
 id = "onedrive"
-match = { windows = ["OneDrive"] }
+match = { windows = ["OneDrive", "OneDrive.Sync.Service"] }
 category = "sync"
 action = "suspend"
 min_level = "agresivo"
 risk = "low"
-description = "Sincronización de OneDrive: consume disco y red."
-description_en = "OneDrive sync: uses disk and network."
+description = "Sincronización de OneDrive y su modo sin conexión: consume disco, red y memoria."
+description_en = "OneDrive sync and its offline mode: uses disk, network and memory."
 
 [[rule]]
 id = "dropbox"

@@ -358,6 +358,19 @@ description = "Indexador de búsqueda."
     }
 
     #[test]
+    fn onedrive_covers_the_offline_mode_process() {
+        let rules = embedded().unwrap();
+        let onedrive = rules.iter().find(|r| r.id == "onedrive").unwrap();
+        let os = framerush_platform::Os::Windows;
+        assert!(onedrive.matches_process(os, "OneDrive.exe"));
+        assert!(onedrive.matches_process(
+            os,
+            r"C:\Program Files\Microsoft OneDrive\26.212.1029.0006\OneDrive.Sync.Service.exe"
+        ));
+        assert!(!onedrive.matches_process(os, "OneDrive.Sync.exe"));
+    }
+
+    #[test]
     fn embedded_rules_are_valid() {
         let rules = embedded().unwrap();
         assert_eq!(rules.len(), 58);
