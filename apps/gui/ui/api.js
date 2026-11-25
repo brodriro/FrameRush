@@ -93,6 +93,15 @@
       T.event.listen('turbo-rescan', e => cb(e.payload)).then(un => { stop = un; });
       return () => stop();
     },
+    /*
+     * Evento `progress` de una espera: { op: 'load'|'apply'|'undo'|'revert', done, total, what }.
+     * total null = no se sabe de antemano; en 'load', what es la fase terminada.
+     */
+    onProgress(cb) {
+      let stop = () => {};
+      if (inTauri) T.event.listen('progress', e => cb(e.payload)).then(un => { stop = un; });
+      return () => stop();
+    },
     onGameLaunched(cb) {
       let stop = () => {};
       T.event.listen('game-launched', e => cb(e.payload)).then(un => { stop = un; });

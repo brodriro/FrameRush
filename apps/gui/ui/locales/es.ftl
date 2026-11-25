@@ -376,3 +376,23 @@ fan-stop-alert = Ventilador a 0 rpm ({ $fans }) con la { $part } a { $temp } °C
 
 api-not-tauri = Abre FrameRush como app para ver los datos de este equipo.
 api-only-app = Solo dentro de la app.
+
+# Estados de espera (tarjeta)
+
+wait-load = Preparando
+wait-apply = Aplicando optimización
+wait-undo = Deshaciendo
+wait-revert = Restaurando
+wait-uac = Permiso de administrador
+wait-phase-device = Detectando el equipo (CPU, GPU, monitores y energía)
+wait-phase-rules = Leyendo las reglas
+wait-phase-processes = Escaneando procesos y servicios
+wait-phase-steam = Buscando juegos de Steam
+wait-starting = Empezando…
+wait-of = de { $total }
+wait-steps = { $n ->
+    [one] paso
+   *[other] pasos
+}
+wait-uac-title = Esperando permiso de administrador.
+wait-uac-help = Acepta el aviso de Windows para seguir. Si lo rechazas, FrameRush sigue sin permisos de administrador.

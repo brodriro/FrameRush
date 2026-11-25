@@ -76,6 +76,55 @@
   }
   const setCheck = (id, v) => DS(id).forEach(x => { x.checked = v; });
 
+  /*
+   * Estados de espera (design/estados-espera.html, variante C): tarjeta con anillo sobre la
+   * ventana mientras se carga, aplica, deshace, restaura o Windows pide el UAC. El progreso es el
+   * real del backend (evento `progress`): fases de la carga y cada paso terminado del motor.
+   * Sale tras WAIT_DELAY ms para que lo instantáneo no parpadee; el UAC sale enseguida.
+   */
+  const WAIT_DELAY = 200;
+  const LOAD_PHASES = ['device', 'rules', 'processes', 'steam'];
+  const RING = 238.76; /* 2·π·38, el radio del anillo */
+  const W = { op: null, timer: null, done: 0, total: null, what: '' };
+  function waitShow(op) {
+    clearTimeout(W.timer);
+    Object.assign(W, { op, done: 0, total: op === 'load' ? LOAD_PHASES.length : null, what: '' });
+    const open = () => { if (W.op === op) { $('#wait').hidden = false; waitRender(); } };
+    if (op === 'uac') open(); else W.timer = setTimeout(open, WAIT_DELAY);
+  }
+  function waitHide() {
+    clearTimeout(W.timer); W.op = null;
+    $('#wait').hidden = true;
+  }
+  function onProgress(e) {
+    if (e.op !== W.op) return; /* p. ej. «Actualizar lista» también carga, sin tarjeta */
+    Object.assign(W, { done: e.done, total: e.total ?? null, what: e.what });
+    if (!$('#wait').hidden) waitRender();
+  }
+  function waitRender() {
+    const box = $('#wait'), ring = box.querySelector('.ring'), fg = box.querySelector('.fg');
+    const uac = W.op === 'uac', load = W.op === 'load';
+    box.querySelector('.waitBrand').hidden = !load;
+    box.querySelector('.waitTitle').textContent = t('wait-' + W.op);
+    box.querySelector('.waitUac').hidden = !uac;
+    ring.classList.toggle('pause', uac);
+    /* Sin total no hay fracción honesta: el anillo gira y el centro cuenta los pasos hechos. */
+    ring.classList.toggle('spin', !uac && W.total == null);
+    fg.style.strokeDashoffset = !uac && W.total != null ? String(RING * (1 - Math.min(W.done, W.total) / W.total)) : '';
+    const num = box.querySelector('.num');
+    if (uac) num.innerHTML = '<span class="big" aria-hidden="true">🛡</span>';
+    else if (W.total != null) num.innerHTML = `${Math.min(W.done, W.total)}<small>${esc(t('wait-of', { total: W.total }))}</small>`;
+    else num.innerHTML = `${W.done}<small>${esc(t('wait-steps', { n: W.done }))}</small>`;
+    /* Carga: la fase en curso es la siguiente a la última terminada. Resto: el último paso hecho. */
+    let now = '';
+    if (load) now = t('wait-phase-' + LOAD_PHASES[Math.min(W.done, LOAD_PHASES.length - 1)]);
+    else if (!uac) now = W.what || t('wait-starting');
+    box.querySelector('.waitNow').textContent = now;
+    const dots = W.total != null && W.total <= 12 && !uac
+      ? Array.from({ length: W.total }, (_, i) => `<i class="${i < W.done ? 'd' : i === W.done ? 'c' : ''}"></i>`).join('') : '';
+    box.querySelector('.waitDots').innerHTML = dots;
+  }
+
   /* ---------- Plantillas ---------- */
   const actBadge = p => {
     const a = effAct(p), fell = a !== p.action;
@@ -360,8 +409,10 @@
     toast(msg);
   }
 
-  async function run(verb, op) {
+  /* `wait`: tarjeta de espera ('apply', 'undo', 'revert') o nada. */
+  async function run(verb, op, wait = null) {
     DS('apply').forEach(b => { b.disabled = true; });
+    if (wait) waitShow(wait);
     try {
       const r = await op();
       report(verb, r);
@@ -370,6 +421,7 @@
       toast(`${verb}: ${err && err.message ? err.message : err}`);
       return null;
     } finally {
+      if (wait) waitHide();
       DS('apply').forEach(b => { b.disabled = false; });
     }
   }
@@ -444,7 +496,7 @@
   }
 
   async function undo() {
-    const r = await run(t('verb-undo'), api.undo);
+    const r = await run(t('verb-undo'), api.undo, 'undo');
     if (!r) return;
     S.hist.pop();
     if (!r.sessionOpen) { S.hist = []; D.pendingSession = null; }
@@ -452,7 +504,7 @@
   }
 
   async function revert() {
-    const r = await run(t('verb-restore'), api.revert);
+    const r = await run(t('verb-restore'), api.revert, 'revert');
     if (!r) return;
     S.watching = false;
     if (!r.sessionOpen) { S.hist = []; D.pendingSession = null; DS('restore-after-crash').forEach(x => { x.hidden = true; }); }
@@ -480,7 +532,7 @@
       autoRevert: !!first('auto-revert-on-exit')?.checked,
       turbo: turbo ? { rescanSecs: +(first('turbo-rescan')?.value || 60) } : null,
       keepAlive: keepAliveList(),
-    }));
+    }), 'apply');
     if (r) S.watching = !!r.watching;
     if (r) S.turbo = turbo && !!r.watching;
     if (S.turbo) S.turboPending = null; /* ya vigila el juego: no hace falta el reintento */
@@ -952,11 +1004,14 @@
   /* De momento el helper solo lee los sensores que piden admin; aplicar sigue sin conectar. */
   async function elevate() {
     DS('run-as-admin').forEach(b => { b.disabled = true; });
+    waitShow('uac');
     try {
       await api.elevate();
+      waitHide();
       toast(t('admin-on'));
       await init();
     } catch (err) {
+      waitHide();
       toast(t('err-admin', { error: String(err && err.message ? err.message : err) }));
       elevateButton();
     }
@@ -968,15 +1023,18 @@
 
   async function init() {
     stopStreams.forEach(f => f()); stopStreams = [];
+    waitShow('load');
     try {
       D = await api.load();
     } catch (err) {
+      waitHide();
       $('.scroll').innerHTML = `<p class="note" role="alert">${esc(err && err.message ? err.message : err)}</p>`;
       return;
     }
     /* Juegos de Steam del equipo; adaptadores y recomendaciones llegan en M4. */
     D.steamRecs = D.steamRecs || [];
     Object.assign(S, { admin: D.elevated, game: Math.max(0, D.games.findIndex(g => g.running)), hist: [], rt: false, alerts: {}, rb: [], turbo: false, fps: [], lastSensors: null, fanIds: '', released: [], chk: [], stc: D.steamRecs.map(s => !!s.checked) });
+    waitHide();
     $$('[data-touched]').forEach(x => { delete x.dataset.touched; });
 
     DS('game-target').forEach(s => {
@@ -1023,6 +1081,7 @@
     api.trayLabels(t('tray-toggle'), t('tray-quit')).catch(err => console.warn('bandeja:', err));
   }
 
+  api.onProgress(onProgress); /* una vez: init() se vuelve a llamar al elevar y al cambiar el equipo */
   DS('hardware-profile').forEach(e => { e.textContent = t('reading-device'); });
   DS('language').forEach(x => { x.value = I18N.lang; });
   init();

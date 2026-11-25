@@ -194,6 +194,18 @@
    <button class="btn pri" data-setting="apply"><span class="lbl" data-l10n-id="aplicar-optimizacion">Aplicar optimización</span><kbd data-setting="shortcut-apply">Ctrl+↵</kbd></button>
   </div>
  </div>
+
+ <!-- Estados de espera (design/estados-espera.html, variante C): cargar, aplicar, deshacer, restaurar y UAC -->
+ <div class="wait" id="wait" hidden>
+  <div class="waitCard" role="status" aria-live="polite">
+   <div class="waitBrand" hidden>FRAMERUSH</div>
+   <div class="ring"><svg width="88" height="88" viewBox="0 0 88 88" aria-hidden="true"><circle class="bg" cx="44" cy="44" r="38"/><circle class="fg" cx="44" cy="44" r="38"/></svg><div class="num"></div></div>
+   <h2 class="waitTitle"></h2>
+   <div class="waitNow"></div>
+   <div class="waitDots" aria-hidden="true"></div>
+   <div class="waitUac" hidden><span aria-hidden="true">🛡</span><span><b data-l10n-id="wait-uac-title">Esperando permiso de administrador.</b> <span data-l10n-id="wait-uac-help">Acepta el aviso de Windows para seguir. Si lo rechazas, FrameRush sigue sin permisos de administrador.</span></span></div>
+  </div>
+ </div>
 </div>
 
 <!-- Orden: capa de datos (comandos y eventos de Tauri) → UI -->

@@ -376,3 +376,23 @@ fan-stop-alert = Fan at 0 rpm ({ $fans }) with the { $part } at { $temp } °C: c
 
 api-not-tauri = Open FrameRush as an app to see this computer's data.
 api-only-app = Only inside the app.
+
+# Waiting states (card)
+
+wait-load = Getting ready
+wait-apply = Applying optimization
+wait-undo = Undoing
+wait-revert = Restoring
+wait-uac = Administrator permission
+wait-phase-device = Detecting the computer (CPU, GPU, displays and power)
+wait-phase-rules = Reading the rules
+wait-phase-processes = Scanning processes and services
+wait-phase-steam = Looking for Steam games
+wait-starting = Starting…
+wait-of = of { $total }
+wait-steps = { $n ->
+    [one] step
+   *[other] steps
+}
+wait-uac-title = Waiting for administrator permission.
+wait-uac-help = Accept the Windows prompt to continue. If you decline, FrameRush carries on without administrator rights.
