@@ -4,6 +4,7 @@
 
 mod data;
 mod error;
+mod lang;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -21,6 +22,7 @@ mod xdg;
 
 pub use data::data_dir;
 pub use error::{PlatformError, Result};
+pub use lang::Lang;
 #[cfg(target_os = "linux")]
 pub use linux::{LinuxPlatform, downloads_dir};
 #[cfg(target_os = "macos")]

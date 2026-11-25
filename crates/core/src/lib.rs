@@ -19,9 +19,10 @@ pub use engine::{
     LOWERED_PRIORITY, OnProgress, Outcome, Progress, RefreshRate, Report, ReportLine, StatusLine,
     describe, status_lines,
 };
+pub use framerush_platform::Lang;
 pub use frozen::foreign_frozen;
 pub use journal::{Change, Entry, EntryStatus, FileStore, Journal, JournalError, JournalStore};
-pub use model::{Action, Category, Lang, Level, ParseError, Risk, Scope};
+pub use model::{Action, Category, Level, ParseError, Risk, Scope};
 pub use plan::{
     MemoryOp, Plan, PlanItem, PlanOptions, Snapshot, Subject, anticheat_may_require_vbs,
     persistent_priority_default, plan, running_anticheats, scan_services, tweak_min_level,
