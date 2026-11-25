@@ -5,8 +5,8 @@
 //! elevado, si hace falta, se abre una vez.
 
 use super::{
-    ApplyArgs, Op, TurboApply, apply_with, build_plan, freeze_instead_of_kill, platform_for,
-    print_report, run_on,
+    ApplyArgs, Op, TurboApply, apply_with, build_plan, freeze_instead_of_kill, marked,
+    platform_for, print_report, run_on,
 };
 use anyhow::{Context, Result, bail};
 use clap::Args;
@@ -142,7 +142,7 @@ pub(super) fn turbo(args: &TurboArgs) -> Result<()> {
         }
         if last_rescan.elapsed() >= every {
             last_rescan = Instant::now();
-            match rescan(&platform, args, &applied.suspended) {
+            match rescan(&platform, args) {
                 Ok(report) if !report.lines.is_empty() => {
                     println!("\nRe-escaneo:");
                     print_report(&report);
@@ -192,15 +192,16 @@ fn wait_for_game(game: &SteamGame, stop: &AtomicBool) -> Result<bool> {
     Ok(false)
 }
 
-/// `turbo-rescan`: congela las instancias nuevas de las reglas congeladas al aplicar. Lo ya
-/// congelado se salta (el journal lo tiene).
-fn rescan(platform: &WindowsPlatform, args: &TurboArgs, rows: &[String]) -> Result<Report> {
+/// `turbo-rescan`: congela los procesos nuevos de todas las reglas que marca el nivel (con
+/// `--include` y `--exclude`), aunque no estuvieran abiertas al aplicar: en la CLI no hay
+/// checklist donde marcarlas. Lo ya congelado se salta (el journal lo tiene).
+fn rescan(platform: &WindowsPlatform, args: &TurboArgs) -> Result<Report> {
     let a = &args.apply;
     let (plan, _, _) = build_plan(a.level, a.admin, None, args.keep_alive.as_deref())?;
     let owned: Vec<PlanItem> = plan
         .items
         .into_iter()
-        .filter(|i| !i.locked && rows.contains(&i.rule_id))
+        .filter(|i| marked(i, &a.include, &a.exclude))
         .map(freeze_instead_of_kill)
         .filter(|i| i.action == Action::Suspend)
         .collect();

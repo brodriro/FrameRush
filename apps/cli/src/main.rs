@@ -1153,6 +1153,13 @@ type Selection<'a> = (Vec<&'a PlanItem>, Vec<Tweak>, Vec<MemoryOp>);
 
 /// Filas, ajustes y memoria marcados por el nivel, más `include` y menos `exclude`. Lo que
 /// tiene candado no se puede marcar.
+/// Fila marcada, como en el checklist: la marca el nivel o `--include`, y `--exclude` la quita.
+fn marked(item: &PlanItem, include: &[String], exclude: &[String]) -> bool {
+    !item.locked
+        && (item.default_checked || include.contains(&item.rule_id))
+        && !exclude.contains(&item.rule_id)
+}
+
 fn select<'a>(plan: &'a Plan, include: &[String], exclude: &[String]) -> Result<Selection<'a>> {
     for id in include.iter().chain(exclude) {
         let known = plan.items.iter().any(|i| &i.rule_id == id)
@@ -1203,8 +1210,7 @@ fn select<'a>(plan: &'a Plan, include: &[String], exclude: &[String]) -> Result<
     let items = plan
         .items
         .iter()
-        .filter(|i| !i.locked && (i.default_checked || include.contains(&i.rule_id)))
-        .filter(|i| !exclude.contains(&i.rule_id))
+        .filter(|i| marked(i, include, exclude))
         .collect();
     let wanted = |t: &Tweak| include.iter().any(|id| id == t.id());
     let tweaks = plan
@@ -2145,6 +2151,30 @@ mod tests {
             own: Some(true),
             framerush: false,
         }
+    }
+
+    /// Lo que marca el checklist de la CLI, y por tanto lo que vigila el re-escaneo de Turbo:
+    /// el nivel o `--include`, sin `--exclude` ni candados.
+    #[test]
+    fn a_row_is_marked_by_the_level_or_include_unless_excluded_or_locked() {
+        let row = |id: &str, default_checked, locked| PlanItem {
+            rule_id: id.into(),
+            category: framerush_core::Category::Updater,
+            subject: Subject::Processes(vec![proc(1, "x.exe")]),
+            action: Action::Suspend,
+            risk: framerush_core::Risk::Low,
+            min_level: Level::Normal,
+            description: String::new(),
+            requires_admin: false,
+            locked,
+            default_checked,
+        };
+        let (include, exclude) = (vec!["edge".to_owned()], vec!["onedrive".to_owned()]);
+        assert!(marked(&row("chrome", true, false), &include, &exclude));
+        assert!(marked(&row("edge", false, false), &include, &exclude));
+        assert!(!marked(&row("firefox", false, false), &include, &exclude));
+        assert!(!marked(&row("onedrive", true, false), &include, &exclude));
+        assert!(!marked(&row("edge", true, true), &include, &exclude));
     }
 
     /// P6: en Turbo solo cerrar pasa a congelar; las demás acciones (bajar prioridad, detener
