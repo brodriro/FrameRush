@@ -413,6 +413,7 @@ fn p7_keep_alive_only_blocks_freezing() {
     let options = PlanOptions {
         elevated: true,
         keep_alive: vec!["discord".into()],
+        ..PlanOptions::default()
     };
     let p = plan_for(Level::Extremo, &snapshot(&m), &rules, &options);
     assert_eq!(p.items.len(), 3);
@@ -609,6 +610,7 @@ fn p6_turbo_freezes_checked_rows_and_kill_becomes_freeze() {
     let options = PlanOptions {
         elevated: true,
         keep_alive: vec!["discord".into()],
+        ..PlanOptions::default()
     };
     let p = plan_for(Level::Extremo, &snap, &rules, &options);
     assert!(

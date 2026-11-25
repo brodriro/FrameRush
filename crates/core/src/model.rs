@@ -51,6 +51,26 @@ impl fmt::Display for Level {
     }
 }
 
+/// Idioma de los textos que genera el backend (informes, estado, motivos). La GUI pasa el
+/// suyo; la CLI usa el español, que es el de por defecto.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Lang {
+    #[default]
+    Es,
+    En,
+}
+
+impl Lang {
+    /// El de este idioma entre `es` y `en`.
+    pub fn pick<T>(self, es: T, en: T) -> T {
+        match self {
+            Lang::Es => es,
+            Lang::En => en,
+        }
+    }
+}
+
 /// Error al leer un valor del modelo desde texto.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("valor desconocido para {kind}: {value:?}")]

@@ -31,7 +31,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use framerush_core::{
     Action, ApplyRequest, CUSTOM_POWER_PLAN_NAME, Change, EntryStatus, FileStore, GameBoost,
-    JournalStore, Level, MemoryOp, Outcome, Plan, PlanItem, PlanOptions, RefreshRate, Report,
+    JournalStore, Lang, Level, MemoryOp, Outcome, Plan, PlanItem, PlanOptions, RefreshRate, Report,
     Scope, Snapshot, StateLine, Subject, defaults, is_protected, persistent_priority_default, plan,
     status_lines, system_state, tweak_requires_reboot, tweak_scope,
 };
@@ -567,6 +567,7 @@ fn build_plan(
         elevated: admin,
         keep_alive: keep_alive
             .map_or_else(|| defaults::keep_alive(&device).value, <[String]>::to_vec),
+        ..PlanOptions::default()
     };
     let plan = plan(level, &snapshot, &rules, &device, &options);
     Ok((plan, game, device))
@@ -1622,7 +1623,7 @@ fn status(json: bool) -> Result<()> {
     let journal = FileStore::new(&path)
         .load()
         .with_context(|| format!("no se pudo leer el journal {}", path.display()))?;
-    let session = status_lines(&journal);
+    let session = status_lines(&journal, Lang::Es);
     let applied = |tweak: Tweak| {
         journal.entries.iter().any(|e| {
             e.status == EntryStatus::Done
@@ -1631,7 +1632,7 @@ fn status(json: bool) -> Result<()> {
     };
     let tweaks = tweak_states()?;
     let os = Os::current().context("sistema operativo no admitido")?;
-    let mut system = system_state(&native_device(os));
+    let mut system = system_state(&native_device(os), Lang::Es);
     system.extend(game_configs());
     if json {
         let tweaks: Vec<_> = tweaks
@@ -1715,7 +1716,12 @@ fn game_configs() -> Vec<StateLine> {
                 dir: &app.dir,
                 steam_root: &root,
             };
-            framerush_core::game_config_state(&w, adapter.name(), &adapter.config_files(install))
+            framerush_core::game_config_state(
+                &w,
+                adapter.name(),
+                &adapter.config_files(install),
+                Lang::Es,
+            )
         })
         .collect()
 }

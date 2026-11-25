@@ -281,6 +281,7 @@ pub fn build(sensors: SensorInfo, phase: &dyn Fn(&'static str)) -> Result<View> 
     let options = PlanOptions {
         elevated: sensors.elevated,
         keep_alive: defaults::keep_alive(&device).value,
+        ..PlanOptions::default()
     };
     let plans: Vec<Plan> = Level::ALL
         .iter()
@@ -864,10 +865,11 @@ pub(crate) fn status_of(device: &DeviceProfile) -> Result<StatusView> {
             &FileStore::new(dir.join("session.json"))
                 .load()
                 .context("no se pudo leer el journal")?,
+            framerush_core::Lang::Es,
         ),
         None => vec![],
     };
-    let mut system = framerush_core::system_state(device);
+    let mut system = framerush_core::system_state(device, framerush_core::Lang::Es);
     system.extend(game_configs());
     Ok(StatusView { session, system })
 }
@@ -886,7 +888,7 @@ fn game_configs() -> Vec<framerush_core::StateLine> {
                 dir: &app.dir,
                 steam_root: &root,
             });
-            framerush_core::game_config_state(&w, adapter.name(), &files)
+            framerush_core::game_config_state(&w, adapter.name(), &files, framerush_core::Lang::Es)
         })
         .collect()
 }

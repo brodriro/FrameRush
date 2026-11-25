@@ -234,6 +234,7 @@ pub fn apply(
     let options = PlanOptions {
         elevated: helper.is_some(),
         keep_alive: keep_alive.clone(),
+        ..PlanOptions::default()
     };
     let plan = plan(level, &snapshot, &rules, &device, &options);
     let wanted = |id: &str| selection.settings.iter().any(|s| s == id);
@@ -519,6 +520,7 @@ pub fn turbo_rescan(turbo: &Turbo, helper: Option<Elevated>) -> Result<Outcomes>
     let options = PlanOptions {
         elevated: helper.is_some(),
         keep_alive: turbo.keep_alive.clone(),
+        ..PlanOptions::default()
     };
     let owned: Vec<PlanItem> = plan(turbo.level, &snapshot, &rules, &device, &options)
         .items
@@ -630,6 +632,7 @@ fn row_item(
     let options = PlanOptions {
         elevated,
         keep_alive: keep_alive(keep_alive_list, &device),
+        ..PlanOptions::default()
     };
     plan(level, &snapshot, &rules, &device, &options)
         .items
@@ -654,6 +657,7 @@ pub fn limited_rows() -> Result<Vec<String>> {
     let options = PlanOptions {
         elevated: true,
         keep_alive: defaults::keep_alive(&device).value,
+        ..PlanOptions::default()
     };
     Ok(plan(Level::Extremo, &snapshot, &rules, &device, &options)
         .items

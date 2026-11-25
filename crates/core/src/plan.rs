@@ -5,7 +5,7 @@
 //! el equipo (P15). El nivel solo decide `default_checked`, y la decisión final es del checklist.
 
 use crate::protected::{ProtectedReason, is_protected, normalize, protected_reason};
-use crate::{Action, Category, Level, Risk, Rule, Scope};
+use crate::{Action, Category, Lang, Level, Risk, Rule, Scope};
 use framerush_device::DeviceProfile;
 use framerush_platform::{Os, Priority, ProcessInfo, ServiceControl, ServiceState, Target, Tweak};
 
@@ -56,6 +56,8 @@ pub struct PlanOptions {
     /// Tokens de `keep-alive-list`: un proceso cuyo nombre contiene uno no se congela. Bajarle la
     /// prioridad sigue permitido (P7).
     pub keep_alive: Vec<String>,
+    /// Idioma de los motivos (`blocked_tweaks`).
+    pub lang: Lang,
 }
 
 /// A qué afecta una fila.
@@ -165,6 +167,7 @@ fn vbs_precedence(
     tweaks: &mut Vec<Tweak>,
     optional: &mut Vec<Tweak>,
     locked: &mut Vec<Tweak>,
+    lang: Lang,
 ) -> Vec<(Tweak, String)> {
     let vbs = Tweak::VbsHvciOff;
     if !tweaks.contains(&vbs) && !optional.contains(&vbs) && !locked.contains(&vbs) {
@@ -179,9 +182,13 @@ fn vbs_precedence(
         for list in [&mut *tweaks, &mut *optional, &mut *locked] {
             list.retain(|t| *t != vbs);
         }
+        let names = requiring.join(", ");
         return vec![(
             vbs,
-            format!("{} puede exigir VBS/HVCI", requiring.join(", ")),
+            lang.pick(
+                format!("{names} puede exigir VBS/HVCI"),
+                format!("{names} may require VBS/HVCI"),
+            ),
         )];
     }
     if !anticheats.is_empty() && tweaks.contains(&vbs) {
@@ -324,6 +331,7 @@ pub fn plan(
         &mut tweaks,
         &mut optional_tweaks,
         &mut locked_tweaks,
+        options.lang,
     );
     Plan {
         level,
@@ -690,6 +698,7 @@ mod tests {
         let opts = PlanOptions {
             elevated: true,
             keep_alive: vec!["discord".into()],
+            ..PlanOptions::default()
         };
         let p = plan(Level::Extremo, &snap, &rules, &device, &opts);
         assert_eq!(p.items[0].action, Action::LowerPriority);
@@ -827,6 +836,15 @@ mod tests {
                     p.blocked_tweaks
                 );
             }
+            let en = PlanOptions {
+                lang: Lang::En,
+                ..PlanOptions::default()
+            };
+            let p = plan(Level::Extremo, &ac, &[], &device, &en);
+            assert_eq!(
+                p.blocked_tweaks[0].1,
+                format!("{name} may require VBS/HVCI")
+            );
         }
     }
 
@@ -953,6 +971,7 @@ mod tests {
         let opts = PlanOptions {
             elevated: false,
             keep_alive: vec!["teams".into()],
+            ..PlanOptions::default()
         };
         let p = plan(Level::Normal, &snap, &rules, &device, &opts);
         assert_eq!(p.items[0].action, Action::LowerPriority);

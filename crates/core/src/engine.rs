@@ -11,7 +11,7 @@
 
 use crate::journal::{Change, Entry, EntryStatus, Journal, JournalError, JournalStore};
 use crate::protected::is_protected;
-use crate::{Action, MemoryOp, PlanItem, Scope, Subject};
+use crate::{Action, Lang, MemoryOp, PlanItem, Scope, Subject};
 use framerush_platform::{
     DefenderExclusion, Platform, PlatformError, PowerPlan, Priority, Target, Tweak,
 };
@@ -138,55 +138,126 @@ pub enum EngineError {
     RealtimeNotConfirmed,
 }
 
-/// Texto de un cambio para el informe.
-pub fn describe(change: &Change) -> String {
+/// Texto de un cambio para el informe, en `lang`.
+pub fn describe(change: &Change, lang: Lang) -> String {
     let proc = |t: &Target| format!("{} (pid {})", t.exe_path.display(), t.pid);
     match change {
         Change::Priority {
             target, applied, ..
-        } => format!("prioridad {applied:?} → {}", proc(target)),
+        } => {
+            let p = proc(target);
+            lang.pick(
+                format!("prioridad {applied:?} → {p}"),
+                format!("priority {applied:?} → {p}"),
+            )
+        }
         Change::Affinity {
             target, applied, ..
-        } => format!("afinidad a {} CPU → {}", applied.len(), proc(target)),
-        Change::Suspend { target } => format!("suspender {}", proc(target)),
-        Change::Kill { target } => format!("cerrar {}", proc(target)),
-        Change::StopService { name } => format!("detener el servicio {name}"),
-        Change::Tweak { tweak, .. } if crate::tweak_requires_reboot(*tweak) => {
-            format!("ajuste {} (surte efecto al reiniciar)", tweak.id())
+        } => {
+            let (n, p) = (applied.len(), proc(target));
+            lang.pick(
+                format!("afinidad a {n} CPU → {p}"),
+                format!("affinity to {n} CPUs → {p}"),
+            )
         }
-        Change::Tweak { tweak, .. } => format!("ajuste {}", tweak.id()),
+        Change::Suspend { target } => {
+            let p = proc(target);
+            lang.pick(format!("suspender {p}"), format!("suspend {p}"))
+        }
+        Change::Kill { target } => {
+            let p = proc(target);
+            lang.pick(format!("cerrar {p}"), format!("close {p}"))
+        }
+        Change::StopService { name } => lang.pick(
+            format!("detener el servicio {name}"),
+            format!("stop the {name} service"),
+        ),
+        Change::Tweak { tweak, .. } if crate::tweak_requires_reboot(*tweak) => {
+            let id = tweak.id();
+            lang.pick(
+                format!("ajuste {id} (surte efecto al reiniciar)"),
+                format!("setting {id} (takes effect after a restart)"),
+            )
+        }
+        Change::Tweak { tweak, .. } => {
+            let id = tweak.id();
+            lang.pick(format!("ajuste {id}"), format!("setting {id}"))
+        }
         Change::FullscreenOptimizationsOff { exe } => {
-            format!("sin optimizaciones de pantalla completa: {}", exe.display())
+            let exe = exe.display();
+            lang.pick(
+                format!("sin optimizaciones de pantalla completa: {exe}"),
+                format!("fullscreen optimizations off: {exe}"),
+            )
         }
         Change::PersistentPriority { exe, .. } => {
-            format!("prioridad Alta persistente: {}", exe.display())
+            let exe = exe.display();
+            lang.pick(
+                format!("prioridad Alta persistente: {exe}"),
+                format!("persistent High priority: {exe}"),
+            )
         }
         Change::HighPerformanceGpu { exe } => {
-            format!("GPU de alto rendimiento: {}", exe.display())
+            let exe = exe.display();
+            lang.pick(
+                format!("GPU de alto rendimiento: {exe}"),
+                format!("high-performance GPU: {exe}"),
+            )
         }
-        Change::GameFile { path, .. } => format!("config del juego: {}", path.display()),
+        Change::GameFile { path, .. } => {
+            let path = path.display();
+            lang.pick(
+                format!("config del juego: {path}"),
+                format!("game config: {path}"),
+            )
+        }
         Change::DefenderExclusion { exclusion } => match exclusion {
-            DefenderExclusion::Path(p) => format!("exclusión de Defender: carpeta {}", p.display()),
+            DefenderExclusion::Path(p) => {
+                let p = p.display();
+                lang.pick(
+                    format!("exclusión de Defender: carpeta {p}"),
+                    format!("Defender exclusion: folder {p}"),
+                )
+            }
             DefenderExclusion::Process(p) => {
-                format!("exclusión de Defender: proceso {}", p.display())
+                let p = p.display();
+                lang.pick(
+                    format!("exclusión de Defender: proceso {p}"),
+                    format!("Defender exclusion: process {p}"),
+                )
             }
         },
-        Change::PowerPlan { applied, .. } => format!("plan de energía «{}»", applied.name),
+        Change::PowerPlan { applied, .. } => {
+            let name = &applied.name;
+            lang.pick(
+                format!("plan de energía «{name}»"),
+                format!("power plan “{name}”"),
+            )
+        }
         Change::RefreshRate {
             display, applied, ..
-        } => format!("refresco de {display} a {applied} Hz"),
+        } => lang.pick(
+            format!("refresco de {display} a {applied} Hz"),
+            format!("{display} refresh rate to {applied} Hz"),
+        ),
         Change::CustomPowerPlan {
             base, cpu_idle_off, ..
         } => {
-            let idle = if *cpu_idle_off {
-                ", C-states desactivados"
-            } else {
-                ""
-            };
-            format!(
-                "plan de energía «{CUSTOM_POWER_PLAN_NAME}» (sobre «{}»{idle})",
-                base.name
-            )
+            let base = &base.name;
+            match (lang, *cpu_idle_off) {
+                (Lang::Es, false) => {
+                    format!("plan de energía «{CUSTOM_POWER_PLAN_NAME}» (sobre «{base}»)")
+                }
+                (Lang::Es, true) => format!(
+                    "plan de energía «{CUSTOM_POWER_PLAN_NAME}» (sobre «{base}», C-states desactivados)"
+                ),
+                (Lang::En, false) => {
+                    format!("power plan “{CUSTOM_POWER_PLAN_NAME}” (based on “{base}”)")
+                }
+                (Lang::En, true) => format!(
+                    "power plan “{CUSTOM_POWER_PLAN_NAME}” (based on “{base}”, C-states off)"
+                ),
+            }
         }
     }
 }
@@ -202,14 +273,14 @@ pub struct StatusLine {
 
 /// Todo lo que la sesión tiene aplicado o pendiente, en el orden en que se aplicó. Los cambios
 /// fallidos también salen: el journal los conserva para que se vean.
-pub fn status_lines(journal: &Journal) -> Vec<StatusLine> {
+pub fn status_lines(journal: &Journal, lang: Lang) -> Vec<StatusLine> {
     let mut entries: Vec<&Entry> = journal.entries.iter().collect();
     entries.sort_by_key(|e| e.seq);
     entries
         .into_iter()
         .map(|e| StatusLine {
             batch: e.batch,
-            what: describe(&e.change),
+            what: describe(&e.change, lang),
             scope: e.change.scope(),
             status: e.status,
         })
@@ -230,11 +301,15 @@ pub struct Progress<'s> {
 /// Recibe cada [`Progress`].
 pub type OnProgress<'a> = &'a dyn Fn(Progress<'_>);
 
+const GONE_ES: &str = "el proceso ya no existe o su PID es de otro proceso";
+const GONE_EN: &str = "the process no longer exists or its PID belongs to another process";
+
 /// Motor sobre una plataforma y un journal.
 pub struct Engine<'a, P, S> {
     platform: &'a P,
     store: &'a S,
     progress: Option<OnProgress<'a>>,
+    lang: Lang,
 }
 
 impl<P: std::fmt::Debug, S: std::fmt::Debug> std::fmt::Debug for Engine<'_, P, S> {
@@ -243,6 +318,7 @@ impl<P: std::fmt::Debug, S: std::fmt::Debug> std::fmt::Debug for Engine<'_, P, S
             .field("platform", &self.platform)
             .field("store", &self.store)
             .field("progress", &self.progress.is_some())
+            .field("lang", &self.lang)
             .finish()
     }
 }
@@ -253,6 +329,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             platform,
             store,
             progress: None,
+            lang: Lang::default(),
         }
     }
 
@@ -261,6 +338,18 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
     pub fn with_progress(mut self, on: OnProgress<'a>) -> Self {
         self.progress = Some(on);
         self
+    }
+
+    /// Escribe el informe y el progreso en `lang` (por defecto, español).
+    #[must_use]
+    pub fn with_lang(mut self, lang: Lang) -> Self {
+        self.lang = lang;
+        self
+    }
+
+    /// Omitido, con el motivo en el idioma del motor.
+    fn skip(&self, es: &str, en: &str) -> Outcome {
+        Outcome::Skipped(self.lang.pick(es, en).to_owned())
     }
 
     /// Anota el resultado en el informe y avisa del progreso.
@@ -398,12 +487,15 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             match self.platform.has_defender_exclusion(exclusion) {
                 Ok(false) => {}
                 Ok(true) => {
-                    let why = "ya estaba en Defender (no la puso FrameRush)".to_owned();
-                    self.note(report, describe(&change), Outcome::Skipped(why));
+                    let why = self.skip(
+                        "ya estaba en Defender (no la puso FrameRush)",
+                        "already in Defender (not added by FrameRush)",
+                    );
+                    self.note(report, describe(&change, self.lang), why);
                     return Ok(());
                 }
                 Err(e) => {
-                    self.note(report, describe(&change), Outcome::Failed(e));
+                    self.note(report, describe(&change, self.lang), Outcome::Failed(e));
                     return Ok(());
                 }
             }
@@ -533,12 +625,15 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             match current() {
                 Ok(None) => {}
                 Ok(Some(value)) => {
-                    let why = format!("el exe ya tiene un valor propio (`{value}`)");
-                    self.note(report, describe(&change), Outcome::Skipped(why));
+                    let why = self.lang.pick(
+                        format!("el exe ya tiene un valor propio (`{value}`)"),
+                        format!("the exe already has its own value (`{value}`)"),
+                    );
+                    self.note(report, describe(&change, self.lang), Outcome::Skipped(why));
                     return Ok(());
                 }
                 Err(e) => {
-                    self.note(report, describe(&change), Outcome::Failed(e));
+                    self.note(report, describe(&change, self.lang), Outcome::Failed(e));
                     return Ok(());
                 }
             }
@@ -567,7 +662,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                     };
                 }
                 Err(e) => {
-                    self.note(report, describe(&change), Outcome::Failed(e));
+                    self.note(report, describe(&change, self.lang), Outcome::Failed(e));
                     return Ok(());
                 }
             }
@@ -605,22 +700,23 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         let journal = self.store.load()?;
         let mut report = Report::default();
         for target in targets {
-            let what = format!(
-                "reanudar {} (pid {})",
-                target.exe_path.display(),
-                target.pid
+            let (exe, pid) = (target.exe_path.display(), target.pid);
+            let what = self.lang.pick(
+                format!("reanudar {exe} (pid {pid})"),
+                format!("resume {exe} (pid {pid})"),
             );
             let ours = journal
                 .entries
                 .iter()
                 .any(|e| matches!(&e.change, Change::Suspend { target: t } if t == target));
             let outcome = if ours {
-                Outcome::Skipped("lo congeló FrameRush: se reanuda al deshacer la sesión".into())
+                self.skip(
+                    "lo congeló FrameRush: se reanuda al deshacer la sesión",
+                    "frozen by FrameRush: it resumes when the session is undone",
+                )
             } else {
                 match self.platform.is_same_process(target) {
-                    Ok(false) => Outcome::Skipped(
-                        "el proceso ya no existe o su PID es de otro proceso".into(),
-                    ),
+                    Ok(false) => self.skip(GONE_ES, GONE_EN),
                     Ok(true) => match self.platform.resume(target) {
                         Ok(()) => Outcome::Done,
                         Err(e) => Outcome::Failed(e),
@@ -694,7 +790,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                     self.note(
                         report,
                         what,
-                        Outcome::Skipped("ya es el plan activo".into()),
+                        self.skip("ya es el plan activo", "already the active plan"),
                     );
                     return Ok(());
                 }
@@ -732,12 +828,15 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             created: None,
             cpu_idle_off,
         };
-        let what = describe(&change);
+        let what = describe(&change, self.lang);
         if already_applied(journal, &change) {
             self.note(
                 report,
                 what,
-                Outcome::Skipped("ya aplicado en esta sesión".into()),
+                self.skip(
+                    "ya aplicado en esta sesión",
+                    "already applied in this session",
+                ),
             );
             return Ok(());
         }
@@ -845,7 +944,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                         self.note(
                             report,
                             what,
-                            Outcome::Skipped("ya está a esa frecuencia".into()),
+                            self.skip("ya está a esa frecuencia", "already at that rate"),
                         );
                         return Ok(());
                     }
@@ -941,7 +1040,10 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             self.note(
                 report,
                 what,
-                Outcome::Skipped("ya aplicado en esta sesión".into()),
+                self.skip(
+                    "ya aplicado en esta sesión",
+                    "already applied in this session",
+                ),
             );
             return Ok(());
         }
@@ -967,12 +1069,15 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         change: Change,
         report: &mut Report,
     ) -> Result<(), EngineError> {
-        let what = describe(&change);
+        let what = describe(&change, self.lang);
         if already_applied(journal, &change) {
             self.note(
                 report,
                 what,
-                Outcome::Skipped("ya aplicado en esta sesión".into()),
+                self.skip(
+                    "ya aplicado en esta sesión",
+                    "already applied in this session",
+                ),
             );
             return Ok(());
         }
@@ -1051,7 +1156,12 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             if matches!(outcome, Outcome::Failed(_)) {
                 keep.push(entry.seq);
             }
-            self.note_of(&mut report, describe(&entry.change), outcome, total);
+            self.note_of(
+                &mut report,
+                describe(&entry.change, self.lang),
+                outcome,
+                total,
+            );
         }
         journal
             .entries
@@ -1065,16 +1175,17 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             match self.platform.is_same_process(target) {
                 Ok(true) => {}
                 Ok(false) => {
-                    return Outcome::Skipped(
-                        "el proceso ya no existe o su PID es de otro proceso".into(),
-                    );
+                    return self.skip(GONE_ES, GONE_EN);
                 }
                 Err(e) => return Outcome::Failed(e),
             }
         }
         let result = match change {
             Change::Kill { .. } => {
-                return Outcome::Skipped("cerrar un proceso no se puede deshacer".into());
+                return self.skip(
+                    "cerrar un proceso no se puede deshacer",
+                    "closing a process cannot be undone",
+                );
             }
             Change::Priority {
                 target, previous, ..
@@ -1341,12 +1452,12 @@ mod tests {
         let items = [item(Action::LowerPriority, procs(&m, &[&a]))];
         let store = MemoryStore::default();
         let engine = Engine::new(&m, &store);
-        assert!(status_lines(&store.load().unwrap()).is_empty());
+        assert!(status_lines(&store.load().unwrap(), Lang::Es).is_empty());
 
         let mut req = request(&items);
         req.game = boost(&game, Priority::High, false).game;
         engine.apply(&req).unwrap();
-        let lines = status_lines(&store.load().unwrap());
+        let lines = status_lines(&store.load().unwrap(), Lang::Es);
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines.iter().all(|l| l.status == EntryStatus::Done));
         assert!(lines.iter().all(|l| l.scope == Scope::Session));
@@ -1354,7 +1465,26 @@ mod tests {
         assert!(lines[1].what.ends_with("/game (pid 9)"), "{lines:?}");
 
         engine.revert_all().unwrap();
-        assert!(status_lines(&store.load().unwrap()).is_empty());
+        assert!(status_lines(&store.load().unwrap(), Lang::Es).is_empty());
+    }
+
+    /// Con `with_lang(En)` el informe y sus motivos salen en inglés; el journal no cambia.
+    #[test]
+    fn report_follows_the_engine_language() {
+        let m = MockPlatform::new(4);
+        let a = m.spawn(1, "a.exe", "/a", 1);
+        let items = [item(Action::LowerPriority, procs(&m, &[&a]))];
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store).with_lang(Lang::En);
+        engine.apply(&request(&items)).unwrap();
+        let again = engine.apply(&request(&items)).unwrap();
+        assert!(again.lines[0].what.starts_with("priority "), "{again:?}");
+        assert_eq!(
+            again.lines[0].outcome,
+            Outcome::Skipped("already applied in this session".into())
+        );
+        let es = status_lines(&store.load().unwrap(), Lang::Es);
+        assert!(es[0].what.starts_with("prioridad "), "{es:?}");
     }
 
     /// Cada paso avisa al terminar; al deshacer se sabe el total de antemano.
