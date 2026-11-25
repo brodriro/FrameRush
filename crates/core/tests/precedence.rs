@@ -1,7 +1,7 @@
 //! Tabla de precedencia P1–P15 (PLAN.md §3): un test por regla que ya tiene código.
 //!
-//! Las reglas que dependen de piezas que aún no existen en Rust (P4: `launch-game` con
-//! `profile-auto-apply`; P8: `steamwebhelper` y el overlay de Steam) se prueban en su hito;
+//! Quedan fuera P4 (`launch-game` con `profile-auto-apply`: la decisión vive en la UI,
+//! `apps/gui/ui/app.js`) y P8 (`steamwebhelper` y el overlay de Steam, sin implementar);
 //! tareas.md las lista.
 
 use framerush_core::{
@@ -332,6 +332,40 @@ fn gpu_preference_is_persistent_and_respects_the_users() {
         m.gpu_preference(&exe).unwrap().as_deref(),
         Some("GpuPreference=1;")
     );
+}
+
+/// P13: "forzar GPU dedicada" (It5.7) no es un ajuste aparte, es `gpu-preference = alto`, su
+/// valor por defecto: la GPU con más VRAM dedicada, y solo con más de una GPU (R8, P15).
+#[test]
+fn p13_forcing_the_dedicated_gpu_is_gpu_preference_alto() {
+    use framerush_core::defaults;
+    use framerush_platform::mock::MOCK_HIGH_PERFORMANCE_GPU;
+
+    let mut laptop = samples::hybrid_laptop();
+    let alto = |d: &DeviceProfile| defaults::gpu_preference(d).map(|g| g.id.clone());
+    assert_eq!(alto(&laptop).as_deref(), Some("gpu-dedicada"));
+    // Una integrada que declara algo de VRAM propia no gana a la dedicada.
+    laptop.gpus[0].dedicated_vram_bytes = Some(128 * 1024 * 1024);
+    assert_eq!(alto(&laptop).as_deref(), Some("gpu-dedicada"));
+    // Con una sola GPU no hay nada que forzar: el ajuste no aparece.
+    laptop.gpus.remove(0);
+    assert_eq!(alto(&laptop), None);
+
+    // `alto` es lo que escribe el motor al pedir la GPU de alto rendimiento para el juego.
+    let m = MockPlatform::new(4);
+    let s = store("p13");
+    let engine = Engine::new(&m, &s);
+    let mut request = boost(&m, Priority::High, false);
+    let exe = request.game.as_ref().unwrap().targets[0].exe_path.clone();
+    if let Some(g) = request.game.as_mut() {
+        g.high_performance_gpu = true;
+    }
+    engine.apply(&request).unwrap();
+    assert_eq!(
+        m.gpu_preference(&exe).unwrap().as_deref(),
+        Some(MOCK_HIGH_PERFORMANCE_GPU)
+    );
+    engine.revert_all().unwrap();
 }
 
 /// Backup único: reaplicar un ajuste no sobrescribe el valor original.
