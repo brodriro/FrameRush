@@ -113,6 +113,15 @@ enum Command {
     /// Steam: juegos instalados y el que está en marcha (`RunningAppID` o la ventana en primer
     /// plano bajo la carpeta del juego). No toca el sistema.
     Steam,
+    /// Para el instalador: añade (o quita con `--remove`) la carpeta de este ejecutable al
+    /// `PATH` del sistema. Pide admin.
+    #[cfg(windows)]
+    #[command(hide = true)]
+    SystemPath {
+        /// Quitarla en vez de añadirla.
+        #[arg(long)]
+        remove: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -300,7 +309,33 @@ fn run_command(command: Command) -> Result<()> {
         Command::Turbo(args) => turbo(&args),
         #[cfg(windows)]
         Command::Frozen { resume } => frozen(resume),
+        #[cfg(windows)]
+        Command::SystemPath { remove } => system_path(remove),
     }
+}
+
+/// `framerush system-path`: la carpeta de la CLI en el `PATH` del sistema (instalador).
+#[cfg(windows)]
+fn system_path(remove: bool) -> Result<()> {
+    let exe = std::env::current_exe().context("no se encontró el ejecutable de la CLI")?;
+    let dir = exe
+        .parent()
+        .context("el ejecutable de la CLI no tiene carpeta")?;
+    let changed = if remove {
+        framerush_platform::remove_from_system_path(dir)
+    } else {
+        framerush_platform::add_to_system_path(dir)
+    }
+    .context("no se pudo cambiar el PATH del sistema")?;
+    let what = match (remove, changed) {
+        (false, true) => "añadida al",
+        (false, false) => "ya estaba en el",
+        (true, true) => "quitada del",
+        (true, false) => "no estaba en el",
+    };
+    println!("{} {what} PATH del sistema", dir.display());
+    tracing::info!(dir = %dir.display(), remove, changed, "PATH del sistema");
+    Ok(())
 }
 
 /// `framerush frozen`: lista los congelados por otro programa y, con `resume`, los reanuda.
