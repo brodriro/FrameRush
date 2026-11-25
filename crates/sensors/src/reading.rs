@@ -37,13 +37,35 @@ impl fmt::Display for Reading {
     }
 }
 
+/// Nombre para mostrar de un sensor. Los nombres del hardware van tal cual; lo que hay que
+/// traducir (la palabra «ventilador») lo pone quien lo muestra, en su idioma.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Label {
+    /// Nombre que da la fuente (p. ej. el modelo de la GPU o un canal de hwmon).
+    Named(String),
+    /// Ventilador sin nombre propio de `device`; `number` (desde 1) si tiene varios.
+    Fan { device: String, number: Option<u32> },
+}
+
+impl fmt::Display for Label {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Label::Named(name) => f.write_str(name),
+            Label::Fan {
+                device,
+                number: Some(n),
+            } => write!(f, "{device} · ventilador {n}"),
+            Label::Fan { device, .. } => write!(f, "{device} · ventilador"),
+        }
+    }
+}
+
 /// Un sensor con su lectura actual.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sensor {
     /// Estable entre lecturas (p. ej. `nvml:0:fan:1`).
     pub id: String,
-    /// Nombre para mostrar (p. ej. el modelo de la GPU).
-    pub label: String,
+    pub label: Label,
     pub kind: Kind,
     /// `None` = "No disponible".
     pub reading: Option<Reading>,
@@ -66,11 +88,14 @@ mod tests {
     fn missing_readings_say_no_disponible_not_zero() {
         let s = Sensor {
             id: "x".into(),
-            label: "Ventilador".into(),
+            label: Label::Fan {
+                device: "GPU".into(),
+                number: Some(2),
+            },
             kind: Kind::Fan,
             reading: None,
         };
-        assert_eq!(s.to_string(), "Ventilador: No disponible");
+        assert_eq!(s.to_string(), "GPU · ventilador 2: No disponible");
         let rpm = Reading::Rpm {
             value: 1800,
             target: true,

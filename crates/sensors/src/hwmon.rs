@@ -8,7 +8,7 @@
 //! otros chips (NVMe, ACPI…) no son de CPU ni de GPU y no se muestran (R4). Los ventiladores
 //! salen de cualquier chip. Las GPU NVIDIA van por NVML.
 
-use crate::{Kind, Reading, Sensor, SensorProvider};
+use crate::{Kind, Label, Reading, Sensor, SensorProvider};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -84,7 +84,7 @@ impl SensorProvider for Hwmon {
             let label = |kind: &str, y: u32| {
                 let channel = read_trimmed(&chip.join(format!("{kind}{y}_label")))
                     .unwrap_or_else(|| format!("{kind}{y}"));
-                format!("{name} · {channel}")
+                Label::Named(format!("{name} · {channel}"))
             };
             if let Some((_, kind)) = TEMPERATURE_CHIPS.iter().find(|(n, _)| *n == name) {
                 for y in channels(&chip, "temp") {
@@ -149,7 +149,7 @@ mod tests {
         let sensors = Hwmon::at(&root).read();
         let got: Vec<(String, Kind, Option<Reading>)> = sensors
             .into_iter()
-            .map(|s| (s.label, s.kind, s.reading))
+            .map(|s| (s.label.to_string(), s.kind, s.reading))
             .collect();
         assert_eq!(
             got,

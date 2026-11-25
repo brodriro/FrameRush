@@ -4,7 +4,7 @@
 
 use crate::{Kind, NvidiaGpus, SensorProvider};
 #[cfg(windows)]
-use crate::{Reading, Sensor};
+use crate::{Label, Reading, Sensor};
 
 /// Nombre de la fuente del EC de Acer.
 #[cfg(windows)]
@@ -130,16 +130,23 @@ impl SensorProvider for AcerEc {
         self.sensors
             .iter()
             .map(|&s| {
-                let (id, label, kind) = match s {
+                let (id, device, kind) = match s {
                     AcerSensor::CpuTemperature => ("acer:cpu", "CPU", Kind::CpuTemperature),
-                    AcerSensor::CpuFan => ("acer:cpu:fan", "CPU · ventilador", Kind::Fan),
-                    AcerSensor::GpuFan => ("acer:gpu:fan", "GPU · ventilador", Kind::Fan),
+                    AcerSensor::CpuFan => ("acer:cpu:fan", "CPU", Kind::Fan),
+                    AcerSensor::GpuFan => ("acer:gpu:fan", "GPU", Kind::Fan),
                     AcerSensor::GpuTemperature => ("acer:gpu", "GPU", Kind::GpuTemperature),
+                };
+                let label = match kind {
+                    Kind::Fan => Label::Fan {
+                        device: device.into(),
+                        number: None,
+                    },
+                    _ => Label::Named(device.into()),
                 };
                 let value = self.platform.acer_read(s).ok().flatten().map(u32::from);
                 Sensor {
                     id: id.into(),
-                    label: label.into(),
+                    label,
                     kind,
                     reading: value.map(|v| match kind {
                         Kind::Fan => Reading::Rpm {
@@ -185,7 +192,10 @@ impl SensorProvider for GpuTach {
             .iter()
             .map(|(i, name)| Sensor {
                 id: format!("nvapi:{i}:fan"),
-                label: format!("{name} · ventilador"),
+                label: Label::Fan {
+                    device: name.clone(),
+                    number: None,
+                },
                 kind: Kind::Fan,
                 reading: self
                     .nvapi

@@ -793,6 +793,9 @@
   /* ---------- Sensores y FPS (eventos) ---------- */
   const fmtSensor = s => (s.value == null ? t('unavailable') : s.unit === 'c' ? Math.round(s.value) + ' °C' : s.unit === 'pct' ? Math.round(s.value) + ' %' : Math.round(s.value).toLocaleString(I18N.lang) + ' rpm');
 
+  /* Etiqueta en el idioma de la interfaz: el backend solo da el nombre del hardware. */
+  const sensorLabel = s => !s.fan ? s.label : s.fanNumber != null ? t('fan-label-n', { device: s.label, n: s.fanNumber }) : t('fan-label', { device: s.label });
+
   /* Filas de ventiladores: se rehacen solo si cambia la lista de sensores. */
   function renderFans(fans) {
     const ids = fans.map(f => f.id).join('|');
@@ -801,7 +804,7 @@
     DS('sensor-fans').forEach(e => {
       e.innerHTML = '<div class="fan"><span>CPU</span><div class="b"><i data-meter="cpu"></i></div><span class="v" data-temp="cpu"></span></div>' +
         '<div class="fan"><span>GPU</span><div class="b"><i data-meter="gpu"></i></div><span class="v" data-temp="gpu"></span></div>' +
-        fans.map((f, i) => `<div class="fan"><span title="${esc(f.label)}">${esc(f.label)}</span><div class="b" data-fanbar="${i}"></div><span class="v" data-fan="${i}"></span></div>`).join('');
+        fans.map((f, i) => `<div class="fan"><span title="${esc(sensorLabel(f))}">${esc(sensorLabel(f))}</span><div class="b" data-fanbar="${i}"></div><span class="v" data-fan="${i}"></span></div>`).join('');
     });
   }
 
@@ -854,7 +857,7 @@
         if (temp == null) { e.textContent = t('unavailable'); e.classList.add('na'); } else { e.textContent = temp + ' °C'; e.classList.add('c-' + c); }
       });
       $$(`[data-meter="${k}"]`).forEach(m => { m.style.width = temp == null ? '0' : Math.min(temp, 100) + '%'; m.className = c ? 'bg-' + c : ''; });
-      setText(`.${k}Src`, s ? s.source : t('no-sensor'));
+      setText(`.${k}Src`, !s ? t('no-sensor') : s.source || t('source-unknown'));
       temps[k] = temp;
       /* thermal-alerts: una vez al pasar la de alerta; se vuelve a armar al bajar de la de aviso. */
       if (temp == null || temp < w) S.alerts[k] = false;
@@ -866,7 +869,7 @@
     if (!hot || !stopped.length) S.alerts.fan = false;
     else if (first('fan-stop-alert')?.checked && !S.alerts.fan) {
       S.alerts.fan = true;
-      raiseAlert(t('fan-stop-alert', { fans: stopped.map(f => f.label).join(', '), part: hot.toUpperCase(), temp: temps[hot] }));
+      raiseAlert(t('fan-stop-alert', { fans: stopped.map(sensorLabel).join(', '), part: hot.toUpperCase(), temp: temps[hot] }));
     }
     fans.forEach((f, i) => {
       $$(`[data-fan="${i}"]`).forEach(e => {

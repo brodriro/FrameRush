@@ -7,7 +7,7 @@
 //!   admite se usa `nvmlDeviceGetFanSpeed_v2` (% de la máxima). Los portátiles suelen no
 //!   tener ventilador propio de la GPU (`NotSupported`).
 
-use crate::{Kind, Reading, Sensor, SensorError, SensorProvider};
+use crate::{Kind, Label, Reading, Sensor, SensorError, SensorProvider};
 use framerush_platform::{Gpu, PciId};
 use nvml_wrapper::Nvml;
 use nvml_wrapper::enum_wrappers::device::{TemperatureSensor, TemperatureThreshold};
@@ -101,7 +101,7 @@ impl SensorProvider for NvidiaGpus {
                 .unwrap_or_else(|| format!("GPU NVIDIA {i}"));
             sensors.push(Sensor {
                 id: format!("nvml:{i}:temp"),
-                label: label.clone(),
+                label: Label::Named(label.clone()),
                 kind: Kind::GpuTemperature,
                 reading: device
                     .as_ref()
@@ -122,7 +122,10 @@ impl SensorProvider for NvidiaGpus {
                 });
                 sensors.push(Sensor {
                     id: format!("nvml:{i}:fan:{fan}"),
-                    label: format!("{label} · ventilador {}", fan + 1),
+                    label: Label::Fan {
+                        device: label.clone(),
+                        number: Some(fan + 1),
+                    },
                     kind: Kind::Fan,
                     reading,
                 });

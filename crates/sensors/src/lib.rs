@@ -13,7 +13,7 @@ mod sources;
 pub use hwmon::Hwmon;
 pub use nvidia::{NvidiaGpu, NvidiaGpus};
 pub use poll::{POLL_INTERVAL, Poller};
-pub use reading::{Kind, Reading, Sensor};
+pub use reading::{Kind, Label, Reading, Sensor};
 #[cfg(windows)]
 pub use sources::detect_elevated;
 pub use sources::{Sources, detect};

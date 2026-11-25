@@ -64,7 +64,7 @@ mod tests {
             self.0 += 1;
             vec![Sensor {
                 id: "fake".into(),
-                label: "Fake".into(),
+                label: crate::Label::Named("Fake".into()),
                 kind: Kind::GpuTemperature,
                 reading: Some(Reading::Celsius(self.0 as f32)),
             }]

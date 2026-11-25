@@ -10,7 +10,7 @@ use framerush_core::{
 };
 use framerush_device::{CoreKind, DeviceProfile, Sourced};
 use framerush_platform::{Os, ProcessInfo, Target, scan_processes};
-use framerush_sensors::{Kind, Reading, Sensor};
+use framerush_sensors::{Kind, Label, Reading, Sensor};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -828,12 +828,17 @@ fn pending_session() -> Option<Pending> {
 }
 
 /// Lectura de un sensor para el evento `sensors` (1 Hz). `value: null` = "No disponible".
+/// La UI compone la etiqueta en su idioma: `label` es el nombre del hardware y, si `fan`, se
+/// muestra como «{label} · ventilador {fanNumber}».
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SensorView {
     id: String,
     label: String,
-    /// `NVML`, `hwmon`…: de dónde sale la lectura.
-    source: &'static str,
+    fan: bool,
+    fan_number: Option<u32>,
+    /// `NVML`, `hwmon`…: de dónde sale la lectura; `null` si no se sabe.
+    source: Option<&'static str>,
     kind: &'static str,
     value: Option<f32>,
     /// `c`, `rpm` o `pct`.
@@ -852,14 +857,21 @@ pub fn sensor_views(sensors: &[Sensor]) -> Vec<SensorView> {
                 Some(Reading::Percent(p)) => (Some(p as f32), Some("pct"), false),
                 None => (None, None, false),
             };
+            let (label, fan, fan_number) = match &s.label {
+                Label::Named(name) => (name.clone(), false, None),
+                Label::Fan { device, number } => (device.clone(), true, *number),
+            };
             SensorView {
                 id: s.id.clone(),
-                label: s.label.clone(),
+                label,
+                fan,
+                fan_number,
                 source: match s.id.split(':').next() {
-                    Some("nvml") => "NVML",
-                    Some("hwmon") => "hwmon",
-                    Some("nvapi") => "NVAPI",
-                    _ => "desconocida",
+                    Some("nvml") => Some("NVML"),
+                    Some("hwmon") => Some("hwmon"),
+                    Some("nvapi") => Some("NVAPI"),
+                    Some("acer") => Some("Acer EC"),
+                    _ => None,
                 },
                 kind: match s.kind {
                     Kind::CpuTemperature => "cpu",
