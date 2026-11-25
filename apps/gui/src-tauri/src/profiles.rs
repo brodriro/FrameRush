@@ -5,6 +5,7 @@
 //! guarda tal cual y solo responde de que el archivo no se corrompa.
 
 use anyhow::{Context, Result};
+use framerush_core::Lang;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -23,44 +24,78 @@ pub struct Profile {
 /// Perfiles por `appid`.
 pub type Profiles = BTreeMap<u32, Profile>;
 
-fn path() -> Result<PathBuf> {
-    let dir = data_dir().context("no hay carpeta de datos: fija FRAMERUSH_DATA_DIR")?;
+fn path(lang: Lang) -> Result<PathBuf> {
+    let dir = data_dir().context(lang.pick(
+        "no hay carpeta de datos: fija FRAMERUSH_DATA_DIR",
+        "no data folder: set FRAMERUSH_DATA_DIR",
+    ))?;
     Ok(dir.join("profiles.json"))
 }
 
 /// Todos los perfiles guardados; sin archivo, ninguno.
-pub fn load() -> Result<Profiles> {
-    read(&path()?)
+pub fn load(lang: Lang) -> Result<Profiles> {
+    read(&path(lang)?, lang)
 }
 
 /// Guarda (o sustituye) el perfil de `appid`.
-pub fn save(appid: u32, profile: Profile) -> Result<()> {
-    let path = path()?;
-    let mut all = read(&path)?;
+pub fn save(appid: u32, profile: Profile, lang: Lang) -> Result<()> {
+    let path = path(lang)?;
+    let mut all = read(&path, lang)?;
     all.insert(appid, profile);
-    write(&path, &all)
+    write(&path, &all, lang)
 }
 
-fn read(path: &Path) -> Result<Profiles> {
+fn read(path: &Path, lang: Lang) -> Result<Profiles> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Profiles::new()),
-        Err(e) => return Err(e).with_context(|| format!("no se pudo leer {}", path.display())),
+        Err(e) => {
+            return Err(e).with_context(|| {
+                let p = path.display();
+                lang.pick(
+                    format!("no se pudo leer {p}"),
+                    format!("could not read {p}"),
+                )
+            });
+        }
     };
     // Un archivo roto es un error: no se sobrescribe sin avisar.
-    serde_json::from_str(&text).with_context(|| format!("{} no es válido", path.display()))
+    serde_json::from_str(&text).with_context(|| {
+        let p = path.display();
+        lang.pick(format!("{p} no es válido"), format!("{p} is not valid"))
+    })
 }
 
 /// Escribe en un temporal y lo renombra: un cierre a mitad no deja el archivo a medias.
-fn write(path: &Path, all: &Profiles) -> Result<()> {
+fn write(path: &Path, all: &Profiles, lang: Lang) -> Result<()> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("no se pudo crear {}", dir.display()))?;
+        std::fs::create_dir_all(dir).with_context(|| {
+            let d = dir.display();
+            lang.pick(
+                format!("no se pudo crear {d}"),
+                format!("could not create {d}"),
+            )
+        })?;
     }
     let tmp = path.with_extension("json.tmp");
-    let text = serde_json::to_string_pretty(all).context("no se pudo serializar los perfiles")?;
-    std::fs::write(&tmp, text).with_context(|| format!("no se pudo escribir {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| format!("no se pudo guardar {}", path.display()))
+    let text = serde_json::to_string_pretty(all).context(lang.pick(
+        "no se pudo serializar los perfiles",
+        "could not serialize the profiles",
+    ))?;
+    std::fs::write(&tmp, text).with_context(|| {
+        let t = tmp.display();
+        lang.pick(
+            format!("no se pudo escribir {t}"),
+            format!("could not write {t}"),
+        )
+    })?;
+    std::fs::rename(&tmp, path).with_context(|| {
+        let p = path.display();
+        lang.pick(
+            format!("no se pudo guardar {p}"),
+            format!("could not save {p}"),
+        )
+    })
 }
 
 #[cfg(test)]
@@ -77,7 +112,7 @@ mod tests {
     #[test]
     fn missing_file_is_no_profiles_and_save_round_trips() {
         let path = dir("roundtrip").join("profiles.json");
-        assert!(read(&path).unwrap().is_empty());
+        assert!(read(&path, Lang::Es).unwrap().is_empty());
         let mut all = Profiles::new();
         all.insert(
             730,
@@ -86,8 +121,8 @@ mod tests {
                 data: serde_json::json!({"level": 3, "rows": {"onedrive": false}}),
             },
         );
-        write(&path, &all).unwrap();
-        assert_eq!(read(&path).unwrap(), all);
+        write(&path, &all, Lang::Es).unwrap();
+        assert_eq!(read(&path, Lang::Es).unwrap(), all);
         assert!(!path.with_extension("json.tmp").exists());
     }
 
@@ -97,6 +132,6 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         let path = d.join("profiles.json");
         std::fs::write(&path, "{ roto").unwrap();
-        assert!(read(&path).is_err());
+        assert!(read(&path, Lang::Es).is_err());
     }
 }

@@ -51,9 +51,9 @@ pub struct Selection {
     /// `keep-alive-list` tal como la dejó el usuario (P7); `null` = la del equipo.
     #[serde(default)]
     keep_alive: Option<Vec<String>>,
-    /// Idioma de la UI: el informe y las notas salen en él.
+    /// Idioma de la UI: el informe, las notas y los errores salen en él.
     #[serde(default)]
-    lang: Lang,
+    pub lang: Lang,
 }
 
 /// `keep-alive-list`: la de la UI o, sin ella, la del equipo (R8: la UI arranca con esa).
@@ -201,16 +201,24 @@ struct Line {
     detail: Option<String>,
 }
 
-fn store() -> Result<FileStore> {
-    let dir = data_dir().context("no hay carpeta de datos: fija FRAMERUSH_DATA_DIR")?;
+fn store(lang: Lang) -> Result<FileStore> {
+    let dir = data_dir().context(lang.pick(
+        "no hay carpeta de datos: fija FRAMERUSH_DATA_DIR",
+        "no data folder: set FRAMERUSH_DATA_DIR",
+    ))?;
     Ok(FileStore::new(dir.join("session.json")))
 }
 
-fn level(n: u8) -> Result<Level> {
+fn level(n: u8, lang: Lang) -> Result<Level> {
     Level::ALL
         .get(usize::from(n).wrapping_sub(1))
         .copied()
-        .with_context(|| format!("nivel desconocido: {n}"))
+        .with_context(|| {
+            lang.pick(
+                format!("nivel desconocido: {n}"),
+                format!("unknown level: {n}"),
+            )
+        })
 }
 
 /// Aplica lo marcado. `helper` es el helper elevado si el usuario lo abrió; `progress` recibe
@@ -220,19 +228,19 @@ pub fn apply(
     helper: Option<Elevated>,
     progress: OnProgress<'_>,
 ) -> Result<Outcomes> {
-    let level = level(selection.level)?;
     let lang = selection.lang;
+    let level = level(selection.level, lang)?;
     let Inputs {
         device,
         rules,
         processes,
         mut snapshot,
         ..
-    } = inputs()?;
+    } = inputs(lang)?;
     // El juego elegido (si está en marcha) queda fuera del plan aunque Steam no lo dé como el
     // juego en marcha.
     let game_targets = match &selection.game {
-        Some(g) => game_targets(g.appid, &processes)?,
+        Some(g) => game_targets(g.appid, &processes, lang)?,
         None => vec![],
     };
     if !game_targets.is_empty() {
@@ -441,7 +449,7 @@ pub fn apply(
         defender_exclusions,
     };
     let report = run(helper, Op::Apply(Box::new(request)), Some(progress), lang)?;
-    let mut out = outcomes(report, not_wired, needs_admin, notes)?;
+    let mut out = outcomes(report, not_wired, needs_admin, notes, lang)?;
     let turbo = selection
         .turbo
         .zip(selection.game.as_ref())
@@ -490,7 +498,7 @@ fn defender_exclusions(
         );
         return Ok(vec![]);
     }
-    let Some((_, app)) = appid.map(steam_install).transpose()?.flatten() else {
+    let Some((_, app)) = appid.map(|a| steam_install(a, lang)).transpose()?.flatten() else {
         note(
             "elige un juego de Steam instalado",
             "choose an installed Steam game",
@@ -535,14 +543,15 @@ fn freeze_instead_of_kill(mut item: PlanItem) -> PlanItem {
 /// `turbo-rescan`: congela las instancias nuevas de las filas de Turbo. Lo ya congelado se
 /// salta (el journal lo tiene).
 pub fn turbo_rescan(turbo: &Turbo, helper: Option<Elevated>) -> Result<Outcomes> {
+    let lang = turbo.lang;
     let Inputs {
         device,
         rules,
         processes,
         mut snapshot,
         ..
-    } = inputs()?;
-    let game = game_targets(turbo.appid, &processes)?;
+    } = inputs(lang)?;
+    let game = game_targets(turbo.appid, &processes, lang)?;
     if !game.is_empty() {
         snapshot.game = game;
     }
@@ -559,44 +568,52 @@ pub fn turbo_rescan(turbo: &Turbo, helper: Option<Elevated>) -> Result<Outcomes>
         .filter(|i| i.action == Action::Suspend)
         .collect();
     if owned.is_empty() {
-        return outcomes(Report::default(), vec![], vec![], vec![]);
+        return outcomes(Report::default(), vec![], vec![], vec![], lang);
     }
     let request = ApplyRequest {
         items: owned.iter().collect(),
         ..ApplyRequest::default()
     };
     let report = run(helper, Op::Apply(Box::new(request)), None, turbo.lang)?;
-    outcomes(report, vec![], vec![], vec![])
+    outcomes(report, vec![], vec![], vec![], lang)
 }
 
 /// Turbo sin `auto-revert-on-exit`: al cerrar el juego solo se reanudan los congelados (P5).
 pub fn resume_frozen(helper: Option<Elevated>, lang: Lang) -> Result<Outcomes> {
     let report = run(helper, Op::ResumeFrozen, None, lang)?;
-    outcomes(report, vec![], vec![], vec![])
+    outcomes(report, vec![], vec![], vec![], lang)
 }
 
 /// «Jugar ahora»: si el juego ya está en marcha devuelve `true` y no lo lanza (Turbo se aplica
 /// ya); si no, pide a Steam que lo lance y devuelve `false` (Turbo se aplica cuando arranca: la
 /// UI espera el evento `game-launched`). Se mira ahora, no con el dato del snapshot, que puede
 /// haberse quedado viejo.
-pub fn launch_game(appid: u32) -> Result<bool> {
-    let processes =
-        framerush_platform::scan_processes().context("no se pudo listar los procesos")?;
-    if !game_targets(appid, &processes)?.is_empty() {
+pub fn launch_game(appid: u32, lang: Lang) -> Result<bool> {
+    let processes = framerush_platform::scan_processes().context(lang.pick(
+        "no se pudo listar los procesos",
+        "could not list the processes",
+    ))?;
+    if !game_targets(appid, &processes, lang)?.is_empty() {
         return Ok(true);
     }
-    steam_launch(appid)?;
+    steam_launch(appid, lang)?;
     Ok(false)
 }
 
 #[cfg(windows)]
-fn steam_launch(appid: u32) -> Result<()> {
-    framerush_platform::steam_launch(appid).context("no se pudo lanzar el juego desde Steam")
+fn steam_launch(appid: u32, lang: Lang) -> Result<()> {
+    framerush_platform::steam_launch(appid).context(lang.pick(
+        "no se pudo lanzar el juego desde Steam",
+        "could not launch the game from Steam",
+    ))
 }
 
 #[cfg(not(windows))]
-fn steam_launch(_appid: u32) -> Result<()> {
-    anyhow::bail!("lanzar juegos de Steam solo está implementado en Windows por ahora")
+fn steam_launch(_appid: u32, lang: Lang) -> Result<()> {
+    anyhow::bail!(lang.pick(
+        "lanzar juegos de Steam solo está implementado en Windows por ahora",
+        "launching Steam games is only implemented on Windows for now",
+    ))
 }
 
 /// Lo que el adaptador del juego quiere escribir. Sin adaptador o sin Steam, nada.
@@ -611,7 +628,7 @@ fn adapter_files(
     let Some(adapter) = framerush_games::adapter(appid) else {
         return Ok(vec![]);
     };
-    let Some((root, app)) = steam_install(appid)? else {
+    let Some((root, app)) = steam_install(appid, lang)? else {
         let name = adapter.name();
         notes.push(lang.pick(
             format!("{name}: no está instalado en Steam"),
@@ -623,9 +640,13 @@ fn adapter_files(
         dir: &app.dir,
         steam_root: &root,
     };
-    let plan = adapter
-        .plan(install, device, options)
-        .with_context(|| format!("no se pudo leer la config de {}", adapter.name()))?;
+    let plan = adapter.plan(install, device, options).with_context(|| {
+        let name = adapter.name();
+        lang.pick(
+            format!("no se pudo leer la config de {name}"),
+            format!("could not read the config of {name}"),
+        )
+    })?;
     notes.extend(plan.notes);
     // El juego reescribe su config al salir (referencia CS2-FPS-Boost): sin bloqueo se pierde.
     if running && options.tune && !options.lock {
@@ -646,13 +667,13 @@ fn adapter_files(
 /// Restaurar, P5).
 pub fn revert_session(helper: Option<Elevated>, lang: Lang) -> Result<Outcomes> {
     let report = run(helper, Op::RevertSession, None, lang)?;
-    outcomes(report, vec![], vec![], vec![])
+    outcomes(report, vec![], vec![], vec![], lang)
 }
 
 /// Deshace el último `apply`.
 pub fn undo(helper: Option<Elevated>, progress: OnProgress<'_>, lang: Lang) -> Result<Outcomes> {
     let report = run(helper, Op::Undo, Some(progress), lang)?;
-    outcomes(report, vec![], vec![], vec![])
+    outcomes(report, vec![], vec![], vec![], lang)
 }
 
 /// Plan de la fila `id` con el equipo de ahora (el juego queda fuera, como en `apply`).
@@ -661,13 +682,14 @@ fn row_item(
     level: Level,
     elevated: bool,
     keep_alive_list: Option<&[String]>,
+    lang: Lang,
 ) -> Result<PlanItem> {
     let Inputs {
         device,
         rules,
         snapshot,
         ..
-    } = inputs()?;
+    } = inputs(lang)?;
     let options = PlanOptions {
         elevated,
         keep_alive: keep_alive(keep_alive_list, &device),
@@ -677,12 +699,17 @@ fn row_item(
         .items
         .into_iter()
         .find(|i| i.rule_id == id)
-        .with_context(|| format!("{id}: no hay procesos de esta fila en marcha"))
+        .with_context(|| {
+            lang.pick(
+                format!("{id}: no hay procesos de esta fila en marcha"),
+                format!("{id}: no processes of this row are running"),
+            )
+        })
 }
 
 /// Ids de las filas con algún proceso limitado por la sesión (la UI lo pide tras cada acción,
 /// porque el snapshot solo se carga al abrir).
-pub fn limited_rows() -> Result<Vec<String>> {
+pub fn limited_rows(lang: Lang) -> Result<Vec<String>> {
     let limited = session_targets();
     if limited.is_empty() {
         return Ok(vec![]);
@@ -692,7 +719,7 @@ pub fn limited_rows() -> Result<Vec<String>> {
         rules,
         snapshot,
         ..
-    } = inputs()?;
+    } = inputs(lang)?;
     let options = PlanOptions {
         elevated: true,
         keep_alive: defaults::keep_alive(&device).value,
@@ -711,13 +738,13 @@ pub fn limited_rows() -> Result<Vec<String>> {
 
 /// Reanuda los procesos de una fila y deja el resto de la sesión como está.
 pub fn release_row(id: &str, helper: Option<Elevated>, lang: Lang) -> Result<Outcomes> {
-    let item = row_item(id, Level::Extremo, helper.is_some(), None)?;
+    let item = row_item(id, Level::Extremo, helper.is_some(), None, lang)?;
     let targets: Vec<Target> = match &item.subject {
         Subject::Processes(ps) => ps.iter().map(|p| p.target.clone()).collect(),
         Subject::Services(_) => vec![],
     };
     let report = run(helper, Op::RevertProcesses(targets), None, lang)?;
-    outcomes(report, vec![], vec![], vec![])
+    outcomes(report, vec![], vec![], vec![], lang)
 }
 
 /// Vuelve a limitar una fila reanudada, con la acción de `level`. Nunca cierra: un kill pasa a
@@ -730,9 +757,15 @@ pub fn limit_row(
     helper: Option<Elevated>,
     lang: Lang,
 ) -> Result<Outcomes> {
-    let mut item = row_item(id, level(level_n)?, helper.is_some(), keep_alive_list)?;
+    let mut item = row_item(
+        id,
+        level(level_n, lang)?,
+        helper.is_some(),
+        keep_alive_list,
+        lang,
+    )?;
     if item.locked {
-        return outcomes(Report::default(), vec![], vec![id.to_owned()], vec![]);
+        return outcomes(Report::default(), vec![], vec![id.to_owned()], vec![], lang);
     }
     item = freeze_instead_of_kill(item);
     let request = ApplyRequest {
@@ -740,7 +773,7 @@ pub fn limit_row(
         ..ApplyRequest::default()
     };
     let report = run(helper, Op::Apply(Box::new(request)), None, lang)?;
-    outcomes(report, vec![], vec![], vec![])
+    outcomes(report, vec![], vec![], vec![], lang)
 }
 
 /// Proceso congelado por otro programa (`foreign-frozen`), para el aviso de Procesos.
@@ -757,7 +790,7 @@ pub struct Frozen {
 /// Congelados por otro programa ahora mismo: todos sus hilos suspendidos, sin las apps de la
 /// Store, los protegidos ni lo que congeló FrameRush. En Linux y macOS, los parados por una señal.
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-fn foreign_frozen_now() -> Result<Vec<framerush_platform::ProcessInfo>> {
+fn foreign_frozen_now(lang: Lang) -> Result<Vec<framerush_platform::ProcessInfo>> {
     use framerush_core::JournalStore;
     #[cfg(target_os = "linux")]
     use framerush_platform::LinuxPlatform as Native;
@@ -767,12 +800,15 @@ fn foreign_frozen_now() -> Result<Vec<framerush_platform::ProcessInfo>> {
     #[cfg(windows)]
     use framerush_platform::WindowsPlatform as Native;
 
-    let processes =
-        framerush_platform::scan_processes().context("no se pudo listar los procesos")?;
-    let suspended = Native::new()
-        .suspended()
-        .context("no se pudo leer qué procesos están congelados")?;
-    let journal = store()?.load()?;
+    let processes = framerush_platform::scan_processes().context(lang.pick(
+        "no se pudo listar los procesos",
+        "could not list the processes",
+    ))?;
+    let suspended = Native::new().suspended().context(lang.pick(
+        "no se pudo leer qué procesos están congelados",
+        "could not read which processes are frozen",
+    ))?;
+    let journal = store(lang)?.load()?;
     Ok(
         framerush_core::foreign_frozen(&processes, &suspended, &journal)
             .into_iter()
@@ -783,12 +819,12 @@ fn foreign_frozen_now() -> Result<Vec<framerush_platform::ProcessInfo>> {
 
 /// En los demás SO aún no se detectan.
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-fn foreign_frozen_now() -> Result<Vec<framerush_platform::ProcessInfo>> {
+fn foreign_frozen_now(_lang: Lang) -> Result<Vec<framerush_platform::ProcessInfo>> {
     Ok(vec![])
 }
 
-pub fn frozen() -> Result<Vec<Frozen>> {
-    Ok(foreign_frozen_now()?
+pub fn frozen(lang: Lang) -> Result<Vec<Frozen>> {
+    Ok(foreign_frozen_now(lang)?
         .into_iter()
         .map(|p| Frozen {
             pid: p.target.pid,
@@ -802,19 +838,19 @@ pub fn frozen() -> Result<Vec<Frozen>> {
 /// Reanuda los congelados por otro programa de `pids` (todos si está vacío). Se vuelven a
 /// buscar ahora: un PID que ya no está congelado o es otro proceso no se toca.
 pub fn resume_foreign(pids: &[u32], helper: Option<Elevated>, lang: Lang) -> Result<Outcomes> {
-    let targets: Vec<Target> = foreign_frozen_now()?
+    let targets: Vec<Target> = foreign_frozen_now(lang)?
         .into_iter()
         .filter(|p| pids.is_empty() || pids.contains(&p.target.pid))
         .map(|p| p.target)
         .collect();
     let report = run(helper, Op::ResumeForeign(targets), None, lang)?;
-    outcomes(report, vec![], vec![], vec![])
+    outcomes(report, vec![], vec![], vec![], lang)
 }
 
 /// Deshace toda la sesión (Restaurar).
 pub fn revert(helper: Option<Elevated>, progress: OnProgress<'_>, lang: Lang) -> Result<Outcomes> {
     let report = run(helper, Op::Revert, Some(progress), lang)?;
-    outcomes(report, vec![], vec![], vec![])
+    outcomes(report, vec![], vec![], vec![], lang)
 }
 
 fn outcomes(
@@ -822,8 +858,9 @@ fn outcomes(
     not_wired: Vec<String>,
     needs_admin: Vec<String>,
     notes: Vec<String>,
+    lang: Lang,
 ) -> Result<Outcomes> {
-    let session_open = framerush_core::JournalStore::load(&store()?)
+    let session_open = framerush_core::JournalStore::load(&store(lang)?)
         .map(|j| j.is_open())
         .unwrap_or(false);
     Ok(Outcomes {
@@ -836,7 +873,7 @@ fn outcomes(
                 let (outcome, detail) = match l.outcome {
                     Outcome::Done => ("done", None),
                     Outcome::Skipped(why) => ("skipped", Some(why)),
-                    Outcome::Failed(e) => ("failed", Some(e.to_string())),
+                    Outcome::Failed(e) => ("failed", Some(e.message(lang))),
                 };
                 Line {
                     what: l.what,
@@ -886,27 +923,36 @@ fn run(
         Some(h) => framerush_platform::WindowsPlatform::with_helper(h),
         None => framerush_platform::WindowsPlatform::new(),
     };
-    let store = store()?;
+    let store = store(lang)?;
     let mut engine = framerush_core::Engine::new(&platform, &store).with_lang(lang);
     if let Some(on) = progress {
         engine = engine.with_progress(on);
     }
     Ok(match op {
-        Op::Apply(request) => engine.apply(&request).context("no se pudo aplicar")?,
-        Op::Undo => engine.undo_last().context("no se pudo deshacer")?,
-        Op::Revert => engine.revert_all().context("no se pudo restaurar")?,
-        Op::RevertSession => engine
-            .revert_session()
-            .context("no se pudo revertir la sesión")?,
+        Op::Apply(request) => engine
+            .apply(&request)
+            .context(lang.pick("no se pudo aplicar", "could not apply"))?,
+        Op::Undo => engine
+            .undo_last()
+            .context(lang.pick("no se pudo deshacer", "could not undo"))?,
+        Op::Revert => engine
+            .revert_all()
+            .context(lang.pick("no se pudo restaurar", "could not restore"))?,
+        Op::RevertSession => engine.revert_session().context(lang.pick(
+            "no se pudo revertir la sesión",
+            "could not revert the session",
+        ))?,
         Op::RevertProcesses(targets) => engine
             .revert_processes(&targets)
-            .context("no se pudo reanudar")?,
-        Op::ResumeFrozen => engine
-            .resume_frozen()
-            .context("no se pudo reanudar lo congelado")?,
-        Op::ResumeForeign(targets) => engine
-            .resume_foreign(&targets)
-            .context("no se pudo reanudar lo congelado por otro programa")?,
+            .context(lang.pick("no se pudo reanudar", "could not resume"))?,
+        Op::ResumeFrozen => engine.resume_frozen().context(lang.pick(
+            "no se pudo reanudar lo congelado",
+            "could not resume the frozen processes",
+        ))?,
+        Op::ResumeForeign(targets) => engine.resume_foreign(&targets).context(lang.pick(
+            "no se pudo reanudar lo congelado por otro programa",
+            "could not resume what another program froze",
+        ))?,
     })
 }
 
@@ -915,9 +961,12 @@ fn run(
     _helper: Option<Elevated>,
     _op: Op<'_>,
     _progress: Option<OnProgress<'_>>,
-    _lang: Lang,
+    lang: Lang,
 ) -> Result<Report> {
-    anyhow::bail!("aplicar, deshacer y restaurar solo están implementados en Windows por ahora")
+    anyhow::bail!(lang.pick(
+        "aplicar, deshacer y restaurar solo están implementados en Windows por ahora",
+        "apply, undo and restore are only implemented on Windows for now",
+    ))
 }
 
 #[cfg(test)]
@@ -968,7 +1017,7 @@ mod tests {
                 "autoRevert":true,"keepAlive":["discord"," teams"],"lang":"en"}"#,
         )
         .unwrap();
-        assert_eq!(level(s.level).unwrap(), Level::Agresivo);
+        assert_eq!(level(s.level, Lang::Es).unwrap(), Level::Agresivo);
         assert_eq!(s.rows, ["sync-onedrive"]);
         assert_eq!(
             s.keep_alive.as_deref(),
@@ -989,9 +1038,9 @@ mod tests {
 
     #[test]
     fn levels_are_one_based() {
-        assert_eq!(level(1).unwrap(), Level::Normal);
-        assert_eq!(level(3).unwrap(), Level::Extremo);
-        assert!(level(0).is_err());
-        assert!(level(4).is_err());
+        assert_eq!(level(1, Lang::Es).unwrap(), Level::Normal);
+        assert_eq!(level(3, Lang::Es).unwrap(), Level::Extremo);
+        assert!(level(0, Lang::Es).is_err());
+        assert!(level(4, Lang::Es).is_err());
     }
 }

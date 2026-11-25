@@ -29,6 +29,7 @@
 
 mod actions;
 mod diagnostics;
+mod error;
 mod launch;
 mod overlay;
 mod profiles;
@@ -192,7 +193,8 @@ fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> 
                     last_rescan = Instant::now();
                     let payload = match logged(
                         "turbo-rescan",
-                        actions::turbo_rescan(turbo, helper.clone()).map_err(|e| format!("{e:#}")),
+                        actions::turbo_rescan(turbo, helper.clone())
+                            .map_err(|e| error::message(&e, lang)),
                     ) {
                         Ok(outcomes) => GameExited {
                             outcomes: Some(outcomes),
@@ -213,7 +215,8 @@ fn watch(app: AppHandle, plan: actions::WatchPlan, helper: Option<Elevated>) -> 
             } else {
                 actions::resume_frozen(helper, plan.lang)
             };
-            let payload = match logged("game-exited", result.map_err(|e| format!("{e:#}"))) {
+            let payload = match logged("game-exited", result.map_err(|e| error::message(&e, lang)))
+            {
                 Ok(outcomes) => GameExited {
                     outcomes: Some(outcomes),
                     error: None,
@@ -261,13 +264,13 @@ fn quit(app: &AppHandle) {
             .filter(GameWatch::running)
             .map(|w| (w.revert_session, w.lang));
         if let Some((revert_session, lang)) = pending {
-            let helper = helper(&app.state::<Sensors>()).ok().flatten();
+            let helper = helper(&app.state::<Sensors>(), lang).ok().flatten();
             let result = if revert_session {
                 actions::revert_session(helper, lang)
             } else {
                 actions::resume_frozen(helper, lang)
             };
-            let _ = logged("quit", result.map_err(|e| format!("{e:#}")));
+            let _ = logged("quit", result.map_err(|e| error::message(&e, lang)));
         }
         tracing::info!("salir desde la bandeja");
         app.exit(0);
@@ -303,15 +306,21 @@ fn on_close(window: &tauri::Window, api: &tauri::CloseRequestApi) {
 }
 
 /// Para el watchdog, si lo hay.
-fn stop_watch(watchdog: &Watchdog) -> Result<(), String> {
-    let old = watchdog
-        .0
-        .lock()
-        .map_err(|_| "estado del watchdog roto".to_owned())?
-        .take();
+fn stop_watch(watchdog: &Watchdog, lang: Lang) -> Result<(), String> {
+    let old = watchdog.0.lock().map_err(|_| watchdog_broken(lang))?.take();
     // Se suelta fuera del cerrojo: esperar al hilo con él tomado no hace falta.
     drop(old);
     Ok(())
+}
+
+fn watchdog_broken(lang: Lang) -> String {
+    lang.pick("estado del watchdog roto", "watchdog state broken")
+        .to_owned()
+}
+
+fn sensors_broken(lang: Lang) -> String {
+    lang.pick("estado de los sensores roto", "sensor state broken")
+        .to_owned()
 }
 
 /// Progreso de una espera (evento `progress`): la carga (`op` = `load`, `what` = la fase
@@ -350,7 +359,7 @@ async fn snapshot(
     let info = sensors
         .0
         .lock()
-        .map_err(|_| "estado de los sensores roto".to_owned())?
+        .map_err(|_| sensors_broken(lang))?
         .info
         .clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -371,21 +380,21 @@ async fn snapshot(
     })
     .await
     .map_err(|e| e.to_string())?
-    .map_err(|e| format!("{e:#}"))
+    .map_err(|e| error::message(&e, lang))
 }
 
 /// Vista Estado: journal y equipo ahora, fuera del hilo de la UI (WMI tarda).
 #[tauri::command]
 async fn status(lang: Lang) -> Result<snapshot::StatusView, String> {
-    blocking(move || snapshot::status(lang)).await
+    blocking(lang, move || snapshot::status(lang)).await
 }
 
 /// Helper elevado abierto, si lo hay (se comparte: un solo UAC).
-fn helper(sensors: &Sensors) -> Result<Option<Elevated>, String> {
+fn helper(sensors: &Sensors, lang: Lang) -> Result<Option<Elevated>, String> {
     Ok(sensors
         .0
         .lock()
-        .map_err(|_| "estado de los sensores roto".to_owned())?
+        .map_err(|_| sensors_broken(lang))?
         .helper
         .clone())
 }
@@ -403,13 +412,15 @@ fn logged(
 }
 
 /// Corre `op` fuera del hilo de la UI (escanea procesos y toca el sistema).
+/// Los errores van en `lang`.
 async fn blocking<T: Send + 'static>(
+    lang: Lang,
     op: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(op)
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| error::message(&e, lang))
 }
 
 #[tauri::command]
@@ -419,24 +430,22 @@ async fn apply(
     sensors: tauri::State<'_, Sensors>,
     watchdog: tauri::State<'_, Watchdog>,
 ) -> Result<actions::Outcomes, String> {
-    let helper = helper(&sensors)?;
+    let lang = selection.lang;
+    let helper = helper(&sensors, lang)?;
     let for_apply = helper.clone();
     let mut out = logged(
         "apply",
-        blocking({
+        blocking(lang, {
             let on = progress_to(app.clone(), "apply");
             move || actions::apply(&selection, for_apply, &on)
         })
         .await,
     )?;
     let plan = out.take_watch();
-    stop_watch(&watchdog)?;
+    stop_watch(&watchdog, lang)?;
     if let Some(plan) = plan {
         let w = watch(app, plan, helper);
-        *watchdog
-            .0
-            .lock()
-            .map_err(|_| "estado del watchdog roto".to_owned())? = Some(w);
+        *watchdog.0.lock().map_err(|_| watchdog_broken(lang))? = Some(w);
         out.set_watching(true);
         tracing::info!("watchdog vigilando el juego");
     }
@@ -445,14 +454,14 @@ async fn apply(
 
 /// Perfiles guardados por `appid`.
 #[tauri::command]
-fn profiles() -> Result<profiles::Profiles, String> {
-    profiles::load().map_err(|e| format!("{e:#}"))
+fn profiles(lang: Lang) -> Result<profiles::Profiles, String> {
+    profiles::load(lang).map_err(|e| error::message(&e, lang))
 }
 
 /// Guarda (o sustituye) el perfil del juego `appid`.
 #[tauri::command]
-fn save_profile(appid: u32, profile: profiles::Profile) -> Result<(), String> {
-    profiles::save(appid, profile).map_err(|e| format!("{e:#}"))
+fn save_profile(appid: u32, profile: profiles::Profile, lang: Lang) -> Result<(), String> {
+    profiles::save(appid, profile, lang).map_err(|e| error::message(&e, lang))
 }
 
 #[tauri::command]
@@ -461,25 +470,25 @@ async fn undo(
     lang: Lang,
     sensors: tauri::State<'_, Sensors>,
 ) -> Result<actions::Outcomes, String> {
-    let helper = helper(&sensors)?;
+    let helper = helper(&sensors, lang)?;
     let on = progress_to(app, "undo");
     logged(
         "undo",
-        blocking(move || actions::undo(helper, &on, lang)).await,
+        blocking(lang, move || actions::undo(helper, &on, lang)).await,
     )
 }
 
 /// «Jugar ahora» (Turbo): pide a Steam que lance el juego `appid`, salvo que ya esté en marcha
 /// (`true`).
 #[tauri::command]
-async fn launch_game(appid: u32) -> Result<bool, String> {
-    blocking(move || actions::launch_game(appid)).await
+async fn launch_game(appid: u32, lang: Lang) -> Result<bool, String> {
+    blocking(lang, move || actions::launch_game(appid, lang)).await
 }
 
 /// Filas con algún proceso limitado por la sesión.
 #[tauri::command]
-async fn limited_rows() -> Result<Vec<String>, String> {
-    blocking(actions::limited_rows).await
+async fn limited_rows(lang: Lang) -> Result<Vec<String>, String> {
+    blocking(lang, move || actions::limited_rows(lang)).await
 }
 
 /// Reanuda una fila sin tocar el resto de la sesión (el watchdog sigue).
@@ -489,10 +498,10 @@ async fn release_row(
     lang: Lang,
     sensors: tauri::State<'_, Sensors>,
 ) -> Result<actions::Outcomes, String> {
-    let helper = helper(&sensors)?;
+    let helper = helper(&sensors, lang)?;
     logged(
         "release_row",
-        blocking(move || actions::release_row(&id, helper, lang)).await,
+        blocking(lang, move || actions::release_row(&id, helper, lang)).await,
     )
 }
 
@@ -505,17 +514,20 @@ async fn limit_row(
     lang: Lang,
     sensors: tauri::State<'_, Sensors>,
 ) -> Result<actions::Outcomes, String> {
-    let helper = helper(&sensors)?;
+    let helper = helper(&sensors, lang)?;
     logged(
         "limit_row",
-        blocking(move || actions::limit_row(&id, level, keep_alive.as_deref(), helper, lang)).await,
+        blocking(lang, move || {
+            actions::limit_row(&id, level, keep_alive.as_deref(), helper, lang)
+        })
+        .await,
     )
 }
 
 /// Procesos congelados por otro programa (`foreign-frozen`).
 #[tauri::command]
-async fn frozen_processes() -> Result<Vec<actions::Frozen>, String> {
-    blocking(actions::frozen).await
+async fn frozen_processes(lang: Lang) -> Result<Vec<actions::Frozen>, String> {
+    blocking(lang, move || actions::frozen(lang)).await
 }
 
 /// Reanuda los congelados por otro programa de `pids` (todos si está vacío). No pasa por el
@@ -526,10 +538,10 @@ async fn resume_foreign(
     lang: Lang,
     sensors: tauri::State<'_, Sensors>,
 ) -> Result<actions::Outcomes, String> {
-    let helper = helper(&sensors)?;
+    let helper = helper(&sensors, lang)?;
     logged(
         "resume_foreign",
-        blocking(move || actions::resume_foreign(&pids, helper, lang)).await,
+        blocking(lang, move || actions::resume_foreign(&pids, helper, lang)).await,
     )
 }
 
@@ -541,30 +553,27 @@ async fn revert(
     sensors: tauri::State<'_, Sensors>,
     watchdog: tauri::State<'_, Watchdog>,
 ) -> Result<actions::Outcomes, String> {
-    stop_watch(&watchdog)?;
-    let helper = helper(&sensors)?;
+    stop_watch(&watchdog, lang)?;
+    let helper = helper(&sensors, lang)?;
     let on = progress_to(app, "revert");
     logged(
         "revert",
-        blocking(move || actions::revert(helper, &on, lang)).await,
+        blocking(lang, move || actions::revert(helper, &on, lang)).await,
     )
 }
 
 /// Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él.
 #[tauri::command]
-async fn elevate(app: AppHandle) -> Result<(), String> {
-    let (sources, helper) = tauri::async_runtime::spawn_blocking(elevated_sources)
+async fn elevate(app: AppHandle, lang: Lang) -> Result<(), String> {
+    let (sources, helper) = tauri::async_runtime::spawn_blocking(move || elevated_sources(lang))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| error::message(&e, lang))
         .inspect_err(|e| tracing::error!(error = %e, "no se pudo abrir el helper"))?;
     tracing::info!("helper elevado abierto");
     let state = start(&app, sources, Some(helper));
     let sensors = app.state::<Sensors>();
-    let mut current = sensors
-        .0
-        .lock()
-        .map_err(|_| "estado de los sensores roto".to_owned())?;
+    let mut current = sensors.0.lock().map_err(|_| sensors_broken(lang))?;
     // El hilo anterior se para al soltar su `Poller`.
     *current = state;
     Ok(())
@@ -572,23 +581,38 @@ async fn elevate(app: AppHandle) -> Result<(), String> {
 
 /// El helper va junto al ejecutable de la app (`cargo build --workspace` lo compila).
 #[cfg(windows)]
-fn elevated_sources() -> anyhow::Result<(framerush_sensors::Sources, Elevated)> {
+fn elevated_sources(lang: Lang) -> anyhow::Result<(framerush_sensors::Sources, Elevated)> {
     use anyhow::Context;
     let exe = std::env::current_exe()
-        .context("no se encontró el ejecutable de la app")?
+        .context(lang.pick(
+            "no se encontró el ejecutable de la app",
+            "the app executable was not found",
+        ))?
         .with_file_name("framerush-helper.exe");
     anyhow::ensure!(
         exe.is_file(),
-        "falta {} (compílalo con `cargo build --workspace`)",
-        exe.display()
+        lang.pick(
+            format!(
+                "falta {} (compílalo con `cargo build --workspace`)",
+                exe.display()
+            ),
+            format!(
+                "{} is missing (build it with `cargo build --workspace`)",
+                exe.display()
+            ),
+        )
     );
-    let helper = framerush_platform::Helper::launch(&exe).context("no se pudo abrir el helper")?;
+    let helper = framerush_platform::Helper::launch(&exe)
+        .context(lang.pick("no se pudo abrir el helper", "could not open the helper"))?;
     Ok((framerush_sensors::detect_elevated(helper.clone()), helper))
 }
 
 #[cfg(not(windows))]
-fn elevated_sources() -> anyhow::Result<(framerush_sensors::Sources, Elevated)> {
-    anyhow::bail!("en este sistema todavía no hay helper elevado")
+fn elevated_sources(lang: Lang) -> anyhow::Result<(framerush_sensors::Sources, Elevated)> {
+    anyhow::bail!(lang.pick(
+        "en este sistema todavía no hay helper elevado",
+        "there is no elevated helper on this system yet",
+    ))
 }
 
 /// Alerta térmica o de ventilador parado (It3.6): notificación del sistema, que se ve también
@@ -618,8 +642,11 @@ fn tray_labels(app: AppHandle, toggle: String, quit: String) -> Result<(), Strin
 
 /// Informe de diagnóstico (It4.5): devuelve la ruta del archivo guardado.
 #[tauri::command]
-async fn export_diagnostics() -> Result<String, String> {
-    blocking(|| diagnostics::export().map(|p| p.display().to_string())).await
+async fn export_diagnostics(lang: Lang) -> Result<String, String> {
+    blocking(lang, move || {
+        diagnostics::export(lang).map(|p| p.display().to_string())
+    })
+    .await
 }
 
 fn main() -> anyhow::Result<()> {

@@ -49,7 +49,8 @@ pub fn spawn(app: AppHandle) {
                 .as_ref()
                 .is_some_and(|(_, t)| framerush_core::game_running(t, &processes));
             if !alive {
-                *seen = detected_game(&processes).ok()?;
+                // El error se descarta: el idioma da igual.
+                *seen = detected_game(&processes, framerush_core::Lang::Es).ok()?;
             }
             Some(seen.as_ref().map(|(id, _)| *id))
         };

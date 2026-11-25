@@ -8,6 +8,7 @@
 
 use crate::snapshot::{data_dir, native_device, status_of};
 use anyhow::{Context, Result};
+use framerush_core::Lang;
 use framerush_platform::Os;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -47,12 +48,16 @@ pub fn init_logs() -> Option<PathBuf> {
     Some(path)
 }
 
-/// Escribe el informe y devuelve dónde quedó.
-pub fn export() -> Result<PathBuf> {
-    let os = Os::current().context("sistema operativo no admitido")?;
+/// Escribe el informe y devuelve dónde quedó. `lang` es el de los errores; el informe va en
+/// español.
+pub fn export(lang: Lang) -> Result<PathBuf> {
+    let os = Os::current().context(lang.pick(
+        "sistema operativo no admitido",
+        "unsupported operating system",
+    ))?;
     let device = native_device(os);
     // El informe de diagnóstico es para depurar: va en español, como los logs.
-    let status = status_of(&device, framerush_core::Lang::Es).map_err(|e| format!("{e:#}"));
+    let status = status_of(&device, Lang::Es).map_err(|e| crate::error::message(&e, Lang::Es));
     let journal = data_dir().and_then(|d| read_json(&d.join("session.json")));
     let logs = logs_dir();
     let log = |name| {
@@ -62,7 +67,10 @@ pub fn export() -> Result<PathBuf> {
     };
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .context("reloj del sistema antes de 1970")?
+        .context(lang.pick(
+            "reloj del sistema antes de 1970",
+            "system clock before 1970",
+        ))?
         .as_secs();
     let report = serde_json::json!({
         "app": "FrameRush",
@@ -75,7 +83,10 @@ pub fn export() -> Result<PathBuf> {
         "previous_log": log(OLD_LOG),
         "cli_log": log(CLI_LOG),
     });
-    let text = serde_json::to_string_pretty(&report).context("no se pudo generar el informe")?;
+    let text = serde_json::to_string_pretty(&report).context(lang.pick(
+        "no se pudo generar el informe",
+        "could not generate the report",
+    ))?;
     let (var, placeholder) = HOME;
     let text = match std::env::var(var) {
         Ok(home) => redact(&text, &home, placeholder),
@@ -83,11 +94,22 @@ pub fn export() -> Result<PathBuf> {
     };
     let dir = framerush_platform::downloads_dir()
         .or_else(data_dir)
-        .context("no hay carpeta donde guardar")?;
-    std::fs::create_dir_all(&dir).with_context(|| format!("no se pudo crear {}", dir.display()))?;
+        .context(lang.pick("no hay carpeta donde guardar", "no folder to save to"))?;
+    std::fs::create_dir_all(&dir).with_context(|| {
+        let d = dir.display();
+        lang.pick(
+            format!("no se pudo crear {d}"),
+            format!("could not create {d}"),
+        )
+    })?;
     let path = dir.join(format!("framerush-diagnostico-{}.json", stamp(now, false)));
-    std::fs::write(&path, text)
-        .with_context(|| format!("no se pudo escribir {}", path.display()))?;
+    std::fs::write(&path, text).with_context(|| {
+        let p = path.display();
+        lang.pick(
+            format!("no se pudo escribir {p}"),
+            format!("could not write {p}"),
+        )
+    })?;
     tracing::info!(path = %path.display(), "diagnóstico exportado");
     Ok(path)
 }

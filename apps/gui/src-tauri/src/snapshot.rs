@@ -224,20 +224,29 @@ pub(crate) struct Inputs {
 pub const LOAD_PHASES: usize = 4;
 
 /// Equipo, reglas, procesos y ajustes de ahora mismo. Tarda: fuera del hilo de la UI.
-pub(crate) fn inputs() -> Result<Inputs> {
-    inputs_with(&|_| {})
+pub(crate) fn inputs(lang: Lang) -> Result<Inputs> {
+    inputs_with(&|_| {}, lang)
 }
 
 /// Como [`inputs`], avisando a `phase` al terminar `device`, `rules` y `processes`.
-fn inputs_with(phase: &dyn Fn(&'static str)) -> Result<Inputs> {
+fn inputs_with(phase: &dyn Fn(&'static str), lang: Lang) -> Result<Inputs> {
     let Some(os) = Os::current() else {
-        bail!("sistema operativo no admitido");
+        bail!(lang.pick(
+            "sistema operativo no admitido",
+            "unsupported operating system"
+        ));
     };
     let device = native_device(os);
     phase("device");
-    let rules = framerush_rules::embedded().context("las reglas embebidas no son válidas")?;
+    let rules = framerush_rules::embedded().context(lang.pick(
+        "las reglas embebidas no son válidas",
+        "the embedded rules are not valid",
+    ))?;
     phase("rules");
-    let processes = scan_processes().context("no se pudo listar los procesos")?;
+    let processes = scan_processes().context(lang.pick(
+        "no se pudo listar los procesos",
+        "could not list the processes",
+    ))?;
     let (tweaks, admin_tweaks, caps) = native_caps();
     let snapshot = Snapshot {
         processes: processes.clone(),
@@ -276,7 +285,7 @@ pub fn build(sensors: SensorInfo, phase: &dyn Fn(&'static str), lang: Lang) -> R
         snapshot,
         tweaks,
         caps,
-    } = inputs_with(phase)?;
+    } = inputs_with(phase, lang)?;
     // Con el helper abierto lo que pide admin no lleva candado y el nivel lo marca como
     // cualquier otra fila (servicios, procesos ajenos).
     let options = PlanOptions {
@@ -320,8 +329,10 @@ pub fn build(sensors: SensorInfo, phase: &dyn Fn(&'static str), lang: Lang) -> R
     }
     let (mut games, games_note) = steam_games(&processes, lang);
     phase("steam");
-    let recs = framerush_rules::recommendations()
-        .context("las recomendaciones embebidas no son válidas")?;
+    let recs = framerush_rules::recommendations().context(lang.pick(
+        "las recomendaciones embebidas no son válidas",
+        "the embedded recommendations are not valid",
+    ))?;
     for g in &mut games {
         g.recommendations = framerush_core::recommendations_for(&recs, &device, Some(g.appid))
             .into_iter()
@@ -664,8 +675,13 @@ fn steam_library() -> framerush_steam::Result<Option<(PathBuf, Vec<framerush_ste
 }
 
 /// Carpeta de Steam y el juego `appid`, para su adaptador.
-pub(crate) fn steam_install(appid: u32) -> Result<Option<(PathBuf, framerush_steam::App)>> {
-    let Some((root, apps)) = steam_library().context("no se pudo leer Steam")? else {
+pub(crate) fn steam_install(
+    appid: u32,
+    lang: Lang,
+) -> Result<Option<(PathBuf, framerush_steam::App)>> {
+    let Some((root, apps)) =
+        steam_library().context(lang.pick("no se pudo leer Steam", "could not read Steam"))?
+    else {
         return Ok(None);
     };
     Ok(apps
@@ -699,11 +715,17 @@ fn running_game(processes: &[ProcessInfo]) -> Vec<Target> {
 /// Juego de Steam en marcha y sus procesos, para detectar el lanzamiento (It3.2): por
 /// `RunningAppID` o, si Steam no lo da, por el exe en primer plano bajo su carpeta (V12). Sin
 /// procesos todavía (Steam ya lo marca pero aún no arrancó), no hay juego.
-pub(crate) fn detected_game(processes: &[ProcessInfo]) -> Result<Option<(u32, Vec<Target>)>> {
+pub(crate) fn detected_game(
+    processes: &[ProcessInfo],
+    lang: Lang,
+) -> Result<Option<(u32, Vec<Target>)>> {
     let apps = steam_apps()
-        .context("no se pudo leer Steam")?
+        .context(lang.pick("no se pudo leer Steam", "could not read Steam"))?
         .unwrap_or_default();
-    let running = framerush_steam::running_app_id().context("no se pudo leer RunningAppID")?;
+    let running = framerush_steam::running_app_id().context(lang.pick(
+        "no se pudo leer RunningAppID",
+        "could not read RunningAppID",
+    ))?;
     let foreground = foreground_exe();
     Ok(
         framerush_steam::detect(&apps, running, foreground.as_deref()).and_then(|(app, _)| {
@@ -730,9 +752,13 @@ fn foreground_exe() -> Option<PathBuf> {
 }
 
 /// Procesos del juego `appid` (el que eligió el usuario), vacío si no está en marcha.
-pub(crate) fn game_targets(appid: u32, processes: &[ProcessInfo]) -> Result<Vec<Target>> {
+pub(crate) fn game_targets(
+    appid: u32,
+    processes: &[ProcessInfo],
+    lang: Lang,
+) -> Result<Vec<Target>> {
     let apps = steam_apps()
-        .context("no se pudo leer Steam")?
+        .context(lang.pick("no se pudo leer Steam", "could not read Steam"))?
         .unwrap_or_default();
     Ok(apps
         .iter()
@@ -895,7 +921,10 @@ pub struct StatusView {
 
 /// Lee el journal y vuelve a detectar el equipo (plan, Hz y VBS pueden haber cambiado).
 pub fn status(lang: Lang) -> Result<StatusView> {
-    let os = Os::current().context("sistema operativo no admitido")?;
+    let os = Os::current().context(lang.pick(
+        "sistema operativo no admitido",
+        "unsupported operating system",
+    ))?;
     status_of(&native_device(os), lang)
 }
 
@@ -905,7 +934,7 @@ pub(crate) fn status_of(device: &DeviceProfile, lang: Lang) -> Result<StatusView
         Some(dir) => framerush_core::status_lines(
             &FileStore::new(dir.join("session.json"))
                 .load()
-                .context("no se pudo leer el journal")?,
+                .context(lang.pick("no se pudo leer el journal", "could not read the journal"))?,
             lang,
         ),
         None => vec![],

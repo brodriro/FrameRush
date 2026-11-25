@@ -79,7 +79,7 @@
      * true si ya estaba en marcha (entonces no lo lanza). El evento
      * `turbo-rescan` llega en cada re-escaneo con { outcomes | null, error | null }.
      */
-    launchGame(appid) { return T.core.invoke('launch_game', { appid }); },
+    launchGame(appid) { return T.core.invoke('launch_game', { appid, lang: lang() }); },
 
     /* Alertas (It3.6): notificación del sistema. Fuera de la app no hace nada. */
     notify(title, body) { return inTauri ? T.core.invoke('notify', { title, body }) : Promise.resolve(); },
@@ -121,14 +121,14 @@
      * Diagnóstico (It4.5): guarda en Descargas un JSON con versión, equipo, Estado, journal y
      * logs locales (la carpeta del usuario sale como %USERPROFILE% o $HOME). Devuelve la ruta.
      */
-    exportDiagnostics() { return T.core.invoke('export_diagnostics'); },
+    exportDiagnostics() { return T.core.invoke('export_diagnostics', { lang: lang() }); },
 
     /*
      * Perfiles por juego (It3.2): { [appid]: { name, data } }. data es el estado de la UI
      * (profileState en app.js); el backend lo guarda tal cual en profiles.json.
      */
-    profiles() { return T.core.invoke('profiles'); },
-    saveProfile(appid, name, data) { return T.core.invoke('save_profile', { appid, profile: { name, data } }); },
+    profiles() { return T.core.invoke('profiles', { lang: lang() }); },
+    saveProfile(appid, name, data) { return T.core.invoke('save_profile', { appid, profile: { name, data }, lang: lang() }); },
     revert() { return T.core.invoke('revert', { lang: lang() }); },
 
     /*
@@ -137,19 +137,19 @@
      */
     releaseRow(id) { return T.core.invoke('release_row', { id, lang: lang() }); },
     limitRow(id, level, keepAlive) { return T.core.invoke('limit_row', { id, level, keepAlive, lang: lang() }); },
-    limitedRows() { return inTauri ? T.core.invoke('limited_rows') : Promise.resolve([]); },
+    limitedRows() { return inTauri ? T.core.invoke('limited_rows', { lang: lang() }) : Promise.resolve([]); },
 
     /*
      * foreign-frozen: procesos congelados por otro programa ({ pid, name, memoryBytes, admin })
      * y reanudarlos (pids vacío = todos). No pasa por la sesión de FrameRush.
      */
-    frozenProcesses() { return inTauri ? T.core.invoke('frozen_processes') : Promise.resolve([]); },
+    frozenProcesses() { return inTauri ? T.core.invoke('frozen_processes', { lang: lang() }) : Promise.resolve([]); },
     resumeForeign(pids) { return T.core.invoke('resume_foreign', { pids, lang: lang() }); },
 
     /* Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él. */
     elevate() {
       if (!inTauri) return Promise.reject(new Error(window.FrameRushI18n.t('api-only-app')));
-      return T.core.invoke('elevate');
+      return T.core.invoke('elevate', { lang: lang() });
     },
 
     /* Ventana de Tauri (barra propia: la ventana no tiene bordes). */
