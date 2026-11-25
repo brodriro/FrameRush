@@ -161,8 +161,10 @@ pub fn anticheat_may_require_vbs(name: &str) -> bool {
 }
 
 /// P10 sobre los ajustes ya repartidos: con un anticheat que puede exigir VBS, `vbs-hvci-off`
-/// queda bloqueado; con cualquier otro, desmarcado.
+/// queda bloqueado; con cualquier otro, desmarcado. Con ESS de Windows Hello activo también
+/// queda bloqueado: ESS usa VBS y lo mantiene en marcha (visto en real, 2026-11-25).
 fn vbs_precedence(
+    hello_ess: Option<bool>,
     anticheats: &[String],
     tweaks: &mut Vec<Tweak>,
     optional: &mut Vec<Tweak>,
@@ -178,18 +180,30 @@ fn vbs_precedence(
         .filter(|a| anticheat_may_require_vbs(a))
         .map(String::as_str)
         .collect();
-    if !requiring.is_empty() {
+    let reason = if !requiring.is_empty() {
+        let names = requiring.join(", ");
+        Some(lang.pick(
+            format!("{names} puede exigir VBS/HVCI"),
+            format!("{names} may require VBS/HVCI"),
+        ))
+    } else if hello_ess == Some(true) {
+        Some(
+            lang.pick(
+                "Windows Hello con inicio de sesión mejorado (ESS) usa VBS: no se apagará mientras \
+                 ESS esté activo (Configuración > Cuentas > Opciones de inicio de sesión)",
+                "Windows Hello Enhanced Sign-in Security (ESS) uses VBS: it will not turn off \
+                 while ESS is on (Settings > Accounts > Sign-in options)",
+            )
+            .to_owned(),
+        )
+    } else {
+        None
+    };
+    if let Some(reason) = reason {
         for list in [&mut *tweaks, &mut *optional, &mut *locked] {
             list.retain(|t| *t != vbs);
         }
-        let names = requiring.join(", ");
-        return vec![(
-            vbs,
-            lang.pick(
-                format!("{names} puede exigir VBS/HVCI"),
-                format!("{names} may require VBS/HVCI"),
-            ),
-        )];
+        return vec![(vbs, reason)];
     }
     if !anticheats.is_empty() && tweaks.contains(&vbs) {
         tweaks.retain(|t| *t != vbs);
@@ -327,6 +341,7 @@ pub fn plan(
     };
     let anticheats = running_anticheats(&snapshot.processes);
     let blocked_tweaks = vbs_precedence(
+        device.hello_ess_enabled,
         &anticheats,
         &mut tweaks,
         &mut optional_tweaks,
@@ -846,6 +861,17 @@ mod tests {
                 p.blocked_tweaks[0].1,
                 format!("{name} may require VBS/HVCI")
             );
+        }
+
+        // ESS de Windows Hello: bloqueado aunque no haya anticheat.
+        let mut ess = device.clone();
+        ess.hello_ess_enabled = Some(true);
+        for opts in [&elevated, &PlanOptions::default()] {
+            let p = plan(Level::Extremo, &clean, &[], &ess, opts);
+            assert!(p.tweaks.is_empty() && p.optional_tweaks.is_empty());
+            assert!(p.locked_tweaks.is_empty());
+            assert_eq!(p.blocked_tweaks.len(), 1);
+            assert!(p.blocked_tweaks[0].1.contains("ESS"));
         }
     }
 

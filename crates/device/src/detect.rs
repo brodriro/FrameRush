@@ -31,6 +31,7 @@ pub fn detect<P: PowerControl + DisplayControl + Inventory>(platform: &P, os: Os
     device.laptop = platform.laptop().ok().flatten();
     device.memory_bytes = platform.total_memory().ok().flatten();
     device.vbs_hvci_enabled = platform.vbs_running().ok().flatten();
+    device.hello_ess_enabled = platform.hello_ess_enabled().ok().flatten();
     device.installed_apps = platform.installed_apps().unwrap_or_default();
     device.hags_supported = platform.hags_supported().ok().flatten();
     device.virtualization = platform.hypervisor_features().unwrap_or_default();
@@ -107,6 +108,9 @@ mod tests {
         assert_eq!(d.laptop, None);
         assert_eq!(d.memory_bytes, None);
         assert_eq!(d.vbs_hvci_enabled, Some(true));
+        assert_eq!(d.hello_ess_enabled, None);
+        m.set_hello_ess(Some(true));
+        assert_eq!(detect(&m, Os::Windows).hello_ess_enabled, Some(true));
         assert_eq!(d.installed_apps, ["Discord", "Steam"]);
 
         assert_eq!(d.virtualization, Vec::<String>::new());

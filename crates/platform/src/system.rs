@@ -176,6 +176,9 @@ pub trait Inventory {
     fn total_memory(&self) -> Result<Option<u64>>;
     /// Si VBS (Device Guard) está en ejecución; `None` si el SO no lo tiene o no lo expone.
     fn vbs_running(&self) -> Result<Option<bool>>;
+    /// Si Windows Hello tiene activado el inicio de sesión mejorado (ESS), que usa VBS y lo
+    /// mantiene en marcha; `None` si el SO no lo dice.
+    fn hello_ess_enabled(&self) -> Result<Option<bool>>;
     /// Nombres de las apps instaladas, ordenados y sin repetir.
     fn installed_apps(&self) -> Result<Vec<String>>;
     /// Si alguna GPU admite la programación de GPU acelerada por hardware (HAGS); `None` si

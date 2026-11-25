@@ -71,6 +71,8 @@ pub struct DeviceProfile {
     pub installed_apps: Vec<String>,
     /// Estado de VBS/HVCI (Device Guard).
     pub vbs_hvci_enabled: Option<bool>,
+    /// Si Windows Hello tiene ESS activo, que mantiene VBS en marcha.
+    pub hello_ess_enabled: Option<bool>,
     /// Si la GPU y el driver admiten HAGS.
     pub hags_supported: Option<bool>,
     /// Antivirus registrados en el SO (Security Center en Windows). Solo el nombre: si hay más
@@ -102,6 +104,7 @@ impl DeviceProfile {
             active_power_plan: None,
             installed_apps: vec![],
             vbs_hvci_enabled: None,
+            hello_ess_enabled: None,
             hags_supported: None,
             antivirus: vec![],
             defender_active: None,

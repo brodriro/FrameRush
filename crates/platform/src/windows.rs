@@ -719,6 +719,10 @@ impl Inventory for WindowsPlatform {
         inventory::vbs_running()
     }
 
+    fn hello_ess_enabled(&self) -> Result<Option<bool>> {
+        inventory::hello_ess_enabled()
+    }
+
     fn installed_apps(&self) -> Result<Vec<String>> {
         inventory::installed_apps()
     }

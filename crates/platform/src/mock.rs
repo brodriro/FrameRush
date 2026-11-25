@@ -43,6 +43,7 @@ struct State {
     laptop: Option<bool>,
     total_memory: Option<u64>,
     vbs_running: Option<bool>,
+    hello_ess: Option<bool>,
     installed_apps: Vec<String>,
     hags_supported: Option<bool>,
     hypervisor_features: Vec<String>,
@@ -168,6 +169,11 @@ impl MockPlatform {
         s.manufacturer = manufacturer.map(str::to_owned);
         s.vbs_running = vbs_running;
         s.installed_apps = installed_apps.iter().map(|a| (*a).to_owned()).collect();
+    }
+
+    /// Define si Windows Hello tiene ESS activo ([`Inventory::hello_ess_enabled`]).
+    pub fn set_hello_ess(&self, enabled: Option<bool>) {
+        self.lock().hello_ess = enabled;
     }
 
     /// Define la memoria física total ([`Inventory::total_memory`]).
@@ -458,6 +464,10 @@ impl Inventory for MockPlatform {
 
     fn vbs_running(&self) -> Result<Option<bool>> {
         Ok(self.lock().vbs_running)
+    }
+
+    fn hello_ess_enabled(&self) -> Result<Option<bool>> {
+        Ok(self.lock().hello_ess)
     }
 
     fn installed_apps(&self) -> Result<Vec<String>> {

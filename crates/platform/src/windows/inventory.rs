@@ -320,6 +320,17 @@ pub(super) fn vbs_running() -> Result<Option<bool>> {
     .map(|status| status.flatten().map(|s| s == 2))
 }
 
+/// ESS de Windows Hello: `Scenarios\WindowsHello\Enabled` de Device Guard (1 = activo). Sin
+/// el valor no se sabe (`None`). Ver PLAN.md §6, «Por verificar».
+pub(super) fn hello_ess_enabled() -> Result<Option<bool>> {
+    registry::read_dword(
+        Hive::LocalMachine,
+        r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\WindowsHello",
+        "Enabled",
+    )
+    .map(|v| v.map(|v| v == 1))
+}
+
 const UNINSTALL: [(Hive, &str); 3] = [
     (
         Hive::LocalMachine,
@@ -412,6 +423,7 @@ mod tests {
         assert!(manufacturer().unwrap().is_some());
         laptop().unwrap();
         vbs_running().unwrap();
+        hello_ess_enabled().unwrap();
         hags_supported().unwrap();
         // Windows Server (la CI) no tiene Security Center: ahí basta con que no reviente.
         if let Ok(names) = antivirus() {
