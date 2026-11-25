@@ -216,16 +216,67 @@ pub fn status_lines(journal: &Journal) -> Vec<StatusLine> {
         .collect()
 }
 
+/// Un paso terminado de `apply` o de deshacer, para mostrar el progreso.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Progress<'s> {
+    /// Pasos terminados hasta ahora, este incluido.
+    pub done: usize,
+    /// Total de pasos si se sabe de antemano (al deshacer, lo que hay en el journal).
+    pub total: Option<usize>,
+    /// Lo que se hizo, como en el informe ([`describe`]).
+    pub what: &'s str,
+}
+
+/// Recibe cada [`Progress`].
+pub type OnProgress<'a> = &'a dyn Fn(Progress<'_>);
+
 /// Motor sobre una plataforma y un journal.
-#[derive(Debug)]
 pub struct Engine<'a, P, S> {
     platform: &'a P,
     store: &'a S,
+    progress: Option<OnProgress<'a>>,
+}
+
+impl<P: std::fmt::Debug, S: std::fmt::Debug> std::fmt::Debug for Engine<'_, P, S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Engine")
+            .field("platform", &self.platform)
+            .field("store", &self.store)
+            .field("progress", &self.progress.is_some())
+            .finish()
+    }
 }
 
 impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
     pub fn new(platform: &'a P, store: &'a S) -> Self {
-        Self { platform, store }
+        Self {
+            platform,
+            store,
+            progress: None,
+        }
+    }
+
+    /// Avisa a `on` de cada paso terminado.
+    #[must_use]
+    pub fn with_progress(mut self, on: OnProgress<'a>) -> Self {
+        self.progress = Some(on);
+        self
+    }
+
+    /// Anota el resultado en el informe y avisa del progreso.
+    fn note(&self, report: &mut Report, what: String, outcome: Outcome) {
+        self.note_of(report, what, outcome, None);
+    }
+
+    fn note_of(&self, report: &mut Report, what: String, outcome: Outcome, total: Option<usize>) {
+        report.push(what, outcome);
+        if let (Some(on), Some(line)) = (self.progress, report.lines.last()) {
+            on(Progress {
+                done: report.lines.len(),
+                total,
+                what: &line.what,
+            });
+        }
     }
 
     /// Hay una sesión sin cerrar (para ofrecer "Restaurar sesión anterior" al arrancar).
@@ -348,11 +399,11 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 Ok(false) => {}
                 Ok(true) => {
                     let why = "ya estaba en Defender (no la puso FrameRush)".to_owned();
-                    report.push(describe(&change), Outcome::Skipped(why));
+                    self.note(report, describe(&change), Outcome::Skipped(why));
                     return Ok(());
                 }
                 Err(e) => {
-                    report.push(describe(&change), Outcome::Failed(e));
+                    self.note(report, describe(&change), Outcome::Failed(e));
                     return Ok(());
                 }
             }
@@ -387,7 +438,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 Ok(None) => (None, false),
                 Err(e) => {
                     let what = format!("leer {}", file.path.display());
-                    report.push(what, Outcome::Failed(e));
+                    self.note(report, what, Outcome::Failed(e));
                     return Ok(());
                 }
             },
@@ -456,7 +507,8 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                             Err(_) => failed += 1,
                         }
                     }
-                    report.push(
+                    self.note(
+                        report,
                         format!("recorte de working set: {done} procesos ({failed} sin acceso)"),
                         Outcome::Done,
                     );
@@ -464,7 +516,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 }
             },
         };
-        report.push(op.id().to_owned(), outcome);
+        self.note(report, op.id().to_owned(), outcome);
     }
 
     /// Cambio de un valor por exe (FSO, GPU) que solo se hace si el exe no tiene ya uno: no hay
@@ -482,11 +534,11 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 Ok(None) => {}
                 Ok(Some(value)) => {
                     let why = format!("el exe ya tiene un valor propio (`{value}`)");
-                    report.push(describe(&change), Outcome::Skipped(why));
+                    self.note(report, describe(&change), Outcome::Skipped(why));
                     return Ok(());
                 }
                 Err(e) => {
-                    report.push(describe(&change), Outcome::Failed(e));
+                    self.note(report, describe(&change), Outcome::Failed(e));
                     return Ok(());
                 }
             }
@@ -515,7 +567,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                     };
                 }
                 Err(e) => {
-                    report.push(describe(&change), Outcome::Failed(e));
+                    self.note(report, describe(&change), Outcome::Failed(e));
                     return Ok(());
                 }
             }
@@ -576,7 +628,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                     Err(e) => Outcome::Failed(e),
                 }
             };
-            report.push(what, outcome);
+            self.note(&mut report, what, outcome);
         }
         Ok(report)
     }
@@ -613,7 +665,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 Ok(p) => p,
                 Err(e) => {
                     let what = format!("leer la prioridad de {}", target.exe_path.display());
-                    report.push(what, Outcome::Failed(e));
+                    self.note(report, what, Outcome::Failed(e));
                     return Ok(());
                 }
             },
@@ -639,12 +691,20 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             None => match self.platform.active_power_plan() {
                 Ok(active) if active.id == applied.id => {
                     let what = format!("plan de energía «{}»", applied.name);
-                    report.push(what, Outcome::Skipped("ya es el plan activo".into()));
+                    self.note(
+                        report,
+                        what,
+                        Outcome::Skipped("ya es el plan activo".into()),
+                    );
                     return Ok(());
                 }
                 Ok(active) => active,
                 Err(e) => {
-                    report.push("leer el plan de energía activo".into(), Outcome::Failed(e));
+                    self.note(
+                        report,
+                        "leer el plan de energía activo".into(),
+                        Outcome::Failed(e),
+                    );
                     return Ok(());
                 }
             },
@@ -674,7 +734,11 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         };
         let what = describe(&change);
         if already_applied(journal, &change) {
-            report.push(what, Outcome::Skipped("ya aplicado en esta sesión".into()));
+            self.note(
+                report,
+                what,
+                Outcome::Skipped("ya aplicado en esta sesión".into()),
+            );
             return Ok(());
         }
         let previous = match original_power_plan(journal) {
@@ -682,7 +746,11 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             None => match self.platform.active_power_plan() {
                 Ok(active) => active,
                 Err(e) => {
-                    report.push("leer el plan de energía activo".into(), Outcome::Failed(e));
+                    self.note(
+                        report,
+                        "leer el plan de energía activo".into(),
+                        Outcome::Failed(e),
+                    );
                     return Ok(());
                 }
             },
@@ -737,7 +805,8 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Err(_) => EntryStatus::Pending,
         };
         self.store.save(journal)?;
-        report.push(
+        self.note(
+            report,
             what,
             result.map_or_else(Outcome::Failed, |()| Outcome::Done),
         );
@@ -773,17 +842,21 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 match current {
                     Ok(Some(hz)) if hz == rate.hz => {
                         let what = format!("refresco de {} a {} Hz", rate.display, rate.hz);
-                        report.push(what, Outcome::Skipped("ya está a esa frecuencia".into()));
+                        self.note(
+                            report,
+                            what,
+                            Outcome::Skipped("ya está a esa frecuencia".into()),
+                        );
                         return Ok(());
                     }
                     Ok(Some(hz)) => hz,
                     Ok(None) => {
                         let e = PlatformError::NotFound(format!("pantalla {}", rate.display));
-                        report.push(format!("leer {}", rate.display), Outcome::Failed(e));
+                        self.note(report, format!("leer {}", rate.display), Outcome::Failed(e));
                         return Ok(());
                     }
                     Err(e) => {
-                        report.push(format!("leer {}", rate.display), Outcome::Failed(e));
+                        self.note(report, format!("leer {}", rate.display), Outcome::Failed(e));
                         return Ok(());
                     }
                 }
@@ -837,7 +910,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 Ok(p) => p,
                 Err(e) => {
                     let what = format!("leer la afinidad de {}", target.exe_path.display());
-                    report.push(what, Outcome::Failed(e));
+                    self.note(report, what, Outcome::Failed(e));
                     return Ok(());
                 }
             },
@@ -865,13 +938,21 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         });
         if applied {
             let what = format!("ajuste {}", tweak.id());
-            report.push(what, Outcome::Skipped("ya aplicado en esta sesión".into()));
+            self.note(
+                report,
+                what,
+                Outcome::Skipped("ya aplicado en esta sesión".into()),
+            );
             return Ok(());
         }
         let previous = match self.platform.read_tweak(tweak) {
             Ok(p) => p,
             Err(e) => {
-                report.push(format!("leer el ajuste {}", tweak.id()), Outcome::Failed(e));
+                self.note(
+                    report,
+                    format!("leer el ajuste {}", tweak.id()),
+                    Outcome::Failed(e),
+                );
                 return Ok(());
             }
         };
@@ -888,7 +969,11 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
     ) -> Result<(), EngineError> {
         let what = describe(&change);
         if already_applied(journal, &change) {
-            report.push(what, Outcome::Skipped("ya aplicado en esta sesión".into()));
+            self.note(
+                report,
+                what,
+                Outcome::Skipped("ya aplicado en esta sesión".into()),
+            );
             return Ok(());
         }
         let index = journal.entries.len();
@@ -940,7 +1025,8 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Err(_) => EntryStatus::Failed,
         };
         self.store.save(journal)?;
-        report.push(
+        self.note(
+            report,
             what,
             result.map_or_else(Outcome::Failed, |()| Outcome::Done),
         );
@@ -959,12 +1045,13 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
         selected.sort_by_key(|e| std::cmp::Reverse(e.seq));
 
         let mut keep = vec![];
+        let total = Some(selected.len());
         for entry in selected {
             let outcome = self.undo(&entry.change);
             if matches!(outcome, Outcome::Failed(_)) {
                 keep.push(entry.seq);
             }
-            report.push(describe(&entry.change), outcome);
+            self.note_of(&mut report, describe(&entry.change), outcome, total);
         }
         journal
             .entries
@@ -1268,6 +1355,35 @@ mod tests {
 
         engine.revert_all().unwrap();
         assert!(status_lines(&store.load().unwrap()).is_empty());
+    }
+
+    /// Cada paso avisa al terminar; al deshacer se sabe el total de antemano.
+    #[test]
+    fn progress_reports_each_step() {
+        use std::cell::RefCell;
+        let m = MockPlatform::new(4);
+        let a = m.spawn(1, "a.exe", "/a", 1);
+        let game = m.spawn(9, "game.exe", "/game", 1);
+        let items = [item(Action::LowerPriority, procs(&m, &[&a]))];
+        let store = MemoryStore::default();
+        let seen = RefCell::new(vec![]);
+        let on = |p: Progress<'_>| seen.borrow_mut().push((p.done, p.total, p.what.to_owned()));
+        let engine = Engine::new(&m, &store).with_progress(&on);
+
+        let mut req = request(&items);
+        req.game = boost(&game, Priority::High, false).game;
+        let report = engine.apply(&req).unwrap();
+        let applied: Vec<_> = seen.borrow_mut().drain(..).collect();
+        assert_eq!(applied.len(), report.lines.len());
+        assert_eq!(
+            applied.iter().map(|s| (s.0, s.1)).collect::<Vec<_>>(),
+            [(1, None), (2, None)]
+        );
+        assert_eq!(applied[1].2, report.lines[1].what);
+
+        engine.revert_all().unwrap();
+        let reverted: Vec<_> = seen.borrow().iter().map(|s| (s.0, s.1)).collect();
+        assert_eq!(reverted, [(1, Some(2)), (2, Some(2))]);
     }
 
     /// Memoria: se recortan los procesos de fondo (ni el juego ni los protegidos), se purga

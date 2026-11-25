@@ -16,7 +16,8 @@ mod watchdog;
 
 pub use engine::{
     ApplyRequest, CUSTOM_POWER_PLAN_NAME, Engine, EngineError, GameBoost, GameFileWrite,
-    LOWERED_PRIORITY, Outcome, RefreshRate, Report, ReportLine, StatusLine, describe, status_lines,
+    LOWERED_PRIORITY, OnProgress, Outcome, Progress, RefreshRate, Report, ReportLine, StatusLine,
+    describe, status_lines,
 };
 pub use frozen::foreign_frozen;
 pub use journal::{Change, Entry, EntryStatus, FileStore, Journal, JournalError, JournalStore};
