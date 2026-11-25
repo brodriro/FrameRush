@@ -22,7 +22,7 @@ mod xdg;
 pub use data::data_dir;
 pub use error::{PlatformError, Result};
 #[cfg(target_os = "linux")]
-pub use linux::downloads_dir;
+pub use linux::{LinuxPlatform, downloads_dir};
 #[cfg(target_os = "macos")]
 pub use macos::downloads_dir;
 pub use os::Os;

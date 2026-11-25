@@ -11,6 +11,9 @@ serde.workspace = true
 sysinfo.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 # Protocolo del helper elevado.
 serde_json.workspace = true

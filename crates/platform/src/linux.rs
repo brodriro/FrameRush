@@ -1,5 +1,9 @@
 //! Implementaciones para Linux.
 
+mod process;
+
+pub use process::LinuxPlatform;
+
 use crate::xdg::{base_dir, user_dir};
 use std::path::PathBuf;
 
