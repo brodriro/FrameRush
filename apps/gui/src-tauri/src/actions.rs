@@ -711,12 +711,14 @@ pub struct Frozen {
 }
 
 /// Congelados por otro programa ahora mismo: todos sus hilos suspendidos, sin las apps de la
-/// Store, los protegidos ni lo que congeló FrameRush.
-#[cfg(any(windows, target_os = "linux"))]
+/// Store, los protegidos ni lo que congeló FrameRush. En Linux y macOS, los parados por una señal.
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn foreign_frozen_now() -> Result<Vec<framerush_platform::ProcessInfo>> {
     use framerush_core::JournalStore;
     #[cfg(target_os = "linux")]
     use framerush_platform::LinuxPlatform as Native;
+    #[cfg(target_os = "macos")]
+    use framerush_platform::MacosPlatform as Native;
     use framerush_platform::ProcessControl;
     #[cfg(windows)]
     use framerush_platform::WindowsPlatform as Native;
@@ -735,8 +737,8 @@ fn foreign_frozen_now() -> Result<Vec<framerush_platform::ProcessInfo>> {
     )
 }
 
-/// En macOS aún no se detectan.
-#[cfg(not(any(windows, target_os = "linux")))]
+/// En los demás SO aún no se detectan.
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn foreign_frozen_now() -> Result<Vec<framerush_platform::ProcessInfo>> {
     Ok(vec![])
 }
