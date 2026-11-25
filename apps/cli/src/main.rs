@@ -1153,6 +1153,17 @@ type Selection<'a> = (Vec<&'a PlanItem>, Vec<Tweak>, Vec<MemoryOp>);
 
 /// Filas, ajustes y memoria marcados por el nivel, más `include` y menos `exclude`. Lo que
 /// tiene candado no se puede marcar.
+/// `id` es una regla con nombres para este SO, aunque ahora no tenga procesos ni servicios.
+fn is_rule_of_this_os(id: &str) -> Result<bool> {
+    let Some(os) = Os::current() else {
+        return Ok(false);
+    };
+    let rules = framerush_rules::embedded().context("las reglas embebidas no son válidas")?;
+    Ok(rules
+        .iter()
+        .any(|r| r.id == id && !r.matches.for_os(os).is_empty()))
+}
+
 /// Fila marcada, como en el checklist: la marca el nivel o `--include`, y `--exclude` la quita.
 fn marked(item: &PlanItem, include: &[String], exclude: &[String]) -> bool {
     !item.locked
@@ -1175,8 +1186,10 @@ fn select<'a>(plan: &'a Plan, include: &[String], exclude: &[String]) -> Result<
                 .iter()
                 .chain(&plan.locked_memory)
                 .any(|m| m.id() == id);
-        if !known {
-            bail!("`{id}` no está en el plan (¿no está en ejecución o no existe en este SO?)");
+        // Una regla sin procesos abiertos no es un error: no hace nada ahora y Turbo la
+        // recoge en el re-escaneo si aparecen.
+        if !known && !is_rule_of_this_os(id)? {
+            bail!("`{id}` no es una regla, un ajuste ni una acción de memoria de este SO");
         }
     }
     if let Some(i) = plan
@@ -2151,6 +2164,15 @@ mod tests {
             own: Some(true),
             framerush: false,
         }
+    }
+
+    /// `--include edge` vale aunque Edge esté cerrado (Turbo lo recoge en el re-escaneo); una
+    /// errata sigue siendo un error.
+    #[cfg(windows)]
+    #[test]
+    fn a_rule_without_processes_is_known_but_a_typo_is_not() {
+        assert!(is_rule_of_this_os("edge").unwrap());
+        assert!(!is_rule_of_this_os("edgee").unwrap());
     }
 
     /// Lo que marca el checklist de la CLI, y por tanto lo que vigila el re-escaneo de Turbo:
