@@ -5,13 +5,17 @@
 //! según Microsoft Learn («Window Features»), no recibe mensajes difundidos.
 //!
 //! - `WM_DISPLAYCHANGE`: cambió la resolución (Microsoft Learn: «WM_DISPLAYCHANGE message»).
+//! - Cambios de solo Hz: Windows no los avisa (ni `WM_DISPLAYCHANGE`, comprobado en real, ni un
+//!   evento documentado), así que un temporizador de la ventana compara el modo actual de cada
+//!   monitor cada [`DISPLAY_POLL_MS`] y avisa `Display` si cambió.
 //! - `WM_POWERBROADCAST` + `PBT_APMPOWERSTATUSCHANGE`: CA ↔ batería o cambio de batería
 //!   (Microsoft Learn: «PBT_APMPOWERSTATUSCHANGE event»).
 //! - `WM_DEVICECHANGE` + `DBT_DEVNODES_CHANGED`: se añadió o quitó un dispositivo, sin decir cuál
 //!   (Microsoft Learn: «DBT_DEVNODES_CHANGED event»).
 
+use super::display::current_modes;
 use super::helper::wide;
-use crate::{PlatformError, Result};
+use crate::{Mode, PlatformError, Result};
 use std::cell::RefCell;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
@@ -19,15 +23,15 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DBT_DEVNODES_CHANGED, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetMessageW, MSG, PBT_APMPOWERSTATUSCHANGE, PostMessageW, PostQuitMessage, RegisterClassExW,
-    UnregisterClassW, WM_CLOSE, WM_DESTROY, WM_DEVICECHANGE, WM_DISPLAYCHANGE, WM_POWERBROADCAST,
-    WNDCLASSEXW,
+    GetMessageW, KillTimer, MSG, PBT_APMPOWERSTATUSCHANGE, PostMessageW, PostQuitMessage,
+    RegisterClassExW, SetTimer, UnregisterClassW, WM_CLOSE, WM_DESTROY, WM_DEVICECHANGE,
+    WM_DISPLAYCHANGE, WM_POWERBROADCAST, WM_TIMER, WNDCLASSEXW,
 };
 
 /// Qué cambió.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HardwareChange {
-    /// Resolución o monitores.
+    /// Resolución, frecuencia o monitores.
     Display,
     /// Corriente alterna, batería o su carga.
     Power,
@@ -40,6 +44,22 @@ type Callback = Box<dyn Fn(HardwareChange)>;
 thread_local! {
     /// El aviso del hilo de la ventana: el procedimiento de ventana corre en ese mismo hilo.
     static ON_CHANGE: RefCell<Option<Callback>> = const { RefCell::new(None) };
+    /// Último modo visto de cada monitor, para el temporizador.
+    static MODES: RefCell<Vec<(String, Mode)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Cada cuánto se compara el modo de los monitores.
+const DISPLAY_POLL_MS: u32 = 2000;
+const DISPLAY_TIMER: usize = 1;
+
+/// Guarda el modo actual y dice si es distinto del anterior.
+fn modes_changed() -> bool {
+    let now = current_modes();
+    MODES.with(|m| {
+        let changed = *m.borrow() != now;
+        *m.borrow_mut() = now;
+        changed
+    })
 }
 
 /// Ventana que vigila. Soltarla cierra la ventana y espera a su hilo.
@@ -69,6 +89,7 @@ pub fn watch_hardware(
     let (ready, created) = mpsc::channel::<std::result::Result<isize, String>>();
     let thread = std::thread::spawn(move || {
         ON_CHANGE.with(|c| *c.borrow_mut() = Some(Box::new(on_change)));
+        modes_changed();
         let class = wide(CLASS);
         // SAFETY: NULL = el módulo del proceso.
         let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
@@ -109,6 +130,9 @@ pub fn watch_hardware(
             unsafe { UnregisterClassW(class.as_ptr(), instance) };
             return;
         }
+        // SAFETY: la ventana es de este hilo; sin TIMERPROC llega WM_TIMER a su procedimiento.
+        // Si falla, solo se pierden los cambios de solo Hz.
+        unsafe { SetTimer(hwnd, DISPLAY_TIMER, DISPLAY_POLL_MS, None) };
         let _ = ready.send(Ok(hwnd as isize));
         // SAFETY: MSG es una estructura C; cero es un valor inicial válido.
         let mut msg: MSG = unsafe { std::mem::zeroed() };
@@ -149,7 +173,17 @@ unsafe extern "system" fn window_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        WM_DISPLAYCHANGE => notify(HardwareChange::Display),
+        WM_DISPLAYCHANGE => {
+            // Se guarda el modo nuevo para que el temporizador no avise otra vez.
+            modes_changed();
+            notify(HardwareChange::Display);
+        }
+        WM_TIMER if wparam == DISPLAY_TIMER => {
+            if modes_changed() {
+                notify(HardwareChange::Display);
+            }
+            return 0;
+        }
         WM_POWERBROADCAST if wparam == PBT_APMPOWERSTATUSCHANGE as usize => {
             notify(HardwareChange::Power)
         }
@@ -159,8 +193,11 @@ unsafe extern "system" fn window_proc(
             return 1;
         }
         WM_CLOSE => {
-            // SAFETY: la ventana es de este hilo.
-            unsafe { DestroyWindow(hwnd) };
+            // SAFETY: la ventana y el temporizador son de este hilo.
+            unsafe {
+                KillTimer(hwnd, DISPLAY_TIMER);
+                DestroyWindow(hwnd);
+            }
             return 0;
         }
         WM_DESTROY => {
@@ -177,6 +214,15 @@ unsafe extern "system" fn window_proc(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_same_modes_are_not_a_change() {
+        modes_changed();
+        assert!(!modes_changed());
+        MODES.with(|m| m.borrow_mut().clear());
+        // En la CI puede no haber monitores: entonces no hay cambio.
+        assert_eq!(modes_changed(), !current_modes().is_empty());
+    }
 
     #[test]
     fn watch_starts_and_stops() {

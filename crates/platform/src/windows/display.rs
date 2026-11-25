@@ -88,6 +88,18 @@ fn modes(device: &[u16], current: &DEVMODEW) -> Vec<Mode> {
     modes
 }
 
+/// Modo actual de cada monitor del escritorio, sin listar sus modos: barato para comparar a
+/// menudo (los cambios de solo Hz no llegan por `WM_DISPLAYCHANGE`).
+pub(super) fn current_modes() -> Vec<(String, Mode)> {
+    desktop_devices()
+        .into_iter()
+        .filter_map(|(device, _)| {
+            let current = mode(&device, ENUM_CURRENT_SETTINGS)?;
+            Some((name(&device), to_mode(&current)))
+        })
+        .collect()
+}
+
 pub(super) fn displays() -> Result<Vec<Display>> {
     Ok(desktop_devices()
         .into_iter()
