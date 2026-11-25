@@ -24,7 +24,7 @@ pub use error::{PlatformError, Result};
 #[cfg(target_os = "linux")]
 pub use linux::{LinuxPlatform, downloads_dir};
 #[cfg(target_os = "macos")]
-pub use macos::downloads_dir;
+pub use macos::{MacosPlatform, downloads_dir};
 pub use os::Os;
 pub use process::{Priority, ProcessControl, ProcessInfo, StartTime, Target};
 pub use scan::scan_processes;

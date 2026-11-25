@@ -28,7 +28,8 @@ clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 ctrlc = "3.5"
 windows-sys = "0.61"
-# Llamadas al SO en Linux (setpriority, sched_setaffinity, pidfd); ya lo usa sysinfo.
+# Llamadas al SO en Linux y macOS (setpriority, señales, sched_setaffinity, pidfd, sysctl); ya
+# lo usa sysinfo.
 libc = "0.2"
 # Solo para las interfaces COM que windows-sys no trae (DXGI); ya lo usa sysinfo.
 windows = "0.61"

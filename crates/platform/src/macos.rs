@@ -1,5 +1,8 @@
 //! Implementaciones para macOS.
 
+mod process;
+
+pub use process::MacosPlatform;
 use std::path::PathBuf;
 
 /// Carpeta «Descargas» del usuario: `~/Downloads`, o `None` si no hay `HOME`.
