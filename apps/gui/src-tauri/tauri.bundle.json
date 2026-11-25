@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "brodriro",
+    "homepage": "https://github.com/brodriro/FrameRush",
+    "shortDescription": "Sube los FPS limitando procesos de fondo mientras juegas.",
+    "externalBin": ["binaries/framerush", "binaries/framerush-helper"],
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "languages": ["Spanish", "English"]
+      }
+    }
+  }
+}
