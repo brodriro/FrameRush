@@ -36,6 +36,7 @@ pub use system::{
 };
 #[cfg(windows)]
 pub use windows::{
-    AcerSensor, HardwareChange, HardwareWatch, Helper, Nvapi, WindowsPlatform, downloads_dir,
-    serve_helper, steam_launch, steam_root, steam_running_app, watch_hardware,
+    AcerSensor, HardwareChange, HardwareWatch, Helper, Nvapi, WindowsPlatform, add_to_system_path,
+    downloads_dir, remove_from_system_path, serve_helper, steam_launch, steam_root,
+    steam_running_app, watch_hardware,
 };

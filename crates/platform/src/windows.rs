@@ -28,6 +28,7 @@ mod nvapi;
 mod power;
 mod registry;
 mod service;
+mod system_path;
 mod wmi;
 
 pub use acer::AcerSensor;
@@ -36,6 +37,7 @@ pub use hardware::{HardwareChange, HardwareWatch, watch_hardware};
 pub use helper::{Helper, serve_helper};
 pub(crate) use integrity::integrity_level;
 pub use nvapi::Nvapi;
+pub use system_path::{add_to_system_path, remove_from_system_path};
 
 use registry::Hive;
 

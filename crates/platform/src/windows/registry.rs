@@ -11,9 +11,9 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, REG_DWORD,
-    REG_OPTION_NON_VOLATILE, REG_SZ, REG_VALUE_TYPE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegCloseKey,
-    RegCreateKeyExW, RegDeleteKeyValueW, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW,
-    RegSetValueExW,
+    REG_OPTION_NON_VOLATILE, REG_ROUTINE_FLAGS, REG_SZ, REG_VALUE_TYPE, RRF_NOEXPAND,
+    RRF_RT_REG_DWORD, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW,
+    RegDeleteKeyValueW, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW, RegSetValueExW,
 };
 
 /// Colmena del registro en la que vive un valor.
@@ -126,6 +126,30 @@ pub(super) fn subkeys(hive: Hive, path: &str) -> Result<Vec<String>> {
 
 /// Cadena actual (REG_SZ), o `None` si la clave o el valor no existen.
 pub(super) fn read_string(hive: Hive, path: &str, name: &str) -> Result<Option<String>> {
+    Ok(read_text(hive, path, name, RRF_RT_REG_SZ)?.map(|(text, _)| text))
+}
+
+/// Cadena REG_SZ o REG_EXPAND_SZ tal cual está guardada (sin expandir `%VAR%`, RRF_NOEXPAND)
+/// y su tipo, o `None` si la clave o el valor no existen.
+pub(super) fn read_raw_text(
+    hive: Hive,
+    path: &str,
+    name: &str,
+) -> Result<Option<(String, REG_VALUE_TYPE)>> {
+    read_text(
+        hive,
+        path,
+        name,
+        RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
+    )
+}
+
+fn read_text(
+    hive: Hive,
+    path: &str,
+    name: &str,
+    flags: REG_ROUTINE_FLAGS,
+) -> Result<Option<(String, REG_VALUE_TYPE)>> {
     let (p, n) = (wide(path), wide(name));
     let mut size = 0u32;
     // SAFETY: las cadenas terminan en nulo; con `pvdata` nulo la función solo escribe en
@@ -135,7 +159,7 @@ pub(super) fn read_string(hive: Hive, path: &str, name: &str) -> Result<Option<S
             hive.hkey(),
             p.as_ptr(),
             n.as_ptr(),
-            RRF_RT_REG_SZ,
+            flags,
             null_mut(),
             null_mut(),
             &mut size,
@@ -148,15 +172,16 @@ pub(super) fn read_string(hive: Hive, path: &str, name: &str) -> Result<Option<S
     }
     let mut buf = vec![0u16; (size as usize).div_ceil(2)];
     let mut size = (buf.len() * 2) as u32;
-    // SAFETY: `buf` tiene `size` bytes y vive durante la llamada; RRF_RT_REG_SZ garantiza que
-    // el resultado termina en nulo.
+    let mut kind: REG_VALUE_TYPE = 0;
+    // SAFETY: `buf` tiene `size` bytes y vive durante la llamada; `kind` es un local vivo. Con
+    // tipos de cadena, RegGetValueW garantiza que el resultado termina en nulo.
     let code = unsafe {
         RegGetValueW(
             hive.hkey(),
             p.as_ptr(),
             n.as_ptr(),
-            RRF_RT_REG_SZ,
-            null_mut(),
+            flags,
+            &mut kind,
             buf.as_mut_ptr().cast(),
             &mut size,
         )
@@ -164,7 +189,7 @@ pub(super) fn read_string(hive: Hive, path: &str, name: &str) -> Result<Option<S
     match code {
         ERROR_SUCCESS => {
             let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-            Ok(Some(String::from_utf16_lossy(&buf[..len])))
+            Ok(Some((String::from_utf16_lossy(&buf[..len]), kind)))
         }
         ERROR_FILE_NOT_FOUND => Ok(None),
         c => Err(error(c, hive, path, name)),
@@ -173,9 +198,20 @@ pub(super) fn read_string(hive: Hive, path: &str, name: &str) -> Result<Option<S
 
 /// Escribe una cadena (REG_SZ) y crea la clave si no existe.
 pub(super) fn write_string(hive: Hive, path: &str, name: &str, value: &str) -> Result<()> {
+    write_text(hive, path, name, REG_SZ, value)
+}
+
+/// Escribe una cadena del tipo `kind` (REG_SZ o REG_EXPAND_SZ) y crea la clave si no existe.
+pub(super) fn write_text(
+    hive: Hive,
+    path: &str,
+    name: &str,
+    kind: REG_VALUE_TYPE,
+    value: &str,
+) -> Result<()> {
     let data = wide(value);
     let bytes: Vec<u8> = data.iter().flat_map(|c| c.to_le_bytes()).collect();
-    set_value(hive, path, name, REG_SZ, &bytes)
+    set_value(hive, path, name, kind, &bytes)
 }
 
 /// Escribe el valor y crea la clave si no existe.
@@ -281,6 +317,24 @@ mod tests {
         );
         delete_value(HKCU, &key.0, name).unwrap();
         assert_eq!(read_string(HKCU, &key.0, name).unwrap(), None);
+    }
+
+    #[test]
+    fn expand_sz_reads_without_expanding() {
+        use windows_sys::Win32::System::Registry::REG_EXPAND_SZ;
+        let key = test_key("expand");
+        write_text(HKCU, &key.0, "P", REG_EXPAND_SZ, r"%SystemRoot%;C:\x").unwrap();
+        assert_eq!(
+            read_raw_text(HKCU, &key.0, "P").unwrap(),
+            Some((r"%SystemRoot%;C:\x".to_owned(), REG_EXPAND_SZ))
+        );
+        write_string(HKCU, &key.0, "S", "a").unwrap();
+        assert_eq!(
+            read_raw_text(HKCU, &key.0, "S").unwrap(),
+            Some(("a".to_owned(), REG_SZ))
+        );
+        delete_value(HKCU, &key.0, "P").unwrap();
+        delete_value(HKCU, &key.0, "S").unwrap();
     }
 
     /// Leer HKLM no pide admin.
