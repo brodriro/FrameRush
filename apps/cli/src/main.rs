@@ -633,6 +633,7 @@ fn adapter_plan(
         fps_cap: args.fps_cap,
         bench: args.bench,
         resolution,
+        lang: framerush_core::Lang::Es,
     };
     let mut plan = adapter
         .plan(install, device, options)

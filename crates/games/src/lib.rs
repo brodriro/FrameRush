@@ -47,6 +47,8 @@ pub struct GameOptions {
     pub bench: bool,
     /// `resolution-override`: resolución del juego (ancho, alto); `None` = nativa, no se toca.
     pub resolution: Option<(u32, u32)>,
+    /// Idioma de las `notes` del plan.
+    pub lang: framerush_core::Lang,
 }
 
 /// Lo que se le hará al juego y lo que no se pudo.

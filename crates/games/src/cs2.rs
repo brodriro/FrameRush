@@ -223,9 +223,11 @@ impl GameAdapter for Cs2 {
         if !settings.is_empty() {
             let videos = video_files(install.steam_root);
             if videos.is_empty() {
-                plan.notes.push(
-                    "no hay cs2_video.txt: abre CS2 una vez, ciérralo y vuelve a aplicar".into(),
+                let note = options.lang.pick(
+                    "no hay cs2_video.txt: abre CS2 una vez, ciérralo y vuelve a aplicar",
+                    "there is no cs2_video.txt: open CS2 once, close it and apply again",
                 );
+                plan.notes.push(note.into());
             }
             let settings: Vec<(&str, &str)> =
                 settings.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -346,6 +348,7 @@ mod tests {
             fps_cap: Some(240),
             bench: true,
             resolution: None,
+            lang: framerush_core::Lang::Es,
         };
         let p = Cs2.plan(install, &device, on).unwrap();
         assert_eq!(p.writes.len(), 3);
@@ -389,6 +392,12 @@ mod tests {
         std::fs::remove_dir_all(steam.join("userdata")).unwrap();
         let p = Cs2.plan(install, &device, on).unwrap();
         assert_eq!(p.notes.len(), 1, "sin cs2_video.txt se avisa");
+        let en = GameOptions {
+            lang: framerush_core::Lang::En,
+            ..on
+        };
+        let p = Cs2.plan(install, &device, en).unwrap();
+        assert!(p.notes[0].starts_with("there is no cs2_video.txt"), "{p:?}");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

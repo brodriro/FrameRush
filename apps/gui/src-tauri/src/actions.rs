@@ -362,6 +362,7 @@ pub fn apply(
                 fps_cap: Some(a.fps_cap),
                 bench: a.bench,
                 resolution: a.resolution,
+                lang: framerush_core::Lang::Es,
             };
             adapter_files(
                 g.appid,
