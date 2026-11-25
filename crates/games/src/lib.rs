@@ -8,7 +8,7 @@ mod cs2;
 
 pub use cs2::Cs2;
 
-use framerush_core::GameFileWrite;
+use framerush_core::{GameFileWrite, Lang};
 use framerush_device::DeviceProfile;
 use std::path::{Path, PathBuf};
 
@@ -20,6 +20,18 @@ pub enum GameError {
         path: PathBuf,
         source: std::io::Error,
     },
+}
+
+impl GameError {
+    /// El mensaje en `lang`.
+    pub fn message(&self, lang: Lang) -> String {
+        match (lang, self) {
+            (Lang::Es, _) => self.to_string(),
+            (Lang::En, GameError::Io { path, source }) => {
+                format!("could not read {}: {source}", path.display())
+            }
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, GameError>;

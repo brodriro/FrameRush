@@ -138,6 +138,21 @@ pub enum EngineError {
     RealtimeNotConfirmed,
 }
 
+impl EngineError {
+    /// El mensaje en `lang`.
+    pub fn message(&self, lang: Lang) -> String {
+        match self {
+            EngineError::Journal(e) => e.message(lang),
+            EngineError::RealtimeNotConfirmed => lang
+                .pick(
+                    "la prioridad Tiempo real necesita confirmación explícita",
+                    "Realtime priority needs explicit confirmation",
+                )
+                .to_owned(),
+        }
+    }
+}
+
 /// Texto de un cambio para el informe, en `lang`.
 pub fn describe(change: &Change, lang: Lang) -> String {
     let proc = |t: &Target| format!("{} (pid {})", t.exe_path.display(), t.pid);

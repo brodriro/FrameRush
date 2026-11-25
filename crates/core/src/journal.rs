@@ -4,7 +4,7 @@
 //! después. Si la app se cierra de golpe, el journal sigue en disco y al arrancar se ofrece
 //! "Restaurar sesión anterior".
 
-use crate::Scope;
+use crate::{Lang, Scope};
 use framerush_platform::{DefenderExclusion, PowerPlan, Priority, SavedValue, Target, Tweak};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -208,6 +208,24 @@ pub enum JournalError {
         path: PathBuf,
         source: serde_json::Error,
     },
+}
+
+impl JournalError {
+    /// El mensaje en `lang`.
+    pub fn message(&self, lang: Lang) -> String {
+        match (lang, self) {
+            (Lang::Es, _) => self.to_string(),
+            (Lang::En, JournalError::Io { path, source }) => {
+                format!(
+                    "could not read or write the journal {}: {source}",
+                    path.display()
+                )
+            }
+            (Lang::En, JournalError::Corrupt { path, source }) => {
+                format!("the journal {} is damaged: {source}", path.display())
+            }
+        }
+    }
 }
 
 /// Dónde se guarda el journal.

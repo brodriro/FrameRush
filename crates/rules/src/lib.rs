@@ -5,7 +5,7 @@
 //! resultado se valida entero: la lista de protegidos y los invariantes de `core` no se pueden
 //! anular desde TOML.
 
-use framerush_core::{Action, Category, Level, Recommendation, Risk, Rule, is_protected};
+use framerush_core::{Action, Category, Lang, Level, Recommendation, Risk, Rule, is_protected};
 use serde::Deserialize;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -62,6 +62,28 @@ pub enum RulesError {
     Io { path: PathBuf, message: String },
     #[error("reglas inválidas:\n{}", .0.iter().map(|p| format!("  - {p}")).collect::<Vec<_>>().join("\n"))]
     Invalid(Vec<Problem>),
+}
+
+impl RulesError {
+    /// El mensaje en `lang`. Los problemas de validación van tal cual: son para quien escribe
+    /// las reglas.
+    pub fn message(&self, lang: Lang) -> String {
+        match (lang, self) {
+            (Lang::En, RulesError::Invalid(problems)) => format!(
+                "invalid rules:
+{}",
+                problems
+                    .iter()
+                    .map(|p| format!("  - {p}"))
+                    .collect::<Vec<_>>()
+                    .join(
+                        "
+"
+                    )
+            ),
+            _ => self.to_string(),
+        }
+    }
 }
 
 /// Lee un archivo de reglas.

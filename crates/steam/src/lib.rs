@@ -14,6 +14,7 @@ mod vdf;
 
 pub use running::{Source, detect, game_processes, running_app_id};
 
+use framerush_platform::Lang;
 use std::path::{Path, PathBuf};
 
 /// Error al leer Steam.
@@ -29,6 +30,21 @@ pub enum SteamError {
     #[cfg(windows)]
     #[error(transparent)]
     Platform(#[from] framerush_platform::PlatformError),
+}
+
+impl SteamError {
+    /// El mensaje en `lang`.
+    pub fn message(&self, lang: Lang) -> String {
+        match (lang, self) {
+            #[cfg(windows)]
+            (_, SteamError::Platform(e)) => e.message(lang),
+            (Lang::Es, _) => self.to_string(),
+            (Lang::En, SteamError::Io { path, source }) => {
+                format!("could not read {}: {source}", path.display())
+            }
+            (Lang::En, SteamError::Format { .. }) => self.to_string(),
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, SteamError>;
