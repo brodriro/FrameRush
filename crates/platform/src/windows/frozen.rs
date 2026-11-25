@@ -189,13 +189,27 @@ mod tests {
         let pid = child.id();
         let platform = WindowsPlatform::new();
         let target = target_of(pid).expect("ping vivo");
+        // Suspender y reanudar llegan a cada hilo de forma asíncrona: con el equipo cargado,
+        // la lista puede tardar en reflejarlo.
+        let listed = |want: bool| {
+            (0..30).any(|_| {
+                let found = suspended_pids().expect("congelados").contains(&pid);
+                if found != want {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                found == want
+            })
+        };
         platform.suspend(&target).expect("suspender");
-        let frozen = suspended_pids().expect("congelados");
+        let frozen = listed(true);
         platform.resume(&target).expect("reanudar");
-        let after = suspended_pids().expect("congelados");
+        let after = !listed(false);
         let _ = child.kill();
         let _ = child.wait();
-        assert!(frozen.contains(&pid), "{pid} no está en {frozen:?}");
-        assert!(!after.contains(&pid));
+        assert!(frozen, "{pid} no salió como congelado en 3 s");
+        assert!(
+            !after,
+            "{pid} sigue como congelado 3 s después de reanudarlo"
+        );
     }
 }
