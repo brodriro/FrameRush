@@ -3,6 +3,7 @@ name = "framerush-platform"
 description = "Traits de acceso al SO de FrameRush y sus implementaciones por plataforma."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

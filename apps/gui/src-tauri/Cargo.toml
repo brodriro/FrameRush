@@ -3,6 +3,7 @@ name = "framerush-gui"
 description = "GUI de FrameRush (Tauri 2) con el frontend de apps/gui/ui."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
