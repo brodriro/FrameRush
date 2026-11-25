@@ -712,14 +712,18 @@ pub struct Frozen {
 
 /// Congelados por otro programa ahora mismo: todos sus hilos suspendidos, sin las apps de la
 /// Store, los protegidos ni lo que congeló FrameRush.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn foreign_frozen_now() -> Result<Vec<framerush_platform::ProcessInfo>> {
     use framerush_core::JournalStore;
-    use framerush_platform::{ProcessControl, WindowsPlatform};
+    #[cfg(target_os = "linux")]
+    use framerush_platform::LinuxPlatform as Native;
+    use framerush_platform::ProcessControl;
+    #[cfg(windows)]
+    use framerush_platform::WindowsPlatform as Native;
 
     let processes =
         framerush_platform::scan_processes().context("no se pudo listar los procesos")?;
-    let suspended = WindowsPlatform::new()
+    let suspended = Native::new()
         .suspended()
         .context("no se pudo leer qué procesos están congelados")?;
     let journal = store()?.load()?;
@@ -731,8 +735,8 @@ fn foreign_frozen_now() -> Result<Vec<framerush_platform::ProcessInfo>> {
     )
 }
 
-/// Fuera de Windows aún no se detectan.
-#[cfg(not(windows))]
+/// En macOS aún no se detectan.
+#[cfg(not(any(windows, target_os = "linux")))]
 fn foreign_frozen_now() -> Result<Vec<framerush_platform::ProcessInfo>> {
     Ok(vec![])
 }

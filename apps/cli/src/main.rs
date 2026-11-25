@@ -103,8 +103,8 @@ enum Command {
     Turbo(TurboArgs),
     /// Procesos congelados por otro programa: todos sus hilos suspendidos y no los congeló
     /// FrameRush (p. ej. un script «Turbo» que se cerró sin reanudarlos). Con `--resume` los
-    /// reanuda. Solo Windows por ahora.
-    #[cfg(windows)]
+    /// reanuda. En Linux son los parados por una señal (estado `T`) y `--resume` aún no está.
+    #[cfg(any(windows, target_os = "linux"))]
     Frozen {
         /// Reanudarlos.
         #[arg(long)]
@@ -307,7 +307,7 @@ fn run_command(command: Command) -> Result<()> {
         Command::Steam => steam(),
         #[cfg(windows)]
         Command::Turbo(args) => turbo(&args),
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         Command::Frozen { resume } => frozen(resume),
         #[cfg(windows)]
         Command::SystemPath { remove } => system_path(remove),
@@ -339,12 +339,16 @@ fn system_path(remove: bool) -> Result<()> {
 }
 
 /// `framerush frozen`: lista los congelados por otro programa y, con `resume`, los reanuda.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn frozen(resume: bool) -> Result<()> {
-    use framerush_platform::{ProcessControl, WindowsPlatform};
+    #[cfg(target_os = "linux")]
+    use framerush_platform::LinuxPlatform as Native;
+    use framerush_platform::ProcessControl;
+    #[cfg(windows)]
+    use framerush_platform::WindowsPlatform as Native;
 
     let processes = scan_processes().context("no se pudo listar los procesos")?;
-    let suspended = WindowsPlatform::new()
+    let suspended = Native::new()
         .suspended()
         .context("no se pudo leer qué procesos están congelados")?;
     let journal = store()?.load()?;
@@ -368,6 +372,14 @@ fn frozen(resume: bool) -> Result<()> {
             mib(p.memory_bytes),
             p.name
         );
+    }
+    // Reanudar pasa por el motor, que en Linux aún no tiene una plataforma completa.
+    if cfg!(not(windows)) {
+        println!("\nReanúdalos con `kill -CONT <PID>`.");
+        if resume {
+            bail!("`frozen --resume` solo está implementado en Windows por ahora");
+        }
+        return Ok(());
     }
     if !resume {
         println!("\nReanúdalos con `framerush frozen --resume`.");
@@ -1914,7 +1926,7 @@ fn data_dir() -> Result<PathBuf> {
         .context("no hay carpeta de datos para el journal: fija FRAMERUSH_DATA_DIR")
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn store() -> Result<FileStore> {
     let dir = data_dir()?;
     std::fs::create_dir_all(&dir).with_context(|| format!("no se pudo crear {}", dir.display()))?;
