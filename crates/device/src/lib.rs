@@ -4,6 +4,9 @@
 //! como fallback y se marca como "estimado".
 
 mod detect;
+// Solo lee archivos: se compila también en los tests de otros SO, con árboles de ejemplo.
+#[cfg(any(test, target_os = "linux"))]
+pub mod linux;
 mod profile;
 #[cfg(any(test, feature = "samples"))]
 pub mod samples;
