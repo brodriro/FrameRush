@@ -36,12 +36,15 @@ steps = [
     "Tamaño de caché de sombreador: Predeterminado del controlador",
 ]
 title_en = "NVIDIA Control Panel for CS2"
+# Etiquetas en inglés cotejadas (2026-11-25) con la ayuda oficial «Manage 3D Settings (reference)»
+# (nvidia.com/content/Control-Panel-Help/vLatest/en-us/mergedProjects/nv3d/Manage_3D_Settings_(reference).htm)
+# y, para «Shader Cache Size: Driver Default», con NVIDIA Support a_id 5735 (pasos de la NVIDIA App).
 steps_en = [
-    "NVIDIA Control Panel → Manage 3D settings → cs2.exe",
+    "NVIDIA Control Panel → Manage 3D Settings → cs2.exe",
     "Power management mode: Prefer maximum performance",
     "Low Latency Mode: Off (Reflex already does it)",
     "Texture filtering - Quality: High performance",
-    "Vertical sync: Off · Preferred refresh rate: Highest available",
+    "Vertical sync: Off · Preferred refresh rate: Highest Available",
     "Shader Cache Size: Driver Default",
 ]
 when = { os = ["windows"], gpu_vendor = "nvidia", appid = 730 }
