@@ -103,8 +103,9 @@ enum Command {
     Turbo(TurboArgs),
     /// Procesos congelados por otro programa: todos sus hilos suspendidos y no los congeló
     /// FrameRush (p. ej. un script «Turbo» que se cerró sin reanudarlos). Con `--resume` los
-    /// reanuda. En Linux son los parados por una señal (estado `T`) y `--resume` aún no está.
-    #[cfg(any(windows, target_os = "linux"))]
+    /// reanuda. En Linux y macOS son los parados por una señal (estado `T` o `SSTOP`) y
+    /// `--resume` aún no está.
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     Frozen {
         /// Reanudarlos.
         #[arg(long)]
@@ -307,7 +308,7 @@ fn run_command(command: Command) -> Result<()> {
         Command::Steam => steam(),
         #[cfg(windows)]
         Command::Turbo(args) => turbo(&args),
-        #[cfg(any(windows, target_os = "linux"))]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         Command::Frozen { resume } => frozen(resume),
         #[cfg(windows)]
         Command::SystemPath { remove } => system_path(remove),
@@ -339,10 +340,12 @@ fn system_path(remove: bool) -> Result<()> {
 }
 
 /// `framerush frozen`: lista los congelados por otro programa y, con `resume`, los reanuda.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn frozen(resume: bool) -> Result<()> {
     #[cfg(target_os = "linux")]
     use framerush_platform::LinuxPlatform as Native;
+    #[cfg(target_os = "macos")]
+    use framerush_platform::MacosPlatform as Native;
     use framerush_platform::ProcessControl;
     #[cfg(windows)]
     use framerush_platform::WindowsPlatform as Native;
@@ -373,7 +376,7 @@ fn frozen(resume: bool) -> Result<()> {
             p.name
         );
     }
-    // Reanudar pasa por el motor, que en Linux aún no tiene una plataforma completa.
+    // Reanudar pasa por el motor, que en Linux y macOS aún no tiene una plataforma completa.
     if cfg!(not(windows)) {
         println!("\nReanúdalos con `kill -CONT <PID>`.");
         if resume {
@@ -1937,7 +1940,7 @@ fn data_dir() -> Result<PathBuf> {
         .context("no hay carpeta de datos para el journal: fija FRAMERUSH_DATA_DIR")
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn store() -> Result<FileStore> {
     let dir = data_dir()?;
     std::fs::create_dir_all(&dir).with_context(|| format!("no se pudo crear {}", dir.display()))?;
