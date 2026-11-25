@@ -55,7 +55,7 @@ pub fn scan_processes() -> Result<Vec<ProcessInfo>> {
 
 /// `Target` de un PID vivo, con la misma fuente que el scan; `None` si ya no existe. Es la
 /// revalidación `(pid, start_time, exe_path)` antes de tocar un proceso (It2.4).
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn target_of(pid: u32) -> Option<Target> {
     let spid = Pid::from_u32(pid);
     let mut sys = System::new();
