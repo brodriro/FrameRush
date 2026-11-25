@@ -398,7 +398,9 @@
     const fails = r.lines.filter(l => l.outcome === 'failed');
     let msg = t('rep-done', { verb, done: r.done }) + (r.failed ? ' · ' + t('rep-failed', { n: r.failed }) : '') + '.';
     if (fails.length) msg += ' ' + t('rep-first-fail', { what: fails[0].what, detail: fails[0].detail });
-    if (r.needsAdmin.length) msg += ' ' + t('rep-needs-admin', { button: ELEVATE_LABEL[D.os].replace(/^\S+ /, ''), list: r.needsAdmin.join(', ') });
+    /* Lo que falló por permisos (p. ej. Restaurar sin el helper) también pide el botón de administrador. */
+    const admin = [...r.needsAdmin, ...(S.admin ? [] : fails.filter(l => l.accessDenied).map(l => l.what))];
+    if (admin.length) msg += ' ' + t('rep-needs-admin', { button: ELEVATE_LABEL[D.os].replace(/^\S+ /, ''), list: admin.join(', ') });
     if (r.notWired.length) msg += ' ' + t('rep-not-wired', { list: r.notWired.join(', ') });
     if (r.notes.length) msg += ' ' + t('rep-notes', { list: r.notes.join('; ') });
     if (!r.lines.length && !r.notWired.length && !r.needsAdmin.length && !r.notes.length) msg = t('rep-nothing', { verb });

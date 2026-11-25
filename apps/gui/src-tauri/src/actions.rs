@@ -11,7 +11,7 @@ use framerush_core::{
     Action, ApplyRequest, FileStore, GameBoost, Lang, Level, OnProgress, Outcome, PlanItem,
     PlanOptions, RefreshRate, Report, Subject, defaults, persistent_priority_default, plan,
 };
-use framerush_platform::{DefenderExclusion, Priority, Target};
+use framerush_platform::{DefenderExclusion, PlatformError, Priority, Target};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
@@ -194,11 +194,14 @@ impl Outcomes {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Line {
     what: String,
     /// `done`, `skipped` o `failed`.
     outcome: &'static str,
     detail: Option<String>,
+    /// Falló por falta de permisos: sin el helper, la UI pide pulsar el botón de administrador.
+    access_denied: bool,
 }
 
 fn store(lang: Lang) -> Result<FileStore> {
@@ -866,22 +869,7 @@ fn outcomes(
     Ok(Outcomes {
         done: report.done(),
         failed: report.failed(),
-        lines: report
-            .lines
-            .into_iter()
-            .map(|l| {
-                let (outcome, detail) = match l.outcome {
-                    Outcome::Done => ("done", None),
-                    Outcome::Skipped(why) => ("skipped", Some(why)),
-                    Outcome::Failed(e) => ("failed", Some(e.message(lang))),
-                };
-                Line {
-                    what: l.what,
-                    outcome,
-                    detail,
-                }
-            })
-            .collect(),
+        lines: report.lines.into_iter().map(|l| line(l, lang)).collect(),
         not_wired,
         needs_admin,
         notes,
@@ -889,6 +877,25 @@ fn outcomes(
         watching: false,
         watch: None,
     })
+}
+
+/// Línea del informe para la UI, con el motivo en `lang`.
+fn line(l: framerush_core::ReportLine, lang: Lang) -> Line {
+    let (outcome, detail, access_denied) = match l.outcome {
+        Outcome::Done => ("done", None, false),
+        Outcome::Skipped(why) => ("skipped", Some(why), false),
+        Outcome::Failed(e) => (
+            "failed",
+            Some(e.message(lang)),
+            matches!(e, PlatformError::AccessDenied(_)),
+        ),
+    };
+    Line {
+        what: l.what,
+        outcome,
+        detail,
+        access_denied,
+    }
 }
 
 /// Lo que mantiene abierto el helper elevado.
@@ -1034,6 +1041,18 @@ mod tests {
         );
         assert!(g.realtime_confirmed && !g.high_performance_gpu);
         assert_eq!(g.affinity, Some(vec![2, 3]));
+    }
+
+    #[test]
+    fn a_failure_for_lack_of_permissions_is_flagged_for_the_ui() {
+        let failed = |e| framerush_core::ReportLine {
+            what: "ajuste".into(),
+            outcome: Outcome::Failed(e),
+        };
+        let denied = line(failed(PlatformError::AccessDenied("HKLM".into())), Lang::En);
+        assert!(denied.access_denied);
+        assert_eq!(denied.detail.as_deref(), Some("access denied: HKLM"));
+        assert!(!line(failed(PlatformError::Os("x".into())), Lang::Es).access_denied);
     }
 
     #[test]
