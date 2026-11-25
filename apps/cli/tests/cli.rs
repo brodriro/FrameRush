@@ -98,8 +98,8 @@ fn affinity_needs_a_game_and_a_valid_list() {
     let (ok, _) = framerush_in(&dir, &["plan", "--game", &pid, "--affinity", "3-1"]);
     assert!(!ok, "rango al revés");
     let (ok, stdout) = framerush_in(&dir, &["plan", "--game", &pid, "--affinity", "auto"]);
-    if cfg!(windows) {
-        // Con la topología detectada, `auto` sale de ella.
+    if cfg!(any(windows, target_os = "linux")) {
+        // Con la topología detectada (CPU Sets en Windows, sysfs en Linux), `auto` sale de ella.
         assert!(
             ok || stdout.contains("anticheat"),
             "auto con topología: {stdout}"

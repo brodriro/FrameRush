@@ -1567,8 +1567,19 @@ fn native_device(os: Os) -> DeviceProfile {
     device
 }
 
-/// Fuera de Windows aún no hay plataforma nativa: solo el SO.
-#[cfg(not(windows))]
+/// Perfil del equipo con sysfs y procfs (R8).
+#[cfg(target_os = "linux")]
+fn native_device(_os: Os) -> DeviceProfile {
+    let mut device = framerush_device::linux::detect();
+    // El umbral de slowdown viene de NVML (sensores), como en Windows.
+    if let Ok(nvidia) = framerush_sensors::NvidiaGpus::open() {
+        nvidia.fill_slowdown(&mut device.gpus);
+    }
+    device
+}
+
+/// En macOS aún no hay plataforma nativa: solo el SO.
+#[cfg(not(any(windows, target_os = "linux")))]
 fn native_device(os: Os) -> DeviceProfile {
     DeviceProfile::undetected(os)
 }
