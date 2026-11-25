@@ -55,7 +55,7 @@
   /* ---------- Estado ---------- */
   let D = null;           /* snapshot del backend */
   let stopStreams = [];
-  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, profiles: {}, base: null, rt: false, alerts: {}, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '', protOpen: false, released: [], turboPending: null };
+  const S = { level: DEFAULT_LEVEL, admin: false, game: 0, plan: null, hist: [], watching: false, profiles: {}, base: null, rt: false, alerts: {}, rb: [], turbo: false, fps: [], chk: [], stc: [], fanIds: '', protOpen: false, released: [] };
 
   const game = () => D.games[S.game] || { ...NO_GAME, exe: D.gamesNote || '' };
   /* Anticheat del juego o, sin adaptador, los que están en ejecución (cuentan para cualquier juego, It1.3). */
@@ -538,7 +538,7 @@
     }), 'apply');
     if (r) S.watching = !!r.watching;
     if (r) S.turbo = turbo && !!r.watching;
-    if (S.turbo) S.turboPending = null; /* ya vigila el juego: no hace falta el reintento */
+    if (S.turbo) armTurbo(null, false); /* ya vigila el juego: no hace falta el reintento */
     if (r && r.done) S.hist.push(r.done);
     sess(); syncLimited();
   }
@@ -598,18 +598,24 @@
     S.released = []; sess(); syncLimited();
   }
 
+  /* P4: Turbo pendiente en launch.rs; un fallo solo se registra (el juego se lanza igual). */
+  function armTurbo(appid, fresh) {
+    return api.armTurbo(appid, fresh).catch(err => console.warn('turbo pendiente:', err));
+  }
+
   /*
-   * Lanzamiento fuera de la app (It3.2, P4): con profile-auto-apply y un perfil guardado, se elige el
-   * juego, se carga su perfil y se aplica como con el botón (las confirmaciones siguen pidiéndose).
+   * Arrancó un juego (It3.2, P4); launch.rs decide qué hacer (e.action): Turbo si se lanzó con
+   * «Jugar ahora», su perfil si se lanzó fuera con profile-auto-apply y perfil guardado (se elige,
+   * se carga y se aplica como con el botón; las confirmaciones siguen pidiéndose), o solo avisar.
    */
   function onGameLaunched(e) {
     const i = D.games.findIndex(g => g.appid === e.appid);
     if (i < 0) return; /* instalado después de abrir la app: no hay datos de él */
     Object.assign(D.games[i], { running: true, pids: e.pids });
-    /* Lanzado con «Jugar ahora»: Turbo aplica el perfil una sola vez (P4). */
-    if (S.turboPending === e.appid) { const first = !S.turboRetried; S.turboPending = null; S.turboRetried = true; startTurbo(i, first); return; }
+    const a = e.action || {};
+    if (a.kind === 'turbo') { startTurbo(i, a.retry); return; }
     const p = S.profiles[e.appid];
-    if (!p || !first('profile-auto-apply')?.checked) {
+    if (a.kind !== 'profile' || !p) {
       if (S.game === i) caps();
       toast(t('game-started', { name: D.games[i].name }) + ' ' + (p ? t('game-started-no-auto') : t('game-started-no-profile')) + '.');
       return;
@@ -644,19 +650,18 @@
     if (!api.inTauri) { toast(t('play-only-app')); return; }
     const dry = !!first('dry-run')?.checked;
     /* Se marca antes de lanzar: game-launched puede llegar antes de que vuelva la llamada. */
-    S.turboPending = dry ? null : g.appid;
-    S.turboRetried = false;
+    await armTurbo(dry ? null : g.appid, true);
     let running;
     try {
       running = await api.launchGame(g.appid);
     } catch (err) {
-      S.turboPending = null;
+      armTurbo(null, false);
       toast(t('err-launch', { name: g.name, error: String(err && err.message ? err.message : err) }));
       return;
     }
     g.running = running;
     if (running) {
-      S.turboPending = null;
+      armTurbo(null, false);
       if (dry) toast(t('dry-running', { name: g.name }));
       else startTurbo(S.game);
       return;
@@ -679,7 +684,7 @@
     /* P4: con el perfil del juego ya elegido no se recarga, para no perder lo marcado después a mano. */
     if (S.profiles[g.appid] && first('profile')?.value !== String(g.appid)) useProfile(g.appid, true);
     await apply(false, t('turbo-verb', { name: g.name }), true);
-    if (!S.turbo && retry) S.turboPending = g.appid;
+    if (!S.turbo && retry) armTurbo(g.appid, false);
   }
 
   /* Re-escaneo de Turbo: solo avisa si congeló algo nuevo. */
@@ -982,6 +987,7 @@
       if (g.appid in S.profiles || first('profile')?.value !== 'global') useProfile(g.appid, true); else setLevel(S.level);
       toast(I18N.t('game-picked', { name: g.name }) + (g.appid in S.profiles ? ' · ' + I18N.t('profile-loaded-short') : ''));
     }
+    if (id === 'profile-auto-apply') api.setAutoApply(t.checked).catch(err => console.warn('auto-aplicar:', err));
     if (id === 'cpu-affinity') syncAffinityCores();
     if (id === 'custom-power-plan') renderPower();
     if (id === 'game-priority-persistent' && t.checked && priorityValue() === 'normal') { t.checked = false; toast(I18N.t('persistent-needs-high')); }
@@ -1064,6 +1070,7 @@
     try { S.profiles = await api.profiles(); } catch (err) { S.profiles = {}; toast(t('err-profiles', { error: String(err && err.message ? err.message : err) })); }
     const g = D.games[S.game];
     if (g && g.appid in S.profiles) useProfile(g.appid); else fillProfiles('global');
+    api.setAutoApply(!!first('profile-auto-apply')?.checked).catch(err => console.warn('auto-aplicar:', err));
     stopStreams.push(api.onSensors(onSensors), api.onFps(onFps), api.onGameExited(onGameExited), api.onBackground(onBackground), api.onDeviceChanged(onDeviceChanged), api.onGameLaunched(onGameLaunched), api.onTurboRescan(onTurboRescan));
   }
 

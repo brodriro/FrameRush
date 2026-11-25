@@ -452,6 +452,24 @@ async fn apply(
     Ok(out)
 }
 
+/// Turbo pendiente para el juego que se lanza con «Jugar ahora» (P4, ver `launch`).
+#[tauri::command]
+fn arm_turbo(appid: Option<u32>, fresh: bool, launch: tauri::State<'_, launch::Launch>) {
+    match launch.0.lock() {
+        Ok(mut p) => p.arm_turbo(appid, fresh),
+        Err(poisoned) => poisoned.into_inner().arm_turbo(appid, fresh),
+    }
+}
+
+/// `profile-auto-apply` de la UI (P4, ver `launch`).
+#[tauri::command]
+fn set_auto_apply(on: bool, launch: tauri::State<'_, launch::Launch>) {
+    match launch.0.lock() {
+        Ok(mut p) => p.set_auto_apply(on),
+        Err(poisoned) => poisoned.into_inner().set_auto_apply(on),
+    }
+}
+
 /// Perfiles guardados por `appid`.
 #[tauri::command]
 fn profiles(lang: Lang) -> Result<profiles::Profiles, String> {
@@ -680,7 +698,9 @@ fn main() -> anyhow::Result<()> {
             notify,
             export_diagnostics,
             set_overlay_hotkey,
-            tray_labels
+            tray_labels,
+            arm_turbo,
+            set_auto_apply
         ])
         .setup(|app| {
             // Aquí y no antes: una segunda instancia ya ha salido (single-instance) y no pisa el
@@ -692,6 +712,7 @@ fn main() -> anyhow::Result<()> {
             app.manage(Sensors(Mutex::new(state)));
             app.manage(Watchdog(Mutex::new(None)));
             app.manage(Closed(AtomicBool::new(false)));
+            app.manage(launch::Launch::default());
             launch::spawn(app.handle().clone());
             overlay::tray(app)?;
             #[cfg(windows)]

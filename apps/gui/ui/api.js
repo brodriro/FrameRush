@@ -81,6 +81,15 @@
      */
     launchGame(appid) { return T.core.invoke('launch_game', { appid, lang: lang() }); },
 
+    /*
+     * P4 (la decisión vive en launch.rs): armTurbo marca el juego lanzado con «Jugar ahora» (null
+     * lo quita; fresh = lanzamiento nuevo, con su reintento) y setAutoApply pasa profile-auto-apply.
+     * game-launched llega con action = { kind: 'turbo', retry } | { kind: 'profile' } |
+     * { kind: 'notify', profile }.
+     */
+    armTurbo(appid, fresh) { return inTauri ? T.core.invoke('arm_turbo', { appid, fresh }) : Promise.resolve(); },
+    setAutoApply(on) { return inTauri ? T.core.invoke('set_auto_apply', { on }) : Promise.resolve(); },
+
     /* Alertas (It3.6): notificación del sistema. Fuera de la app no hace nada. */
     notify(title, body) { return inTauri ? T.core.invoke('notify', { title, body }) : Promise.resolve(); },
 
