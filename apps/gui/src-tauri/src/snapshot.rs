@@ -220,13 +220,23 @@ pub(crate) struct Inputs {
     pub caps: framerush_platform::CapabilitySet,
 }
 
+/// Fases de la carga, en orden: cada una se avisa al terminar (`progress` en la GUI).
+pub const LOAD_PHASES: usize = 4;
+
 /// Equipo, reglas, procesos y ajustes de ahora mismo. Tarda: fuera del hilo de la UI.
 pub(crate) fn inputs() -> Result<Inputs> {
+    inputs_with(&|_| {})
+}
+
+/// Como [`inputs`], avisando a `phase` al terminar `device`, `rules` y `processes`.
+fn inputs_with(phase: &dyn Fn(&'static str)) -> Result<Inputs> {
     let Some(os) = Os::current() else {
         bail!("sistema operativo no admitido");
     };
     let device = native_device(os);
+    phase("device");
     let rules = framerush_rules::embedded().context("las reglas embebidas no son válidas")?;
+    phase("rules");
     let processes = scan_processes().context("no se pudo listar los procesos")?;
     let (tweaks, admin_tweaks, caps) = native_caps();
     let snapshot = Snapshot {
@@ -242,6 +252,7 @@ pub(crate) fn inputs() -> Result<Inputs> {
             vec![]
         },
     };
+    phase("processes");
     Ok(Inputs {
         os,
         device,
@@ -254,8 +265,8 @@ pub(crate) fn inputs() -> Result<Inputs> {
 }
 
 /// Lee el equipo y arma el snapshot. Tarda (WMI, NVML, escaneo de procesos): se llama fuera
-/// del hilo de la UI.
-pub fn build(sensors: SensorInfo) -> Result<View> {
+/// del hilo de la UI. `phase` recibe cada una de las [`LOAD_PHASES`] fases al terminarla.
+pub fn build(sensors: SensorInfo, phase: &dyn Fn(&'static str)) -> Result<View> {
     let Inputs {
         os,
         device,
@@ -264,7 +275,7 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
         snapshot,
         tweaks,
         caps,
-    } = inputs()?;
+    } = inputs_with(phase)?;
     // Con el helper abierto lo que pide admin no lleva candado y el nivel lo marca como
     // cualquier otra fila (servicios, procesos ajenos).
     let options = PlanOptions {
@@ -306,6 +317,7 @@ pub fn build(sensors: SensorInfo) -> Result<View> {
         available.push("defender-exclusions");
     }
     let (mut games, games_note) = steam_games(&processes);
+    phase("steam");
     let recs = framerush_rules::recommendations()
         .context("las recomendaciones embebidas no son válidas")?;
     for g in &mut games {
@@ -985,13 +997,20 @@ mod tests {
     #[test]
     fn this_machine_builds_a_snapshot() {
         let sources = framerush_sensors::detect();
-        let view = build(SensorInfo {
-            checked: sources.checked,
-            needs_admin: sources.needs_admin,
-            elevated: false,
-        })
+        let phases = std::cell::RefCell::new(vec![]);
+        let view = build(
+            SensorInfo {
+                checked: sources.checked,
+                needs_admin: sources.needs_admin,
+                elevated: false,
+            },
+            &|p| phases.borrow_mut().push(p),
+        )
         .unwrap();
         assert_eq!(view.os, "win");
+        // Las fases que la tarjeta de espera muestra, en orden y todas.
+        assert_eq!(*phases.borrow(), ["device", "rules", "processes", "steam"]);
+        assert_eq!(phases.borrow().len(), LOAD_PHASES);
         let json = serde_json::to_value(&view).unwrap();
         // Los juegos salen de Steam de este equipo (o no hay ninguno, con su motivo).
         let games = json["games"].as_array().unwrap();

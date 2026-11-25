@@ -8,8 +8,8 @@
 use crate::snapshot::{Inputs, data_dir, game_targets, inputs, session_targets, steam_install};
 use anyhow::{Context, Result};
 use framerush_core::{
-    Action, ApplyRequest, FileStore, GameBoost, Level, Outcome, PlanItem, PlanOptions, RefreshRate,
-    Report, Subject, defaults, persistent_priority_default, plan,
+    Action, ApplyRequest, FileStore, GameBoost, Level, OnProgress, Outcome, PlanItem, PlanOptions,
+    RefreshRate, Report, Subject, defaults, persistent_priority_default, plan,
 };
 use framerush_platform::{DefenderExclusion, Priority, Target};
 use serde::{Deserialize, Serialize};
@@ -206,8 +206,13 @@ fn level(n: u8) -> Result<Level> {
         .with_context(|| format!("nivel desconocido: {n}"))
 }
 
-/// Aplica lo marcado. `helper` es el helper elevado si el usuario lo abrió.
-pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes> {
+/// Aplica lo marcado. `helper` es el helper elevado si el usuario lo abrió; `progress` recibe
+/// cada paso terminado.
+pub fn apply(
+    selection: &Selection,
+    helper: Option<Elevated>,
+    progress: OnProgress<'_>,
+) -> Result<Outcomes> {
     let level = level(selection.level)?;
     let Inputs {
         device,
@@ -413,7 +418,7 @@ pub fn apply(selection: &Selection, helper: Option<Elevated>) -> Result<Outcomes
         game_files,
         defender_exclusions,
     };
-    let report = run(helper, Op::Apply(Box::new(request)))?;
+    let report = run(helper, Op::Apply(Box::new(request)), Some(progress))?;
     let mut out = outcomes(report, not_wired, needs_admin, notes)?;
     let turbo = selection
         .turbo
@@ -529,13 +534,13 @@ pub fn turbo_rescan(turbo: &Turbo, helper: Option<Elevated>) -> Result<Outcomes>
         items: owned.iter().collect(),
         ..ApplyRequest::default()
     };
-    let report = run(helper, Op::Apply(Box::new(request)))?;
+    let report = run(helper, Op::Apply(Box::new(request)), None)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
 /// Turbo sin `auto-revert-on-exit`: al cerrar el juego solo se reanudan los congelados (P5).
 pub fn resume_frozen(helper: Option<Elevated>) -> Result<Outcomes> {
-    let report = run(helper, Op::ResumeFrozen)?;
+    let report = run(helper, Op::ResumeFrozen, None)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
@@ -599,13 +604,13 @@ fn adapter_files(
 /// Watchdog: el juego se cerró y se deshace lo de sesión (lo persistente queda hasta
 /// Restaurar, P5).
 pub fn revert_session(helper: Option<Elevated>) -> Result<Outcomes> {
-    let report = run(helper, Op::RevertSession)?;
+    let report = run(helper, Op::RevertSession, None)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
 /// Deshace el último `apply`.
-pub fn undo(helper: Option<Elevated>) -> Result<Outcomes> {
-    let report = run(helper, Op::Undo)?;
+pub fn undo(helper: Option<Elevated>, progress: OnProgress<'_>) -> Result<Outcomes> {
+    let report = run(helper, Op::Undo, Some(progress))?;
     outcomes(report, vec![], vec![], vec![])
 }
 
@@ -668,7 +673,7 @@ pub fn release_row(id: &str, helper: Option<Elevated>) -> Result<Outcomes> {
         Subject::Processes(ps) => ps.iter().map(|p| p.target.clone()).collect(),
         Subject::Services(_) => vec![],
     };
-    let report = run(helper, Op::RevertProcesses(targets))?;
+    let report = run(helper, Op::RevertProcesses(targets), None)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
@@ -690,7 +695,7 @@ pub fn limit_row(
         items: vec![&item],
         ..ApplyRequest::default()
     };
-    let report = run(helper, Op::Apply(Box::new(request)))?;
+    let report = run(helper, Op::Apply(Box::new(request)), None)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
@@ -752,13 +757,13 @@ pub fn resume_foreign(pids: &[u32], helper: Option<Elevated>) -> Result<Outcomes
         .filter(|p| pids.is_empty() || pids.contains(&p.target.pid))
         .map(|p| p.target)
         .collect();
-    let report = run(helper, Op::ResumeForeign(targets))?;
+    let report = run(helper, Op::ResumeForeign(targets), None)?;
     outcomes(report, vec![], vec![], vec![])
 }
 
 /// Deshace toda la sesión (Restaurar).
-pub fn revert(helper: Option<Elevated>) -> Result<Outcomes> {
-    let report = run(helper, Op::Revert)?;
+pub fn revert(helper: Option<Elevated>, progress: OnProgress<'_>) -> Result<Outcomes> {
+    let report = run(helper, Op::Revert, Some(progress))?;
     outcomes(report, vec![], vec![], vec![])
 }
 
@@ -821,13 +826,16 @@ enum Op<'a> {
 }
 
 #[cfg(windows)]
-fn run(helper: Option<Elevated>, op: Op<'_>) -> Result<Report> {
+fn run(helper: Option<Elevated>, op: Op<'_>, progress: Option<OnProgress<'_>>) -> Result<Report> {
     let platform = match helper {
         Some(h) => framerush_platform::WindowsPlatform::with_helper(h),
         None => framerush_platform::WindowsPlatform::new(),
     };
     let store = store()?;
-    let engine = framerush_core::Engine::new(&platform, &store);
+    let mut engine = framerush_core::Engine::new(&platform, &store);
+    if let Some(on) = progress {
+        engine = engine.with_progress(on);
+    }
     Ok(match op {
         Op::Apply(request) => engine.apply(&request).context("no se pudo aplicar")?,
         Op::Undo => engine.undo_last().context("no se pudo deshacer")?,
@@ -848,7 +856,11 @@ fn run(helper: Option<Elevated>, op: Op<'_>) -> Result<Report> {
 }
 
 #[cfg(not(windows))]
-fn run(_helper: Option<Elevated>, _op: Op<'_>) -> Result<Report> {
+fn run(
+    _helper: Option<Elevated>,
+    _op: Op<'_>,
+    _progress: Option<OnProgress<'_>>,
+) -> Result<Report> {
     anyhow::bail!("aplicar, deshacer y restaurar solo están implementados en Windows por ahora")
 }
 

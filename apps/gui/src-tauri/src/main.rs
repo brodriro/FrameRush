@@ -308,19 +308,62 @@ fn stop_watch(watchdog: &Watchdog) -> Result<(), String> {
     Ok(())
 }
 
+/// Progreso de una espera (evento `progress`): la carga (`op` = `load`, `what` = la fase
+/// terminada) o aplicar, deshacer y restaurar (`what` = el paso terminado, del informe).
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgressEvent {
+    op: &'static str,
+    done: usize,
+    total: Option<usize>,
+    what: String,
+}
+
+/// Emite cada paso del motor como `progress` de `op`.
+fn progress_to(app: AppHandle, op: &'static str) -> impl Fn(framerush_core::Progress<'_>) {
+    move |p| {
+        let _ = app.emit(
+            "progress",
+            ProgressEvent {
+                op,
+                done: p.done,
+                total: p.total,
+                what: p.what.to_owned(),
+            },
+        );
+    }
+}
+
 /// Lee el equipo fuera del hilo de la UI: WMI, NVML y el escaneo de procesos tardan.
 #[tauri::command]
-async fn snapshot(sensors: tauri::State<'_, Sensors>) -> Result<snapshot::View, String> {
+async fn snapshot(
+    app: AppHandle,
+    sensors: tauri::State<'_, Sensors>,
+) -> Result<snapshot::View, String> {
     let info = sensors
         .0
         .lock()
         .map_err(|_| "estado de los sensores roto".to_owned())?
         .info
         .clone();
-    tauri::async_runtime::spawn_blocking(move || snapshot::build(info))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| format!("{e:#}"))
+    tauri::async_runtime::spawn_blocking(move || {
+        let done = std::sync::atomic::AtomicUsize::new(0);
+        snapshot::build(info, &|phase| {
+            let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            let _ = app.emit(
+                "progress",
+                ProgressEvent {
+                    op: "load",
+                    done: n,
+                    total: Some(snapshot::LOAD_PHASES),
+                    what: phase.to_owned(),
+                },
+            );
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Vista Estado: journal y equipo ahora, fuera del hilo de la UI (WMI tarda).
@@ -372,7 +415,11 @@ async fn apply(
     let for_apply = helper.clone();
     let mut out = logged(
         "apply",
-        blocking(move || actions::apply(&selection, for_apply)).await,
+        blocking({
+            let on = progress_to(app.clone(), "apply");
+            move || actions::apply(&selection, for_apply, &on)
+        })
+        .await,
     )?;
     let plan = out.take_watch();
     stop_watch(&watchdog)?;
@@ -401,9 +448,13 @@ fn save_profile(appid: u32, profile: profiles::Profile) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn undo(sensors: tauri::State<'_, Sensors>) -> Result<actions::Outcomes, String> {
+async fn undo(
+    app: AppHandle,
+    sensors: tauri::State<'_, Sensors>,
+) -> Result<actions::Outcomes, String> {
     let helper = helper(&sensors)?;
-    logged("undo", blocking(move || actions::undo(helper)).await)
+    let on = progress_to(app, "undo");
+    logged("undo", blocking(move || actions::undo(helper, &on)).await)
 }
 
 /// «Jugar ahora» (Turbo): pide a Steam que lance el juego `appid`, salvo que ya esté en marcha
@@ -470,12 +521,17 @@ async fn resume_foreign(
 /// Restaurar: deshace toda la sesión y para el watchdog (ya no queda nada que revertir).
 #[tauri::command]
 async fn revert(
+    app: AppHandle,
     sensors: tauri::State<'_, Sensors>,
     watchdog: tauri::State<'_, Watchdog>,
 ) -> Result<actions::Outcomes, String> {
     stop_watch(&watchdog)?;
     let helper = helper(&sensors)?;
-    logged("revert", blocking(move || actions::revert(helper)).await)
+    let on = progress_to(app, "revert");
+    logged(
+        "revert",
+        blocking(move || actions::revert(helper, &on)).await,
+    )
 }
 
 /// Abre el helper elevado (UAC) y vuelve a abrir los sensores a través de él.
