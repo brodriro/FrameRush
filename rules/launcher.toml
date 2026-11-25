@@ -10,6 +10,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Launcher de Epic Games."
+description_en = "Epic Games launcher."
 
 [[rule]]
 id = "ea-background"
@@ -19,6 +20,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "medium"
 description = "Servicio de fondo de la app de EA; los juegos de EA lo necesitan."
+description_en = "EA app background service; EA games need it."
 
 [[rule]]
 id = "riot-client"
@@ -28,6 +30,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "medium"
 description = "Cliente de Riot; los juegos de Riot lo necesitan."
+description_en = "Riot client; Riot games need it."
 
 [[rule]]
 id = "league-client"
@@ -37,3 +40,4 @@ action = "suspend"
 min_level = "agresivo"
 risk = "medium"
 description = "Cliente de League of Legends."
+description_en = "League of Legends client."

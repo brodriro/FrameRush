@@ -4,6 +4,7 @@
 //! filtro por equipo. Una condición que el equipo no permite comprobar (dato `None`) no se
 //! cumple: la recomendación no se muestra (P15).
 
+use crate::Lang;
 use framerush_device::DeviceProfile;
 use framerush_platform::{GpuVendor, Os};
 use serde::{Deserialize, Serialize};
@@ -30,10 +31,33 @@ pub struct Recommendation {
     pub id: String,
     pub title: String,
     pub steps: Vec<String>,
+    /// `title` y `steps` en inglés; sin ellos se muestran los españoles.
+    #[serde(default)]
+    pub title_en: Option<String>,
+    #[serde(default)]
+    pub steps_en: Option<Vec<String>>,
     #[serde(default)]
     pub when: Condition,
     /// De dónde sale (no inventar): se muestra en la UI.
     pub source: String,
+}
+
+impl Recommendation {
+    /// El título en `lang` (el español si no está traducido).
+    pub fn title_in(&self, lang: Lang) -> &str {
+        match (lang, &self.title_en) {
+            (Lang::En, Some(en)) => en,
+            _ => &self.title,
+        }
+    }
+
+    /// Los pasos en `lang` (los españoles si no están traducidos).
+    pub fn steps_in(&self, lang: Lang) -> &[String] {
+        match (lang, &self.steps_en) {
+            (Lang::En, Some(en)) => en,
+            _ => &self.steps,
+        }
+    }
 }
 
 impl Condition {
@@ -67,6 +91,8 @@ mod tests {
             id: id.into(),
             title: id.into(),
             steps: vec!["x".into()],
+            title_en: None,
+            steps_en: None,
             when,
             source: "test".into(),
         }

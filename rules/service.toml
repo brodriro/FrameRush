@@ -12,6 +12,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "low"
 description = "Prefetch/Superfetch: E/S de disco en segundo plano."
+description_en = "Prefetch/Superfetch: background disk I/O."
 
 [[rule]]
 id = "wsearch"
@@ -21,6 +22,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "low"
 description = "Indexador de Windows Search: el mayor consumidor de CPU y disco en segundo plano según la referencia."
+description_en = "Windows Search indexer: the biggest background CPU and disk user according to the reference."
 
 [[rule]]
 id = "diagtrack"
@@ -30,6 +32,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "low"
 description = "Telemetría de Windows (Experiencias del usuario y telemetría asociadas)."
+description_en = "Windows telemetry (Connected User Experiences and Telemetry)."
 
 [[rule]]
 id = "dmwappushservice"
@@ -39,6 +42,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "low"
 description = "Enrutamiento de mensajes WAP Push, asociado a la telemetría."
+description_en = "WAP Push message routing, tied to telemetry."
 
 [[rule]]
 id = "mapsbroker"
@@ -48,6 +52,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "low"
 description = "Administrador de mapas descargados."
+description_en = "Downloaded Maps Manager."
 
 [[rule]]
 id = "wpcmonsvc"
@@ -57,6 +62,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "low"
 description = "Control parental."
+description_en = "Parental Controls."
 
 [[rule]]
 id = "xblauthmanager"
@@ -66,6 +72,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "medium"
 description = "Autenticación de Xbox Live; los juegos de Xbox/Game Pass la necesitan."
+description_en = "Xbox Live authentication; Xbox/Game Pass games need it."
 
 [[rule]]
 id = "xblgamesave"
@@ -75,6 +82,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "medium"
 description = "Guardado en la nube de Xbox Live."
+description_en = "Xbox Live cloud saves."
 
 [[rule]]
 id = "xboxnetapisvc"
@@ -84,6 +92,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "medium"
 description = "Red de Xbox Live."
+description_en = "Xbox Live networking."
 
 [[rule]]
 id = "xboxgipsvc"
@@ -93,6 +102,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "medium"
 description = "Accesorios de Xbox (mandos); puede afectar a mandos de Xbox."
+description_en = "Xbox accessories (controllers); it may affect Xbox controllers."
 
 [[rule]]
 id = "nvtelemetrycontainer"
@@ -102,6 +112,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "low"
 description = "Telemetría de NVIDIA (no se toca NvContainerLocalSystem)."
+description_en = "NVIDIA telemetry (NvContainerLocalSystem is not touched)."
 
 [[rule]]
 id = "retaildemo"
@@ -111,6 +122,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "low"
 description = "Modo de demostración para tiendas."
+description_en = "Retail demo mode."
 
 [[rule]]
 id = "fax"
@@ -120,6 +132,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "low"
 description = "Servicio de fax."
+description_en = "Fax service."
 
 [[rule]]
 id = "pcasvc"
@@ -129,6 +142,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "low"
 description = "Asistente para la compatibilidad de programas."
+description_en = "Program Compatibility Assistant."
 
 [[rule]]
 id = "wersvc"
@@ -138,6 +152,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "low"
 description = "Informe de errores de Windows."
+description_en = "Windows Error Reporting."
 
 [[rule]]
 id = "dps"
@@ -147,6 +162,7 @@ action = "stop_service"
 min_level = "agresivo"
 risk = "low"
 description = "Servicio de directivas de diagnóstico."
+description_en = "Diagnostic Policy Service."
 
 # WdiServiceHost y WdiSystemHost (en la referencia) no están: su descriptor da SERVICE_STOP a
 # los administradores pero SERVICE_START solo a SYSTEM y a DPS (`sc sdshow`, Windows 11), así
@@ -162,6 +178,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "low"
 description = "Windows Update: evita descargas a mitad de partida."
+description_en = "Windows Update: avoids downloads mid-match."
 
 [[rule]]
 id = "bits"
@@ -171,6 +188,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "low"
 description = "Transferencia inteligente en segundo plano (descargas de Windows Update y otras)."
+description_en = "Background Intelligent Transfer (Windows Update downloads and others)."
 
 [[rule]]
 id = "usosvc"
@@ -180,6 +198,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "low"
 description = "Orquestador de actualizaciones."
+description_en = "Update Orchestrator."
 
 [[rule]]
 id = "waasmedicsvc"
@@ -189,6 +208,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "medium"
 description = "Reparación de Windows Update; Windows puede impedir detenerlo."
+description_en = "Windows Update repair; Windows may refuse to stop it."
 
 [[rule]]
 id = "spooler"
@@ -198,6 +218,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "low"
 description = "Cola de impresión."
+description_en = "Print spooler."
 
 [[rule]]
 id = "printnotify"
@@ -207,6 +228,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "low"
 description = "Extensiones y notificaciones de impresora."
+description_en = "Printer extensions and notifications."
 
 [[rule]]
 id = "ssdpsrv"
@@ -216,6 +238,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "low"
 description = "Detección SSDP de dispositivos en red."
+description_en = "SSDP discovery of network devices."
 
 [[rule]]
 id = "upnphost"
@@ -225,6 +248,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "low"
 description = "Host de dispositivos UPnP."
+description_en = "UPnP device host."
 
 [[rule]]
 id = "lfsvc"
@@ -234,6 +258,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "low"
 description = "Geolocalización."
+description_en = "Geolocation."
 
 [[rule]]
 id = "sensorservice"
@@ -243,6 +268,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "medium"
 description = "Sensores (rotación de pantalla, brillo adaptable)."
+description_en = "Sensors (screen rotation, adaptive brightness)."
 
 [[rule]]
 id = "sensrsvc"
@@ -252,6 +278,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "medium"
 description = "Supervisión de sensores."
+description_en = "Sensor monitoring."
 
 [[rule]]
 id = "tabletinputservice"
@@ -261,6 +288,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "medium"
 description = "Teclado táctil y panel de escritura."
+description_en = "Touch keyboard and handwriting panel."
 
 [[rule]]
 id = "sharedaccess"
@@ -270,6 +298,7 @@ action = "stop_service"
 min_level = "extremo"
 risk = "low"
 description = "Conexión compartida a Internet."
+description_en = "Internet Connection Sharing."
 
 [[rule]]
 id = "phonesvc"
@@ -279,3 +308,4 @@ action = "stop_service"
 min_level = "extremo"
 risk = "low"
 description = "Telefonía."
+description_en = "Telephony."

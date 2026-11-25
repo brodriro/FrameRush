@@ -1,6 +1,7 @@
 # Recomendaciones manuales de FrameRush (`manual-recommendations`, PLAN.md It5.8): lo que
 # no se puede automatizar de forma segura. Cada una solo se muestra si el equipo cumple su
 # `when` (os, gpu_vendor, laptop, appid); un dato que no se pudo detectar no la cumple.
+# `title_en` y `steps_en` son la versión en inglés (la GUI en inglés); sin ellos se usa la española.
 # Fuente: proyecto de referencia CS2-FPS-Boost, LEEME.md, «Lo que tienes que hacer a mano».
 # Sin fuente todavía (PLAN.md §6, «Por verificar»): paneles de AMD e Intel y el software de
 # cada fabricante del equipo.
@@ -9,6 +10,8 @@
 id = "play-plugged-in"
 title = "Juega enchufado"
 steps = ["Con batería el portátil rinde mucho menos: conecta el cargador antes de jugar."]
+title_en = "Play plugged in"
+steps_en = ["On battery the laptop performs much worse: plug in the charger before playing."]
 when = { laptop = true }
 source = "CS2-FPS-Boost, LEEME.md («Laptop»)"
 
@@ -16,6 +19,8 @@ source = "CS2-FPS-Boost, LEEME.md («Laptop»)"
 id = "nvidia-driver-update"
 title = "Actualiza el driver de NVIDIA"
 steps = ["Actualiza el driver desde la NVIDIA App."]
+title_en = "Update the NVIDIA driver"
+steps_en = ["Update the driver from the NVIDIA App."]
 when = { os = ["windows"], gpu_vendor = "nvidia" }
 source = "CS2-FPS-Boost, LEEME.md («Laptop»)"
 
@@ -29,6 +34,15 @@ steps = [
     "Calidad del filtrado de texturas: Alto rendimiento",
     "Sincronización vertical: Desactivada · Frecuencia preferida: La más alta disponible",
     "Tamaño de caché de sombreador: Predeterminado del controlador",
+]
+title_en = "NVIDIA Control Panel for CS2"
+steps_en = [
+    "NVIDIA Control Panel → Manage 3D settings → cs2.exe",
+    "Power management mode: Prefer maximum performance",
+    "Low Latency Mode: Off (Reflex already does it)",
+    "Texture filtering - Quality: High performance",
+    "Vertical sync: Off · Preferred refresh rate: Highest available",
+    "Shader Cache Size: Driver Default",
 ]
 when = { os = ["windows"], gpu_vendor = "nvidia", appid = 730 }
 source = "CS2-FPS-Boost, LEEME.md («Panel de control NVIDIA»)"

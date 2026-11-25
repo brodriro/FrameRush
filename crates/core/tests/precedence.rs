@@ -32,6 +32,7 @@ fn rule(id: &str, name: &str, action: Action, min_level: Level, risk: Risk) -> R
         min_level,
         risk,
         description: id.into(),
+        description_en: None,
         optional: false,
         elevated: false,
     }

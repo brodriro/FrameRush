@@ -10,4 +10,5 @@ action = "suspend"
 min_level = "agresivo"
 risk = "high"
 description = "OBS Studio: congelarlo corta una grabación o un directo."
+description_en = "OBS Studio: freezing it cuts a recording or a stream."
 optional = true

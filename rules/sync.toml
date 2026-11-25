@@ -10,6 +10,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Sincronización de OneDrive: consume disco y red."
+description_en = "OneDrive sync: uses disk and network."
 
 [[rule]]
 id = "dropbox"
@@ -19,6 +20,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Sincronización de Dropbox: consume disco y red."
+description_en = "Dropbox sync: uses disk and network."
 
 [[rule]]
 id = "google-drive"
@@ -28,6 +30,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Sincronización de Google Drive: consume disco y red."
+description_en = "Google Drive sync: uses disk and network."
 
 [[rule]]
 id = "adobe-coresync"
@@ -37,3 +40,4 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Sincronización de Adobe Creative Cloud."
+description_en = "Adobe Creative Cloud sync."

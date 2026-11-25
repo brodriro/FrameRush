@@ -4,7 +4,7 @@
 //! `core` no dependa del formato.
 
 use crate::protected::normalize;
-use crate::{Action, Category, Level, Risk};
+use crate::{Action, Category, Lang, Level, Risk};
 use framerush_platform::Os;
 use serde::{Deserialize, Serialize};
 
@@ -48,6 +48,9 @@ pub struct Rule {
     pub min_level: Level,
     pub risk: Risk,
     pub description: String,
+    /// `description` en inglés; sin ella se muestra la española.
+    #[serde(default)]
+    pub description_en: Option<String>,
     /// La fila aparece desmarcada en todos los niveles (p. ej. navegadores).
     #[serde(default)]
     pub optional: bool,
@@ -57,6 +60,14 @@ pub struct Rule {
 }
 
 impl Rule {
+    /// La descripción en `lang` (la española si no está traducida).
+    pub fn description_in(&self, lang: Lang) -> &str {
+        match (lang, &self.description_en) {
+            (Lang::En, Some(en)) => en,
+            _ => &self.description,
+        }
+    }
+
     /// `true` si `process_name` (nombre o ruta) es uno de los procesos de la regla en `os`.
     /// No distingue mayúsculas y no tiene en cuenta el `.exe`.
     pub fn matches_process(&self, os: Os, process_name: &str) -> bool {
@@ -95,6 +106,7 @@ mod tests {
             min_level: Level::Agresivo,
             risk: Risk::Low,
             description: "Sync".into(),
+            description_en: None,
             optional: false,
             elevated: false,
         }

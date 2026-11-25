@@ -114,6 +114,12 @@ pub fn validate(rules: &[Rule]) -> Result<(), RulesError> {
         if r.description.trim().is_empty() {
             bad("falta la descripción");
         }
+        if r.description_en
+            .as_ref()
+            .is_some_and(|d| d.trim().is_empty())
+        {
+            bad("description_en está vacía");
+        }
         if r.matches.all().next().is_none() {
             bad("no coincide con nada en ningún SO");
         }
@@ -160,6 +166,15 @@ fn validate_recommendations(recs: &[Recommendation]) -> Result<(), RulesError> {
         }
         if r.steps.is_empty() || r.steps.iter().any(|s| s.trim().is_empty()) {
             bad("faltan pasos o hay uno vacío");
+        }
+        if r.title_en.as_ref().is_some_and(|t| t.trim().is_empty()) {
+            bad("title_en está vacío");
+        }
+        if r.steps_en
+            .as_ref()
+            .is_some_and(|en| en.len() != r.steps.len() || en.iter().any(|s| s.trim().is_empty()))
+        {
+            bad("steps_en no tiene los mismos pasos que steps o hay uno vacío");
         }
         if r.source.trim().is_empty() {
             bad("falta la fuente");
@@ -331,6 +346,13 @@ description = "Indexador de búsqueda."
                 .filter(|r| ["chrome", "firefox", "edge"].contains(&r.id.as_str()))
                 .all(|r| r.optional)
         );
+        // La GUI en inglés no muestra descripciones en español.
+        let missing: Vec<&str> = rules
+            .iter()
+            .filter(|r| r.description_en.is_none())
+            .map(|r| r.id.as_str())
+            .collect();
+        assert!(missing.is_empty(), "sin description_en: {missing:?}");
     }
 
     #[test]
@@ -350,6 +372,28 @@ description = "Indexador de búsqueda."
         };
         assert_eq!(ids(None), ["play-plugged-in", "nvidia-driver-update"]);
         assert!(ids(Some(730)).contains(&"nvidia-panel-cs2".to_owned()));
+        let missing: Vec<&str> = recs
+            .iter()
+            .filter(|r| r.title_en.is_none() || r.steps_en.is_none())
+            .map(|r| r.id.as_str())
+            .collect();
+        assert!(missing.is_empty(), "sin title_en o steps_en: {missing:?}");
+    }
+
+    #[test]
+    fn english_steps_must_match_the_spanish_ones() {
+        let text = "[[recommendation]]
+id = \"a\"
+title = \"T\"
+title_en = \" \"
+steps = [\"uno\", \"dos\"]
+steps_en = [\"one\"]
+source = \"s\"
+";
+        match parse_recommendations("x.toml", text) {
+            Err(RulesError::Invalid(ps)) => assert_eq!(ps.len(), 2, "{ps:?}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

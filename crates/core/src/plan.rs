@@ -291,7 +291,7 @@ pub fn plan(
                 action,
                 risk: rule.risk,
                 min_level: rule.min_level,
-                description: rule.description.clone(),
+                description: rule.description_in(options.lang).to_owned(),
                 requires_admin,
                 locked,
                 default_checked: level.includes(rule.min_level) && !rule.optional && !locked,
@@ -437,6 +437,7 @@ mod tests {
             min_level,
             risk,
             description: id.into(),
+            description_en: None,
             optional: false,
             elevated: false,
         }
@@ -975,6 +976,30 @@ mod tests {
         };
         let p = plan(Level::Normal, &snap, &rules, &device, &opts);
         assert_eq!(p.items[0].action, Action::LowerPriority);
+    }
+
+    /// La fila lleva la descripción en el idioma del plan; sin traducción, la española.
+    #[test]
+    fn row_description_follows_the_plan_language() {
+        let device = samples::hybrid_laptop();
+        let mut r = rule("t", &["t"], Action::Suspend, Level::Normal, Risk::Low);
+        r.description = "Sincroniza".into();
+        let snap = Snapshot {
+            processes: vec![proc(1, "t.exe")],
+            ..Snapshot::default()
+        };
+        let en = PlanOptions {
+            lang: Lang::En,
+            ..PlanOptions::default()
+        };
+        let desc = |rules: &[Rule]| {
+            plan(Level::Normal, &snap, rules, &device, &en).items[0]
+                .description
+                .clone()
+        };
+        assert_eq!(desc(std::slice::from_ref(&r)), "Sincroniza");
+        r.description_en = Some("Syncs".into());
+        assert_eq!(desc(&[r]), "Syncs");
     }
 
     #[test]

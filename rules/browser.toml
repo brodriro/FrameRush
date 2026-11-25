@@ -12,6 +12,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Google Chrome."
+description_en = "Google Chrome."
 optional = true
 
 [[rule]]
@@ -22,6 +23,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Microsoft Edge."
+description_en = "Microsoft Edge."
 optional = true
 
 [[rule]]
@@ -32,6 +34,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "medium"
 description = "WebView2: lo usan otras apps además de Edge."
+description_en = "WebView2: other apps besides Edge use it."
 optional = true
 
 [[rule]]
@@ -42,6 +45,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Mozilla Firefox."
+description_en = "Mozilla Firefox."
 optional = true
 
 [[rule]]
@@ -52,6 +56,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Brave."
+description_en = "Brave."
 optional = true
 
 [[rule]]
@@ -62,6 +67,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Opera."
+description_en = "Opera."
 optional = true
 
 [[rule]]
@@ -72,6 +78,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Vivaldi."
+description_en = "Vivaldi."
 optional = true
 
 # Apps: opcionales salvo los procesos de fondo de Adobe.
@@ -84,6 +91,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Spotify."
+description_en = "Spotify."
 optional = true
 
 [[rule]]
@@ -94,6 +102,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "medium"
 description = "Microsoft Teams (app de voz: la lista keep-alive impide congelarla)."
+description_en = "Microsoft Teams (voice app: the keep-alive list stops it from being frozen)."
 optional = true
 
 [[rule]]
@@ -104,6 +113,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Slack."
+description_en = "Slack."
 optional = true
 
 [[rule]]
@@ -114,6 +124,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "WhatsApp."
+description_en = "WhatsApp."
 optional = true
 
 [[rule]]
@@ -124,6 +135,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Telegram."
+description_en = "Telegram."
 optional = true
 
 [[rule]]
@@ -134,6 +146,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Notion."
+description_en = "Notion."
 optional = true
 
 [[rule]]
@@ -144,6 +157,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "medium"
 description = "Visual Studio Code: puede tener trabajo sin guardar."
+description_en = "Visual Studio Code: it may have unsaved work."
 optional = true
 
 [[rule]]
@@ -154,6 +168,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "medium"
 description = "Visual Studio: puede tener trabajo sin guardar."
+description_en = "Visual Studio: it may have unsaved work."
 optional = true
 
 [[rule]]
@@ -164,6 +179,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "medium"
 description = "Android Studio."
+description_en = "Android Studio."
 optional = true
 
 [[rule]]
@@ -174,6 +190,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "high"
 description = "Procesos Java: también pueden ser juegos o herramientas en uso."
+description_en = "Java processes: they can also be games or tools in use."
 optional = true
 
 [[rule]]
@@ -184,6 +201,7 @@ action = "suspend"
 min_level = "agresivo"
 risk = "medium"
 description = "Emulador de Android y adb."
+description_en = "Android emulator and adb."
 optional = true
 
 [[rule]]
@@ -194,3 +212,4 @@ action = "suspend"
 min_level = "agresivo"
 risk = "low"
 description = "Procesos de fondo de Adobe Acrobat y Creative Cloud."
+description_en = "Adobe Acrobat and Creative Cloud background processes."
