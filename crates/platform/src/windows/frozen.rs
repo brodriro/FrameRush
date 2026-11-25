@@ -155,7 +155,8 @@ fn unpackaged(pid: u32) -> bool {
 mod tests {
     use super::*;
     use crate::ProcessControl;
-    use crate::windows::{WindowsPlatform, target_of};
+    use crate::scan::target_of;
+    use crate::windows::WindowsPlatform;
 
     #[test]
     fn all_suspended_needs_every_thread_suspended() {

@@ -53,6 +53,24 @@ pub fn scan_processes() -> Result<Vec<ProcessInfo>> {
     Ok(out)
 }
 
+/// `Target` de un PID vivo, con la misma fuente que el scan; `None` si ya no existe. Es la
+/// revalidación `(pid, start_time, exe_path)` antes de tocar un proceso (It2.4).
+#[cfg(any(windows, target_os = "linux"))]
+pub(crate) fn target_of(pid: u32) -> Option<Target> {
+    let spid = Pid::from_u32(pid);
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[spid]),
+        true,
+        ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
+    );
+    sys.process(spid).map(|p| Target {
+        pid,
+        start_time: StartTime(p.start_time()),
+        exe_path: p.exe().map(PathBuf::from).unwrap_or_default(),
+    })
+}
+
 /// Mismo dueño que este proceso y sin más integridad que él (`my_level`).
 fn own(me: Option<&Uid>, owner: Option<&Uid>, my_level: Option<u32>, pid: u32) -> Option<bool> {
     if !me.zip(owner).map(|(a, b)| a == b)? {

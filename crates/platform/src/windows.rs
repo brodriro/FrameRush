@@ -41,16 +41,17 @@ pub use system_path::{add_to_system_path, remove_from_system_path};
 
 use registry::Hive;
 
+use crate::scan::target_of;
 use crate::{
     Battery, Capabilities, CapabilitySet, Cpu, DefenderExclusion, Display, DisplayControl,
     GameFiles, GameTuning, Gpu, Inventory, MemoryControl, PlatformError, PowerControl, PowerPlan,
     Priority, ProcessControl, ProcessInfo, Result, SavedData, SavedValue, SecurityTweaks,
-    ServiceControl, ServiceState, StartTime, SystemTweaks, Target, Tweak, scan_processes,
+    ServiceControl, ServiceState, SystemTweaks, Target, Tweak, scan_processes,
 };
 use std::ffi::c_void;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use sysinfo::System;
 use windows_sys::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, ERROR_NOT_ALL_ASSIGNED, GetLastError, HANDLE,
     INVALID_HANDLE_VALUE, LUID, STATUS_PRIVILEGE_NOT_HELD,
@@ -389,22 +390,6 @@ impl ProcessControl for WindowsPlatform {
     fn suspended(&self) -> Result<Vec<u32>> {
         frozen::suspended_pids()
     }
-}
-
-/// `Target` de un PID vivo, con la misma fuente que el scan.
-fn target_of(pid: u32) -> Option<Target> {
-    let spid = sysinfo::Pid::from_u32(pid);
-    let mut sys = System::new();
-    sys.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[spid]),
-        true,
-        ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
-    );
-    sys.process(spid).map(|p| Target {
-        pid,
-        start_time: StartTime(p.start_time()),
-        exe_path: p.exe().map(PathBuf::from).unwrap_or_default(),
-    })
 }
 
 /// CPU Sets por defecto de un proceso, como CPU globales. Sin CPU Sets el proceso puede usar
