@@ -1329,6 +1329,10 @@ struct TurboApply<'a> {
 }
 
 /// Lo que Turbo vigila tras aplicar: las reglas congeladas y los procesos del juego.
+#[cfg_attr(
+    not(any(windows, target_os = "linux")),
+    expect(dead_code, reason = "Turbo solo existe en Windows y Linux")
+)]
 struct Applied {
     suspended: Vec<String>,
     game: Vec<framerush_platform::Target>,
