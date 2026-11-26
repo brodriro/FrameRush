@@ -395,7 +395,7 @@ description = "Indexador de búsqueda."
         use framerush_core::recommendations_for;
         use framerush_device::samples;
         let recs = recommendations().unwrap();
-        assert_eq!(recs.len(), 3);
+        assert_eq!(recs.len(), 7);
         let mut d = samples::hybrid_laptop();
         d.os = framerush_platform::Os::Windows;
         d.laptop = Some(true);
@@ -405,8 +405,30 @@ description = "Indexador de búsqueda."
                 .map(|r| r.id.clone())
                 .collect()
         };
-        assert_eq!(ids(None), ["play-plugged-in", "nvidia-driver-update"]);
+        assert_eq!(
+            ids(None),
+            [
+                "play-plugged-in",
+                "nvidia-driver-update",
+                "intel-driver-update"
+            ]
+        );
         assert!(ids(Some(730)).contains(&"nvidia-panel-cs2".to_owned()));
+        // AMD: solo con una GPU de AMD, y Anti-Lag 2 solo con CS2.
+        let mut amd = samples::amd_desktop_linux();
+        amd.os = framerush_platform::Os::Windows;
+        let amd_ids = |appid| -> Vec<String> {
+            recommendations_for(&recs, &amd, appid)
+                .into_iter()
+                .map(|r| r.id.clone())
+                .collect()
+        };
+        assert_eq!(
+            amd_ids(None),
+            ["amd-driver-update", "amd-adrenalin-latency"]
+        );
+        assert!(amd_ids(Some(730)).contains(&"amd-cs2-anti-lag-2".to_owned()));
+        assert!(!ids(Some(730)).iter().any(|id| id.starts_with("amd-")));
         let missing: Vec<&str> = recs
             .iter()
             .filter(|r| r.title_en.is_none() || r.steps_en.is_none())
