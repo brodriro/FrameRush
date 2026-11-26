@@ -1828,15 +1828,7 @@ fn platform_for(op: &Op<'_>) -> Result<framerush_platform::WindowsPlatform> {
                 || foreign(request.game.iter().flat_map(|g| &g.targets))?
         }
         Op::Undo | Op::Revert | Op::RevertSession | Op::ResumeFrozen => {
-            let journal = store.load()?;
-            let last = journal.last_batch();
-            let pending: Vec<&Change> = journal
-                .entries
-                .iter()
-                .filter(|e| e.status != EntryStatus::Failed)
-                .filter(|e| !matches!(op, Op::Undo) || Some(e.batch) == last)
-                .map(|e| &e.change)
-                .collect();
+            let pending = pending_changes(op, &store)?;
             pending.iter().any(|c| match c {
                 Change::Tweak { tweak, .. } => admin(*tweak),
                 Change::PersistentPriority { .. }
@@ -1856,11 +1848,63 @@ fn platform_for(op: &Op<'_>) -> Result<framerush_platform::WindowsPlatform> {
     })
 }
 
-/// En Linux aún no hay helper: lo que pide privilegios falla con «acceso denegado» y el
-/// informe lo dice.
 #[cfg(target_os = "linux")]
 fn run(op: Op<'_>) -> Result<Report> {
-    run_on(&Native::new(), op)
+    let platform = platform_for(&op)?;
+    run_on(&platform, op)
+}
+
+/// Plataforma para `op`: con el helper (`pkexec`) si algo pide privilegios. En Linux los piden
+/// los servicios (polkit de systemd), los procesos de otro usuario (P12) y bajar el `nice`
+/// (setpriority(2)): subir la prioridad del juego o devolver la suya a un proceso al que se le
+/// bajó.
+#[cfg(target_os = "linux")]
+fn platform_for(op: &Op<'_>) -> Result<Native> {
+    let needs_helper = match &op {
+        Op::Apply(request) => {
+            request.items.iter().any(|i| match &i.subject {
+                Subject::Processes(ps) => ps.iter().any(|p| p.own != Some(true)),
+                Subject::Services(names) => !names.is_empty(),
+            }) || request
+                .game
+                .as_ref()
+                .is_some_and(|g| !g.targets.is_empty() && g.priority > Priority::Normal)
+                || foreign(request.game.iter().flat_map(|g| &g.targets))?
+        }
+        Op::Undo | Op::Revert | Op::RevertSession | Op::ResumeFrozen => {
+            let pending = pending_changes(op, &store()?)?;
+            pending.iter().any(|c| match c {
+                Change::StopService { .. } => true,
+                Change::Priority {
+                    previous, applied, ..
+                } => previous > applied,
+                _ => false,
+            }) || foreign(pending.iter().filter_map(|c| c.target()))?
+        }
+        Op::ResumeForeign(targets) => foreign(targets.iter())?,
+    };
+    Ok(if needs_helper {
+        println!("Hay cambios que piden privilegios: se abre el helper con pkexec (polkit).");
+        let helper = framerush_platform::Helper::launch(&helper_exe()?)
+            .context("no se pudo abrir el helper")?;
+        Native::with_helper(helper)
+    } else {
+        Native::new()
+    })
+}
+
+/// Cambios del journal que tocaría `op` (deshacer, restaurar o reanudar), sin los fallidos.
+#[cfg(any(windows, target_os = "linux"))]
+fn pending_changes(op: &Op<'_>, store: &FileStore) -> Result<Vec<Change>> {
+    let journal = store.load()?;
+    let last = journal.last_batch();
+    Ok(journal
+        .entries
+        .into_iter()
+        .filter(|e| e.status != EntryStatus::Failed)
+        .filter(|e| !matches!(op, Op::Undo) || Some(e.batch) == last)
+        .map(|e| e.change)
+        .collect())
 }
 
 /// Ejecuta `op` con el journal de la CLI sobre `platform`.
@@ -1891,7 +1935,7 @@ fn run(_op: Op<'_>) -> Result<Report> {
 
 /// P12: alguno de `targets` sigue vivo y no es propio (otro usuario, SYSTEM o elevado), así
 /// que solo el helper puede tocarlo.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn foreign<'a>(mut targets: impl Iterator<Item = &'a framerush_platform::Target>) -> Result<bool> {
     let running = scan_processes().context("no se pudo listar los procesos")?;
     Ok(targets.any(|t| {
@@ -1901,11 +1945,11 @@ fn foreign<'a>(mut targets: impl Iterator<Item = &'a framerush_platform::Target>
     }))
 }
 
-/// `framerush-helper.exe`, junto al ejecutable de la CLI.
-#[cfg(windows)]
+/// `framerush-helper`, junto al ejecutable de la CLI.
+#[cfg(any(windows, target_os = "linux"))]
 fn helper_exe() -> Result<PathBuf> {
     let exe = std::env::current_exe().context("no se encontró el ejecutable de la CLI")?;
-    let helper = exe.with_file_name("framerush-helper.exe");
+    let helper = exe.with_file_name(format!("framerush-helper{}", std::env::consts::EXE_SUFFIX));
     if !helper.is_file() {
         bail!(
             "falta {} (compílalo con `cargo build --workspace`)",
