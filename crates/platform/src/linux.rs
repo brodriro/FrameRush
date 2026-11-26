@@ -1,6 +1,7 @@
 //! Implementaciones para Linux.
 
 mod dbus;
+mod gamemode;
 mod helper;
 mod power;
 mod process;

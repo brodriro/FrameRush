@@ -471,6 +471,19 @@ impl GameTuning for LinuxPlatform {
     fn restore_persistent_priority(&self, _exe: &Path, _saved: &[SavedValue]) -> Result<()> {
         Err(PlatformError::Unsupported("prioridad persistente"))
     }
+
+    fn gamemode_available(&self) -> bool {
+        super::gamemode::available()
+    }
+
+    /// En este proceso, nunca en el helper: GameMode vive en el bus de sesión del usuario.
+    fn register_gamemode(&self, target: &Target) -> Result<()> {
+        super::gamemode::register(target)
+    }
+
+    fn unregister_gamemode(&self, target: &Target) -> Result<()> {
+        super::gamemode::unregister(target)
+    }
 }
 
 #[cfg(test)]

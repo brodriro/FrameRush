@@ -45,6 +45,11 @@ pub(super) fn system(what: &str) -> Result<Connection> {
     Connection::system().map_err(|e| error(what, e))
 }
 
+/// Bus de sesión del usuario (GameMode). El helper, que corre como root, no lo tiene.
+pub(super) fn session(what: &str) -> Result<Connection> {
+    Connection::session().map_err(|e| error(what, e))
+}
+
 /// Proxy sin caché de propiedades: cada lectura pregunta al servicio.
 pub(super) fn proxy<'a>(
     conn: &Connection,
