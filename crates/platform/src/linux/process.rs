@@ -28,6 +28,7 @@
 
 #![allow(unsafe_code)]
 
+use super::Helper;
 use crate::scan::target_of;
 use crate::{
     GameTuning, PlatformError, Priority, ProcessControl, ProcessInfo, Result, SavedValue, Target,
@@ -37,24 +38,48 @@ use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::Path;
 
-/// Plataforma Linux. Por ahora solo procesos y afinidad; el resto de [`crate::Platform`] llega
-/// con M5 (systemd, power-profiles-daemon, gamemode, helper con polkit).
-#[derive(Debug, Default, Clone, Copy)]
-pub struct LinuxPlatform;
+/// Plataforma Linux.
+#[derive(Debug, Default, Clone)]
+pub struct LinuxPlatform {
+    /// Helper elevado (pkexec) para lo que el SO deniega a este proceso: subir la prioridad,
+    /// procesos de otro usuario y servicios. Sin él, eso falla con `AccessDenied`.
+    helper: Option<Helper>,
+}
 
 impl LinuxPlatform {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 
-    /// Nunca se congela ni se cierra el propio FrameRush, que es quien reanuda al resto.
-    fn refuse_own(target: &Target) -> Result<()> {
-        if target.pid == std::process::id() {
+    /// Plataforma que delega en `helper` lo que el SO deniega.
+    pub fn with_helper(helper: Helper) -> Self {
+        Self {
+            helper: Some(helper),
+        }
+    }
+
+    /// Nunca se congela ni se cierra el propio FrameRush, que es quien reanuda al resto, ni su
+    /// helper.
+    fn refuse_own(&self, target: &Target) -> Result<()> {
+        let helper = self.helper.as_ref().map(Helper::pid);
+        if target.pid == std::process::id() || Some(target.pid) == helper {
             Err(PlatformError::AccessDenied(
                 "FrameRush no actúa sobre sus propios procesos".into(),
             ))
         } else {
             Ok(())
+        }
+    }
+
+    /// `here` o, si el SO lo deniega y hay helper, la misma acción en el helper.
+    pub(super) fn or_helper(
+        &self,
+        here: impl FnOnce() -> Result<()>,
+        elevated: impl FnOnce(&Helper) -> Result<()>,
+    ) -> Result<()> {
+        match (here(), &self.helper) {
+            (Err(PlatformError::AccessDenied(_)), Some(helper)) => elevated(helper),
+            (result, _) => result,
         }
     }
 }
@@ -297,21 +322,33 @@ impl ProcessControl for LinuxPlatform {
     /// En todos los hilos. Subir la prioridad (bajar el nice) pide `CAP_SYS_NICE`.
     fn set_priority(&self, target: &Target, priority: Priority) -> Result<()> {
         let nice = nice_of(priority);
-        Pidfd::open(target)?.each_thread(|tid| set_nice(tid, nice))
+        self.or_helper(
+            || Pidfd::open(target)?.each_thread(|tid| set_nice(tid, nice)),
+            |h| h.set_priority(target, priority),
+        )
     }
 
     fn suspend(&self, target: &Target) -> Result<()> {
-        Self::refuse_own(target)?;
-        Pidfd::open(target)?.signal(libc::SIGSTOP)
+        self.refuse_own(target)?;
+        self.or_helper(
+            || Pidfd::open(target)?.signal(libc::SIGSTOP),
+            |h| h.suspend(target),
+        )
     }
 
     fn resume(&self, target: &Target) -> Result<()> {
-        Pidfd::open(target)?.signal(libc::SIGCONT)
+        self.or_helper(
+            || Pidfd::open(target)?.signal(libc::SIGCONT),
+            |h| h.resume(target),
+        )
     }
 
     fn kill(&self, target: &Target) -> Result<()> {
-        Self::refuse_own(target)?;
-        Pidfd::open(target)?.signal(libc::SIGKILL)
+        self.refuse_own(target)?;
+        self.or_helper(
+            || Pidfd::open(target)?.signal(libc::SIGKILL),
+            |h| h.kill(target),
+        )
     }
 
     /// Linux no tiene una ventana en primer plano común a X11 y Wayland.

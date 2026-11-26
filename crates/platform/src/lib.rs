@@ -24,7 +24,7 @@ pub use data::data_dir;
 pub use error::{PlatformError, Result};
 pub use lang::Lang;
 #[cfg(target_os = "linux")]
-pub use linux::{LinuxPlatform, downloads_dir};
+pub use linux::{Helper, LinuxPlatform, downloads_dir, serve_helper};
 #[cfg(target_os = "macos")]
 pub use macos::{MacosPlatform, downloads_dir};
 pub use os::Os;

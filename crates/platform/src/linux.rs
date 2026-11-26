@@ -1,11 +1,13 @@
 //! Implementaciones para Linux.
 
 mod dbus;
+mod helper;
 mod power;
 mod process;
 mod services;
 mod system;
 
+pub use helper::{Helper, serve_helper};
 pub use process::LinuxPlatform;
 
 use crate::xdg::{base_dir, user_dir};

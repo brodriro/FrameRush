@@ -16,11 +16,11 @@ impl ServiceControl for LinuxPlatform {
     }
 
     fn stop_service(&self, name: &str) -> Result<()> {
-        services::stop_service(name)
+        self.or_helper(|| services::stop_service(name), |h| h.stop_service(name))
     }
 
     fn start_service(&self, name: &str) -> Result<()> {
-        services::start_service(name)
+        self.or_helper(|| services::start_service(name), |h| h.start_service(name))
     }
 }
 
@@ -257,7 +257,7 @@ impl SecurityTweaks for LinuxPlatform {
 
 impl Capabilities for LinuxPlatform {
     /// Sin el helper, lo que pide privilegios (bajar el `nice`, servicios) da acceso denegado
-    /// y la app lo avisa.
+    /// y la app lo avisa; con él, se reintenta en el helper.
     fn capabilities(&self) -> CapabilitySet {
         CapabilitySet {
             set_priority: true,
