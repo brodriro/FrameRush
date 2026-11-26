@@ -15,10 +15,12 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
 framerush-core.workspace = true
 framerush-platform.workspace = true
 framerush-rules.workspace = true
+
+[target.'cfg(windows)'.dependencies]
 framerush-steam.workspace = true
 
 [lints]

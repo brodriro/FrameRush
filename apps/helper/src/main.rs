@@ -1,6 +1,6 @@
-//! `framerush-helper`: proceso elevado mínimo (PLAN.md It2.1). Lo lanza la CLI o la GUI con UAC
-//! cuando hace falta admin; atiende solo a ese proceso y termina con él. No se instala como
-//! servicio.
+//! `framerush-helper`: proceso elevado mínimo (PLAN.md It2.1). Lo lanza la CLI o la GUI cuando
+//! hace falta admin (UAC en Windows, `pkexec` en Linux); atiende solo a ese proceso y termina con
+//! él. No se instala como servicio.
 
 use anyhow::Result;
 use clap::Parser;
@@ -10,35 +10,55 @@ use clap::Parser;
 #[command(version, about)]
 struct Args {
     /// Nombre completo del pipe (`\.\pipe\...`).
+    #[cfg(windows)]
     #[arg(long)]
     pipe: String,
+    /// Socket Unix del cliente, en su `$XDG_RUNTIME_DIR`.
+    #[cfg(target_os = "linux")]
+    #[arg(long)]
+    socket: std::path::PathBuf,
     /// PID del único proceso al que se atiende.
     #[arg(long)]
     parent: u32,
     /// SID del usuario de ese proceso: el único que puede abrir el pipe.
+    #[cfg(windows)]
     #[arg(long)]
     sid: String,
+}
+
+/// Lo protegido no se toca ni elevado: misma lista que el plan (nombre o ruta del exe).
+#[cfg(any(windows, target_os = "linux"))]
+fn may_touch(t: &framerush_platform::Target) -> bool {
+    let path = t.exe_path.to_string_lossy();
+    let name = t.exe_path.file_name().map(|n| n.to_string_lossy());
+    !framerush_core::is_protected(&path) && !name.is_some_and(|n| framerush_core::is_protected(&n))
+}
+
+#[cfg(windows)]
+const OS: framerush_platform::Os = framerush_platform::Os::Windows;
+#[cfg(target_os = "linux")]
+const OS: framerush_platform::Os = framerush_platform::Os::Linux;
+
+/// Servicios: solo los que detiene alguna regla en este SO (lista blanca, PLAN.md It2.1).
+#[cfg(any(windows, target_os = "linux"))]
+fn may_stop_service(name: &str) -> bool {
+    framerush_rules::embedded().is_ok_and(|rules| {
+        rules
+            .iter()
+            .any(|r| r.action == framerush_core::Action::StopService && r.matches_service(OS, name))
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn main() -> Result<()> {
+    let args = Args::parse();
+    framerush_platform::serve_helper(&args.socket, args.parent, may_touch, may_stop_service)?;
+    Ok(())
 }
 
 #[cfg(windows)]
 fn main() -> Result<()> {
     let args = Args::parse();
-    // Lo protegido no se toca ni elevado: misma lista que el plan (nombre o ruta del exe).
-    let may_touch = |t: &framerush_platform::Target| {
-        let path = t.exe_path.to_string_lossy();
-        let name = t.exe_path.file_name().map(|n| n.to_string_lossy());
-        !framerush_core::is_protected(&path)
-            && !name.is_some_and(|n| framerush_core::is_protected(&n))
-    };
-    // Servicios: solo los que detiene alguna regla (lista blanca, PLAN.md It2.1).
-    let may_stop_service = |name: &str| {
-        framerush_rules::embedded().is_ok_and(|rules| {
-            rules.iter().any(|r| {
-                r.action == framerush_core::Action::StopService
-                    && r.matches_service(framerush_platform::Os::Windows, name)
-            })
-        })
-    };
     framerush_platform::serve_helper(
         &args.pipe,
         args.parent,
@@ -117,8 +137,8 @@ mod tests {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn main() -> Result<()> {
     let _ = Args::parse();
-    anyhow::bail!("el helper solo está implementado en Windows por ahora")
+    anyhow::bail!("el helper solo está implementado en Windows y Linux por ahora")
 }
