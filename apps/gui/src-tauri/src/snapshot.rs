@@ -666,6 +666,15 @@ fn adapter_view(
     })
 }
 
+/// Dónde publica Steam el `appid` del juego en marcha: `RunningAppID` en el registro de Windows
+/// y `SteamAppId` en el entorno del juego en Linux (PLAN.md §6, V12).
+#[cfg(windows)]
+const APPID_SOURCE: &str = "RunningAppID";
+#[cfg(target_os = "linux")]
+const APPID_SOURCE: &str = "SteamAppId";
+#[cfg(not(any(windows, target_os = "linux")))]
+const APPID_SOURCE: &str = "Steam";
+
 /// Juegos instalados en Steam, o `None` si Steam no está instalado.
 fn steam_apps() -> framerush_steam::Result<Option<Vec<framerush_steam::App>>> {
     Ok(steam_library()?.map(|(_, apps)| apps))
@@ -728,10 +737,12 @@ pub(crate) fn detected_game(
     let apps = steam_apps()
         .context(lang.pick("no se pudo leer Steam", "could not read Steam"))?
         .unwrap_or_default();
-    let running = framerush_steam::running_app_id().context(lang.pick(
-        "no se pudo leer RunningAppID",
-        "could not read RunningAppID",
-    ))?;
+    let running = framerush_steam::running_app_id().with_context(|| {
+        lang.pick(
+            format!("no se pudo leer {APPID_SOURCE}"),
+            format!("could not read {APPID_SOURCE}"),
+        )
+    })?;
     let foreground = foreground_exe();
     Ok(
         framerush_steam::detect(&apps, running, foreground.as_deref()).and_then(|(app, _)| {

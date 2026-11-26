@@ -1,6 +1,6 @@
 //! Localiza Steam, parsea VDF/ACF y detecta el `appid` en ejecución.
 //!
-//! - [`locate`]: la carpeta de Steam del equipo (hoy solo Windows; Linux y macOS, PLAN §6).
+//! - [`locate`]: la carpeta de Steam del equipo (Windows y Linux; macOS, PLAN §6).
 //! - [`installed_apps`]: los juegos de todas las bibliotecas, leídos de
 //!   `steamapps/libraryfolders.vdf` y de cada `steamapps/appmanifest_<appid>.acf`.
 //! - [`detect`]: el juego en marcha (`RunningAppID` o el proceso en primer plano) y
@@ -73,7 +73,10 @@ pub fn locate() -> Result<Option<PathBuf>> {
     }
     #[cfg(windows)]
     return Ok(framerush_platform::steam_root()?);
-    #[cfg(not(windows))]
+    // En Linux, buscarla no puede fallar: es la primera de sus rutas con `steamapps`.
+    #[cfg(target_os = "linux")]
+    return Ok(framerush_platform::steam_root());
+    #[cfg(not(any(windows, target_os = "linux")))]
     Ok(None)
 }
 

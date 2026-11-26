@@ -541,3 +541,40 @@ fn defender_exclusions_are_opt_in_and_need_a_steam_game() {
     assert!(!dir.join("session.json").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Steam en Linux: la carpeta sale de sus rutas conocidas, los juegos de los manifiestos y el
+/// juego en marcha del `SteamAppId` del entorno, aunque su exe no esté bajo la carpeta del juego
+/// (PLAN.md §6, V12).
+#[cfg(target_os = "linux")]
+#[test]
+fn steam_reads_the_running_game_from_the_environment() {
+    let dir = temp_dir("steam-linux");
+    let steamapps = dir.join("steamapps");
+    std::fs::create_dir_all(steamapps.join("common/Counter-Strike Global Offensive")).unwrap();
+    std::fs::write(
+        steamapps.join("appmanifest_730.acf"),
+        "\"AppState\"\n{\n\t\"appid\"\t\t\"730\"\n\t\"name\"\t\t\"Counter-Strike 2\"\n\t\"installdir\"\t\t\"Counter-Strike Global Offensive\"\n}\n",
+    )
+    .unwrap();
+
+    let (ok, stdout) = framerush_in(&dir, &["steam"]);
+    assert!(ok, "{stdout}");
+    assert!(stdout.contains("Counter-Strike 2"), "{stdout}");
+    assert!(stdout.contains("Juego en marcha: ninguno"), "{stdout}");
+
+    // Un proceso con `SteamAppId`, como el que lanza Steam al juego.
+    let mut game = std::process::Command::new("sleep")
+        .arg("30")
+        .env("SteamAppId", "730")
+        .spawn()
+        .unwrap();
+    let (ok, stdout) = framerush_in(&dir, &["steam"]);
+    let _ = game.kill();
+    let _ = game.wait();
+    assert!(ok, "{stdout}");
+    assert!(
+        stdout.contains("Juego en marcha: Counter-Strike 2 (730), según SteamAppId"),
+        "{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

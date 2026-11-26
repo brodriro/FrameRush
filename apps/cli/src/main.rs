@@ -1516,6 +1516,21 @@ fn apply_with(
     Ok(Some(applied))
 }
 
+/// Dónde publica Steam el `appid` del juego en marcha: la clave `RunningAppID` del registro en
+/// Windows y la variable `SteamAppId` del entorno del juego en Linux (PLAN.md §6, V12).
+#[cfg(windows)]
+const APPID_SOURCE: &str = "RunningAppID";
+#[cfg(target_os = "linux")]
+const APPID_SOURCE: &str = "SteamAppId";
+#[cfg(not(any(windows, target_os = "linux")))]
+const APPID_SOURCE: &str = "el appid de Steam";
+
+/// Aclaración cuando Steam no está instalado: macOS aún no busca sus rutas.
+#[cfg(target_os = "macos")]
+const NOT_SEARCHED_NOTE: &str = " (en macOS aún no se busca)";
+#[cfg(not(target_os = "macos"))]
+const NOT_SEARCHED_NOTE: &str = "";
+
 fn power_get() -> Result<()> {
     let (plans, active) = native_power()?;
     for p in &plans {
@@ -1528,7 +1543,7 @@ fn power_get() -> Result<()> {
 
 fn steam() -> Result<()> {
     let Some(root) = framerush_steam::locate().context("no se pudo buscar Steam")? else {
-        println!("Steam no está instalado (en Linux y macOS aún no se busca).");
+        println!("Steam no está instalado{NOT_SEARCHED_NOTE}");
         return Ok(());
     };
     println!("Steam: {}", root.display());
@@ -1539,7 +1554,8 @@ fn steam() -> Result<()> {
     for e in &found.errors {
         println!("aviso: {e}");
     }
-    let running = framerush_steam::running_app_id().context("no se pudo leer RunningAppID")?;
+    let running = framerush_steam::running_app_id()
+        .with_context(|| format!("no se pudo leer {APPID_SOURCE}"))?;
     let foreground = foreground_exe()?;
     let Some((app, source)) = framerush_steam::detect(&found.apps, running, foreground.as_deref())
     else {
@@ -1547,7 +1563,7 @@ fn steam() -> Result<()> {
         return Ok(());
     };
     let source = match source {
-        framerush_steam::Source::RunningAppId => "RunningAppID",
+        framerush_steam::Source::RunningAppId => APPID_SOURCE,
         framerush_steam::Source::Foreground => "primer plano",
     };
     println!(
