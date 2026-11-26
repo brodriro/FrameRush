@@ -42,6 +42,12 @@ use framerush_platform::{
 };
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
+
+/// Plataforma nativa con la que se aplica (en macOS aún no hay motor).
+#[cfg(windows)]
+type Native = framerush_platform::WindowsPlatform;
+#[cfg(target_os = "linux")]
+type Native = framerush_platform::LinuxPlatform;
 #[cfg(windows)]
 use turbo::{TurboArgs, turbo};
 
@@ -376,11 +382,11 @@ fn frozen(resume: bool) -> Result<()> {
             p.name
         );
     }
-    // Reanudar pasa por el motor, que en Linux y macOS aún no tiene una plataforma completa.
-    if cfg!(not(windows)) {
+    // Reanudar pasa por el motor, que en macOS aún no tiene una plataforma completa.
+    if cfg!(not(any(windows, target_os = "linux"))) {
         println!("\nReanúdalos con `kill -CONT <PID>`.");
         if resume {
-            bail!("`frozen --resume` solo está implementado en Windows por ahora");
+            bail!("`frozen --resume` solo está implementado en Windows y Linux por ahora");
         }
         return Ok(());
     }
@@ -1609,10 +1615,10 @@ fn native_device(os: Os) -> DeviceProfile {
 }
 
 /// Planes de energía de la plataforma nativa y el activo.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn native_power() -> Result<(Vec<PowerPlan>, PowerPlan)> {
     use framerush_platform::PowerControl;
-    let w = framerush_platform::WindowsPlatform::new();
+    let w = Native::new();
     let plans = w
         .power_plans()
         .context("no se pudo leer los planes de energía")?;
@@ -1622,9 +1628,9 @@ fn native_power() -> Result<(Vec<PowerPlan>, PowerPlan)> {
     Ok((plans, active))
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn native_power() -> Result<(Vec<PowerPlan>, PowerPlan)> {
-    bail!("los planes de energía solo están implementados en Windows por ahora")
+    bail!("los planes de energía solo están implementados en Windows y Linux por ahora")
 }
 
 fn undo() -> Result<()> {
@@ -1850,9 +1856,16 @@ fn platform_for(op: &Op<'_>) -> Result<framerush_platform::WindowsPlatform> {
     })
 }
 
+/// En Linux aún no hay helper: lo que pide privilegios falla con «acceso denegado» y el
+/// informe lo dice.
+#[cfg(target_os = "linux")]
+fn run(op: Op<'_>) -> Result<Report> {
+    run_on(&Native::new(), op)
+}
+
 /// Ejecuta `op` con el journal de la CLI sobre `platform`.
-#[cfg(windows)]
-fn run_on(platform: &framerush_platform::WindowsPlatform, op: Op<'_>) -> Result<Report> {
+#[cfg(any(windows, target_os = "linux"))]
+fn run_on(platform: &Native, op: Op<'_>) -> Result<Report> {
     let store = store()?;
     let engine = framerush_core::Engine::new(platform, &store);
     Ok(match op {
@@ -1871,9 +1884,9 @@ fn run_on(platform: &framerush_platform::WindowsPlatform, op: Op<'_>) -> Result<
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn run(_op: Op<'_>) -> Result<Report> {
-    bail!("apply, undo y revert solo están implementados en Windows por ahora")
+    bail!("apply, undo y revert solo están implementados en Windows y Linux por ahora")
 }
 
 /// P12: alguno de `targets` sigue vivo y no es propio (otro usuario, SYSTEM o elevado), así
@@ -1903,10 +1916,10 @@ fn helper_exe() -> Result<PathBuf> {
 }
 
 /// Ajustes que admite la plataforma nativa y, de ellos, los que piden admin.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn native_tweaks() -> (Vec<Tweak>, Vec<Tweak>) {
     use framerush_platform::SystemTweaks;
-    let w = framerush_platform::WindowsPlatform::new();
+    let w = Native::new();
     let all = w.supported_tweaks();
     let admin = all
         .iter()
@@ -1916,19 +1929,19 @@ fn native_tweaks() -> (Vec<Tweak>, Vec<Tweak>) {
     (all, admin)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn native_tweaks() -> (Vec<Tweak>, Vec<Tweak>) {
     (vec![], vec![])
 }
 
-/// Servicios de las reglas que existen en este equipo, con su estado (SCM). Los que no se
-/// pudieron leer se avisan y no se listan.
-#[cfg(windows)]
+/// Servicios de las reglas que existen en este equipo, con su estado (SCM en Windows, systemd
+/// en Linux). Los que no se pudieron leer se avisan y no se listan.
+#[cfg(any(windows, target_os = "linux"))]
 fn native_services(
     rules: &[framerush_core::Rule],
     os: Os,
 ) -> Vec<(String, framerush_platform::ServiceState)> {
-    let w = framerush_platform::WindowsPlatform::new();
+    let w = Native::new();
     let (found, errors) = framerush_core::scan_services(&w, rules, os);
     for e in errors {
         println!("Aviso: no se pudo leer el servicio {e}");
@@ -1936,7 +1949,7 @@ fn native_services(
     found
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn native_services(
     _rules: &[framerush_core::Rule],
     _os: Os,
@@ -1946,13 +1959,10 @@ fn native_services(
 
 /// Operaciones de memoria que admite la plataforma nativa.
 fn native_memory() -> Vec<MemoryOp> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
         use framerush_platform::Capabilities;
-        if framerush_platform::WindowsPlatform::new()
-            .capabilities()
-            .memory
-        {
+        if Native::new().capabilities().memory {
             return MemoryOp::ALL.to_vec();
         }
     }
