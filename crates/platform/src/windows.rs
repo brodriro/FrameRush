@@ -33,7 +33,7 @@ mod wmi;
 
 pub use acer::AcerSensor;
 pub(crate) use acer::Query as AcerQuery;
-pub use hardware::{HardwareChange, HardwareWatch, watch_hardware};
+pub use hardware::{HardwareWatch, watch_hardware};
 pub use helper::{Helper, serve_helper};
 pub(crate) use integrity::integrity_level;
 pub use nvapi::Nvapi;

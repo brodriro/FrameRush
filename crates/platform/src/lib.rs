@@ -4,6 +4,7 @@
 
 mod data;
 mod error;
+mod hardware;
 mod lang;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -22,10 +23,12 @@ mod xdg;
 
 pub use data::data_dir;
 pub use error::{PlatformError, Result};
+pub use hardware::HardwareChange;
 pub use lang::Lang;
 #[cfg(target_os = "linux")]
 pub use linux::{
-    Helper, LinuxPlatform, downloads_dir, serve_helper, steam_launch, steam_root, steam_running_app,
+    HardwareWatch, Helper, LinuxPlatform, downloads_dir, serve_helper, steam_launch, steam_root,
+    steam_running_app, watch_hardware,
 };
 #[cfg(target_os = "macos")]
 pub use macos::{MacosPlatform, downloads_dir};
@@ -40,7 +43,7 @@ pub use system::{
 };
 #[cfg(windows)]
 pub use windows::{
-    AcerSensor, HardwareChange, HardwareWatch, Helper, Nvapi, WindowsPlatform, add_to_system_path,
-    downloads_dir, remove_from_system_path, serve_helper, steam_launch, steam_root,
-    steam_running_app, watch_hardware,
+    AcerSensor, HardwareWatch, Helper, Nvapi, WindowsPlatform, add_to_system_path, downloads_dir,
+    remove_from_system_path, serve_helper, steam_launch, steam_root, steam_running_app,
+    watch_hardware,
 };

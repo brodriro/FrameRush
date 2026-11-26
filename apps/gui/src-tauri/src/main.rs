@@ -83,12 +83,12 @@ fn start(
 }
 
 /// Espera sin avisos nuevos antes de releer el equipo: conectar un dispositivo manda varios.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 const HARDWARE_SETTLE: Duration = Duration::from_millis(1500);
 
 /// Vigila los cambios de hardware y emite `device-changed` con lo que cambió (`display`,
 /// `power`, `devices`) cuando paran los avisos. La vigilancia dura lo que el valor devuelto.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn watch_hardware(app: &AppHandle) -> Option<framerush_platform::HardwareWatch> {
     use framerush_platform::HardwareChange;
     let (tx, rx) = mpsc::channel::<HardwareChange>();
@@ -123,9 +123,9 @@ fn watch_hardware(app: &AppHandle) -> Option<framerush_platform::HardwareWatch> 
 }
 
 /// Mantiene viva la vigilancia de hardware mientras dure la app.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 struct HardwareWatch(#[allow(dead_code)] Option<framerush_platform::HardwareWatch>);
-// Fuera de Windows todavía no hay avisos de hardware.
+// En macOS todavía no hay avisos de hardware.
 
 /// Cada cuánto mira el watchdog si el juego sigue en marcha.
 const WATCH_INTERVAL: Duration = Duration::from_secs(2);
@@ -720,7 +720,7 @@ fn main() -> anyhow::Result<()> {
             app.manage(launch::Launch::default());
             launch::spawn(app.handle().clone());
             overlay::tray(app)?;
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             app.manage(HardwareWatch(watch_hardware(app.handle())));
             Ok(())
         })
