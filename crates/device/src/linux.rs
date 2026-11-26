@@ -532,7 +532,7 @@ mod tests {
     }
 
     #[test]
-    fn names_gpus_from_pci_ids_and_the_nvidia_driver() {
+    fn names_gpus_from_pci_ids() {
         let t = Tree::new("gpu-names");
         t.write(
             "usr/share/hwdata/pci.ids",
@@ -545,9 +545,19 @@ mod tests {
         );
         let gpus = detect_at(&t.0).gpus;
         assert_eq!(gpus[0].name, "Intel CoffeeLake-H GT2 [UHD Graphics 630]");
+    }
 
-        // El driver de NVIDIA da el nombre comercial y gana al `pci.ids`.
+    /// La ranura PCI lleva `:` (no vale como nombre de archivo en Windows), así que esta parte
+    /// solo se prueba en Unix; el resto de `device` ya se prueba en la CI de Windows.
+    #[cfg(unix)]
+    #[test]
+    fn names_nvidia_gpus_from_the_driver() {
+        let t = Tree::new("gpu-nvidia");
         t.write(
+            "usr/share/hwdata/pci.ids",
+            "10de  NVIDIA Corporation\n\t1f91  GA107M [GeForce GTX 1650 Mobile]\n",
+        )
+        .write(
             "sys/class/drm/card1/device/uevent",
             "PCI_ID=10DE:1F91\nPCI_SLOT_NAME=0000:01:00.0",
         )
@@ -556,8 +566,9 @@ mod tests {
             "Model:\t\t NVIDIA GeForce GTX 1650\nIRQ:\t\t 132",
         );
         let gpus = detect_at(&t.0).gpus;
-        assert_eq!(gpus[1].name, "NVIDIA GeForce GTX 1650");
-        assert_eq!(gpus[1].id, "0000:01:00.0");
+        // El `Model:` del driver gana al `pci.ids`.
+        assert_eq!(gpus[0].name, "NVIDIA GeForce GTX 1650");
+        assert_eq!(gpus[0].id, "0000:01:00.0");
     }
 
     #[test]
