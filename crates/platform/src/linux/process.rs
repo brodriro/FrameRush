@@ -497,7 +497,23 @@ mod tests {
 
     impl Sleeper {
         fn spawn() -> Self {
-            Self(Command::new("sleep").arg("60").spawn().unwrap())
+            let sleeper = Self(Command::new("sleep").arg("60").spawn().unwrap());
+            // `spawn` vuelve antes del `exec`: mientras el hijo siga siendo la copia del test,
+            // su `exe` no es `sleep` y el `Target` cambiaría entre capturarlo y usarlo (It2.4).
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_secs(5) {
+                if sleeper.exec_done() {
+                    return sleeper;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!("el hijo no llegó a hacer `exec`");
+        }
+
+        /// El hijo ya ejecuta `sleep` y no la copia del test anterior al `exec`.
+        fn exec_done(&self) -> bool {
+            std::fs::read_to_string(format!("/proc/{}/comm", self.0.id()))
+                .is_ok_and(|comm| comm.trim_end() == "sleep")
         }
 
         fn target(&self) -> Target {
