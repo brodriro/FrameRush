@@ -17,6 +17,7 @@ use super::display::current_modes;
 use super::helper::wide;
 use crate::{Mode, PlatformError, Result};
 use std::cell::RefCell;
+use crate::HardwareChange;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
