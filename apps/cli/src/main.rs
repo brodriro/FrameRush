@@ -1096,6 +1096,10 @@ fn print_game(
     match game {
         Some(g) => {
             println!("Juego: {} → prioridad {:?}", g.label, args.game_priority);
+            let adapter = g.appid.and_then(framerush_games::adapter);
+            if let Some(ac) = adapter.and_then(|a| a.anticheat()) {
+                println!("Anticheat del juego: {ac} (sin proceso propio; no limita ningún ajuste)");
+            }
             let mut exes: Vec<String> = g
                 .processes
                 .iter()
