@@ -65,6 +65,9 @@ struct State {
     gpu: BTreeMap<PathBuf, String>,
     /// Archivos del juego: contenido y solo lectura.
     files: BTreeMap<PathBuf, (String, bool)>,
+    /// GameMode instalado (`set_gamemode`) y los procesos que tiene como juego.
+    gamemode: bool,
+    gamemode_games: Vec<Target>,
 }
 
 /// Plataforma en memoria.
@@ -649,6 +652,39 @@ impl GameTuning for MockPlatform {
 
     fn restore_persistent_priority(&self, _exe: &Path, saved: &[SavedValue]) -> Result<()> {
         self.restore_values(saved)
+    }
+
+    fn gamemode_available(&self) -> bool {
+        self.lock().gamemode
+    }
+
+    fn register_gamemode(&self, target: &Target) -> Result<()> {
+        if !self.gamemode_available() {
+            return Err(PlatformError::Unsupported("GameMode"));
+        }
+        self.with_process(target, |_| Ok(()))?;
+        let mut s = self.lock();
+        if !s.gamemode_games.contains(target) {
+            s.gamemode_games.push(target.clone());
+        }
+        Ok(())
+    }
+
+    fn unregister_gamemode(&self, target: &Target) -> Result<()> {
+        self.lock().gamemode_games.retain(|t| t != target);
+        Ok(())
+    }
+}
+
+impl MockPlatform {
+    /// Simula que Feral GameMode está (o no) instalado.
+    pub fn set_gamemode(&self, available: bool) {
+        self.lock().gamemode = available;
+    }
+
+    /// Procesos que GameMode tiene como juego.
+    pub fn gamemode_games(&self) -> Vec<Target> {
+        self.lock().gamemode_games.clone()
     }
 }
 

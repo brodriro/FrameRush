@@ -49,6 +49,9 @@ pub struct GameBoost {
     /// `game-priority-persistent`: Alta para el exe en cada arranque (IFEO). Se ignora si
     /// `priority` es Normal (P1); ver [`crate::persistent_priority_default`].
     pub persistent_priority: bool,
+    /// `linux-gamemode` (de sesión): registrar los procesos del juego en Feral GameMode. Se
+    /// registran antes de fijar `priority`, así que la prioridad de FrameRush manda (P16).
+    pub gamemode: bool,
 }
 
 /// Archivo que el adaptador del juego quiere dejar así (`crates/games`, It5.1).
@@ -174,6 +177,10 @@ pub fn describe(change: &Change, lang: Lang) -> String {
                 format!("afinidad a {n} CPU → {p}"),
                 format!("affinity to {n} CPUs → {p}"),
             )
+        }
+        Change::GameMode { target } => {
+            let p = proc(target);
+            lang.pick(format!("GameMode → {p}"), format!("GameMode → {p}"))
         }
         Change::Suspend { target } => {
             let p = proc(target);
@@ -460,6 +467,13 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
                 .iter()
                 .filter(|t| !is_protected(&t.exe_path.to_string_lossy()));
             for target in targets {
+                // P16: GameMode también cambia el nice del juego; la prioridad va después.
+                if g.gamemode {
+                    let c = Change::GameMode {
+                        target: target.clone(),
+                    };
+                    self.run(&mut journal, batch, c, &mut report)?;
+                }
                 self.set_priority(&mut journal, batch, target, g.priority, &mut report)?;
                 if let Some(cpus) = &g.affinity {
                     self.set_affinity(&mut journal, batch, target, cpus, &mut report)?;
@@ -1112,6 +1126,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::Affinity {
                 target, applied, ..
             } => self.platform.set_affinity(target, applied),
+            Change::GameMode { target } => self.platform.register_gamemode(target),
             Change::Suspend { target } => self.platform.suspend(target),
             Change::Kill { target } => self.platform.kill(target),
             Change::StopService { name } => self.platform.stop_service(name),
@@ -1208,6 +1223,7 @@ impl<'a, P: Platform, S: JournalStore> Engine<'a, P, S> {
             Change::Affinity {
                 target, previous, ..
             } => self.platform.set_affinity(target, previous),
+            Change::GameMode { target } => self.platform.unregister_gamemode(target),
             Change::Suspend { target } => self.platform.resume(target),
             Change::StopService { name } => self.platform.start_service(name),
             Change::Tweak { tweak, previous } => self.platform.restore_tweak(*tweak, previous),
@@ -1275,6 +1291,7 @@ fn already_applied(journal: &Journal, change: &Change) -> bool {
                 },
             ) => a == b && x == y,
             (Change::Suspend { target: a }, Change::Suspend { target: b }) => a == b,
+            (Change::GameMode { target: a }, Change::GameMode { target: b }) => a == b,
             (Change::StopService { name: a }, Change::StopService { name: b }) => a == b,
             (
                 Change::FullscreenOptimizationsOff { exe: a },
@@ -1438,6 +1455,7 @@ mod tests {
                 affinity: None,
                 high_performance_gpu: false,
                 persistent_priority: false,
+                gamemode: false,
             }),
         }
     }
@@ -1720,6 +1738,48 @@ mod tests {
         assert_eq!(m.affinity(&game).unwrap(), [4]);
         engine.revert_session().unwrap();
         assert_eq!(m.affinity(&game).unwrap(), original);
+    }
+
+    /// `linux-gamemode`: se registra antes de la prioridad (P16), reaplicar no lo duplica y
+    /// revertir lo quita. Sin GameMode solo queda un fallo en el informe.
+    #[test]
+    fn gamemode_round_trip() {
+        let m = MockPlatform::new(8);
+        let game = m.spawn(9, "game", "/game", 1);
+        let store = MemoryStore::default();
+        let engine = Engine::new(&m, &store);
+        let mut req = boost(&game, Priority::High, false);
+        if let Some(g) = req.game.as_mut() {
+            g.gamemode = true;
+        }
+        let report = engine.apply(&req).unwrap();
+        assert!(m.gamemode_games().is_empty());
+        assert_eq!(report.failed(), 1);
+        engine.revert_session().unwrap();
+
+        m.set_gamemode(true);
+        engine.apply(&req).unwrap();
+        engine.apply(&req).unwrap();
+        assert_eq!(m.gamemode_games(), std::slice::from_ref(&game));
+        let journal = store.load().unwrap();
+        let kinds: Vec<&Change> = journal.entries.iter().map(|e| &e.change).collect();
+        let gm = kinds
+            .iter()
+            .position(|c| matches!(c, Change::GameMode { .. }));
+        let prio = kinds
+            .iter()
+            .position(|c| matches!(c, Change::Priority { .. }));
+        assert!(gm < prio, "{kinds:?}");
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|c| matches!(c, Change::GameMode { .. }))
+                .count(),
+            1
+        );
+        engine.revert_session().unwrap();
+        assert!(m.gamemode_games().is_empty());
+        assert_eq!(m.priority(&game).unwrap(), Priority::Normal);
     }
 
     #[test]

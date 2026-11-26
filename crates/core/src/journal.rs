@@ -29,6 +29,11 @@ pub enum Change {
         previous: Vec<usize>,
         applied: Vec<usize>,
     },
+    /// `linux-gamemode`: Feral GameMode trata el proceso como juego. De sesión; al revertir se
+    /// le quita (si el juego ya se cerró, GameMode lo quitó solo).
+    GameMode {
+        target: Target,
+    },
     /// Proceso cerrado: se registra, pero no se puede deshacer.
     Kill {
         target: Target,
@@ -113,6 +118,7 @@ impl Change {
         match self {
             Change::Priority { .. }
             | Change::Affinity { .. }
+            | Change::GameMode { .. }
             | Change::Suspend { .. }
             | Change::Kill { .. }
             | Change::StopService { .. }
@@ -133,6 +139,7 @@ impl Change {
         match self {
             Change::Priority { target, .. }
             | Change::Affinity { target, .. }
+            | Change::GameMode { target }
             | Change::Suspend { target }
             | Change::Kill { target } => Some(target),
             Change::StopService { .. }

@@ -298,39 +298,77 @@ fn optional_tweaks_need_include() {
 }
 
 #[test]
-fn gpu_alto_needs_a_game() {
+fn gpu_alto_is_the_default_with_a_game() {
     let dir = temp_dir("gpu");
-    let (ok, _) = framerush_in(&dir, &["apply", "--gpu-alto"]);
-    assert!(!ok);
+    let (ok, stdout) = framerush_in(&dir, &["apply"]);
+    assert!(ok);
+    assert!(!stdout.contains("gpu-preference"), "{stdout}");
     let pid = std::process::id().to_string();
-    // Depende del equipo: con más de una GPU se ofrece; con una o ninguna (la CI) se rechaza.
+    // Depende del equipo: solo se ofrece en Windows con más de una GPU (en la CI, no).
     let (_, profile) = framerush_in(&dir, &["plan"]);
     let gpus = profile
         .lines()
         .filter(|l| l.starts_with("GPU: ") && !l.contains("no detectada"))
         .count();
-    let (ok, stdout) = framerush_in(&dir, &["apply", "--game", &pid, "--gpu-alto"]);
-    if gpus > 1 {
-        assert!(ok);
-        assert!(stdout.contains("[x] gpu-preference = alto"), "{stdout}");
-    } else {
-        assert!(!ok, "{stdout}");
-    }
+    let offered = cfg!(windows) && gpus > 1;
+    let (ok, stdout) = framerush_in(&dir, &["apply", "--game", &pid]);
+    assert!(ok, "{stdout}");
+    assert_eq!(
+        stdout.contains("[x] gpu-preference = alto"),
+        offered,
+        "{stdout}"
+    );
+    let (ok, stdout) = framerush_in(&dir, &["apply", "--game", &pid, "--no-gpu-alto"]);
+    assert!(ok, "{stdout}");
+    assert_eq!(
+        stdout.contains("[ ] gpu-preference = alto"),
+        offered,
+        "{stdout}"
+    );
     assert!(!dir.join("session.json").exists());
 }
 
 #[test]
-fn fso_off_needs_a_game() {
+fn fso_off_needs_a_game_and_is_windows_only() {
     let dir = temp_dir("fso");
     let (ok, _) = framerush_in(&dir, &["apply", "--fso-off"]);
     assert!(!ok);
     let pid = std::process::id().to_string();
     let (ok, stdout) = framerush_in(&dir, &["apply", "--game", &pid, "--fso-off"]);
-    assert!(ok);
-    assert!(
-        stdout.contains("[x] fullscreen-optimizations-off"),
-        "{stdout}"
-    );
+    // Es un ajuste del exe de Windows (SETTINGS.md): fuera de Windows se rechaza.
+    assert_eq!(ok, cfg!(windows), "{stdout}");
+    if cfg!(windows) {
+        assert!(
+            stdout.contains("[x] fullscreen-optimizations-off"),
+            "{stdout}"
+        );
+    }
+    assert!(!dir.join("session.json").exists());
+}
+
+/// En Linux y macOS no hay IFEO: `game-priority-persistent` ni se ofrece ni se acepta.
+#[cfg(not(windows))]
+#[test]
+fn persistent_priority_is_not_offered_outside_windows() {
+    let dir = temp_dir("persistent-priority-os");
+    let pid = std::process::id().to_string();
+    let game = ["--game", pid.as_str()];
+    for level in ["agresivo", "extremo"] {
+        let args = [&["plan"][..], &game, &["--level", level, "--admin"]].concat();
+        let (ok, stdout) = framerush_in(&dir, &args);
+        assert!(ok, "{stdout}");
+        assert!(!stdout.contains("game-priority-persistent"), "{stdout}");
+    }
+    let args = [
+        "apply",
+        "--game",
+        &pid,
+        "--admin",
+        "--include",
+        "game-priority-persistent",
+    ];
+    let (ok, stdout) = framerush_in(&dir, &args);
+    assert!(!ok, "{stdout}");
     assert!(!dir.join("session.json").exists());
 }
 
@@ -500,6 +538,67 @@ fn defender_exclusions_are_opt_in_and_need_a_steam_game() {
         assert!(stdout.contains("Half-Life"), "{stdout}");
         assert!(stdout.contains("requiere --admin"), "{stdout}");
     }
+    assert!(!dir.join("session.json").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Steam en Linux: la carpeta sale de sus rutas conocidas, los juegos de los manifiestos y el
+/// juego en marcha del `SteamAppId` del entorno, aunque su exe no esté bajo la carpeta del juego
+/// (PLAN.md §6, V12).
+#[cfg(target_os = "linux")]
+#[test]
+fn steam_reads_the_running_game_from_the_environment() {
+    let dir = temp_dir("steam-linux");
+    let steamapps = dir.join("steamapps");
+    std::fs::create_dir_all(steamapps.join("common/Counter-Strike Global Offensive")).unwrap();
+    std::fs::write(
+        steamapps.join("appmanifest_730.acf"),
+        "\"AppState\"\n{\n\t\"appid\"\t\t\"730\"\n\t\"name\"\t\t\"Counter-Strike 2\"\n\t\"installdir\"\t\t\"Counter-Strike Global Offensive\"\n}\n",
+    )
+    .unwrap();
+
+    let (ok, stdout) = framerush_in(&dir, &["steam"]);
+    assert!(ok, "{stdout}");
+    assert!(stdout.contains("Counter-Strike 2"), "{stdout}");
+    assert!(stdout.contains("Juego en marcha: ninguno"), "{stdout}");
+
+    // Un proceso con `SteamAppId`, como el que lanza Steam al juego.
+    let mut game = std::process::Command::new("sleep")
+        .arg("30")
+        .env("SteamAppId", "730")
+        .spawn()
+        .unwrap();
+    let (ok, stdout) = framerush_in(&dir, &["steam"]);
+    let _ = game.kill();
+    let _ = game.wait();
+    assert!(ok, "{stdout}");
+    assert!(
+        stdout.contains("Juego en marcha: Counter-Strike 2 (730), según SteamAppId"),
+        "{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Turbo en Linux: sin `--yes` solo muestra el plan del juego de `--appid` y no abre sesión.
+#[cfg(target_os = "linux")]
+#[test]
+fn turbo_is_a_dry_run_without_yes() {
+    let dir = temp_dir("turbo-linux");
+    let steamapps = dir.join("steamapps");
+    std::fs::create_dir_all(steamapps.join("common/Counter-Strike Global Offensive")).unwrap();
+    std::fs::write(
+        steamapps.join("appmanifest_730.acf"),
+        "\"AppState\"\n{\n\t\"appid\"\t\t\"730\"\n\t\"name\"\t\t\"Counter-Strike 2\"\n\t\"installdir\"\t\t\"Counter-Strike Global Offensive\"\n}\n",
+    )
+    .unwrap();
+
+    let (ok, stdout) = framerush_in(&dir, &["turbo", "--appid", "730"]);
+    assert!(ok, "{stdout}");
+    assert!(
+        stdout.contains("Turbo para «Counter-Strike 2» (730)"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("no se aplica sin --yes"), "{stdout}");
     assert!(!dir.join("session.json").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }

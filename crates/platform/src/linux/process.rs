@@ -20,6 +20,15 @@
 //!   a otro que reutilice el PID.
 //! - <https://man7.org/linux/man-pages/man7/signal.7.html>: `SIGSTOP` para todo el proceso y no
 //!   se puede capturar ni ignorar; `SIGCONT` lo reanuda.
+//! - <https://man7.org/linux/man-pages/man2/ioprio_set.2.html>: sin `ioprio` propio, la prioridad
+//!   de E/S sigue al nice; también es por hilo; la clase IDLE solo usa el disco cuando nadie más
+//!   lo necesita y no pide privilegios desde Linux 2.6.25; 0 vuelve al comportamiento por defecto.
+//!   Constantes de `include/uapi/linux/ioprio.h` (`IOPRIO_CLASS_SHIFT = 13`,
+//!   `IOPRIO_CLASS_IDLE = 3`, `IOPRIO_WHO_PROCESS = 1`).
+//!
+//! E/S (decisión del usuario, 2026-11-26): solo la prioridad Baja (`Idle`) pasa a la clase IDLE;
+//! el resto sigue al nice. Al poner otra prioridad, un hilo en IDLE vuelve a 0 (seguir al nice);
+//! uno con otra clase propia no se toca.
 //!
 //! Revalidación (It2.4): se abre un pidfd y después se comprueba `(pid, start_time, exe_path)`;
 //! si coincide, el pidfd es del proceso que se quería. Las señales van por ese pidfd. `nice` y
@@ -28,6 +37,7 @@
 
 #![allow(unsafe_code)]
 
+use super::Helper;
 use crate::scan::target_of;
 use crate::{
     GameTuning, PlatformError, Priority, ProcessControl, ProcessInfo, Result, SavedValue, Target,
@@ -37,24 +47,48 @@ use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::Path;
 
-/// Plataforma Linux. Por ahora solo procesos y afinidad; el resto de [`crate::Platform`] llega
-/// con M5 (systemd, power-profiles-daemon, gamemode, helper con polkit).
-#[derive(Debug, Default, Clone, Copy)]
-pub struct LinuxPlatform;
+/// Plataforma Linux.
+#[derive(Debug, Default, Clone)]
+pub struct LinuxPlatform {
+    /// Helper elevado (pkexec) para lo que el SO deniega a este proceso: subir la prioridad,
+    /// procesos de otro usuario y servicios. Sin él, eso falla con `AccessDenied`.
+    helper: Option<Helper>,
+}
 
 impl LinuxPlatform {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 
-    /// Nunca se congela ni se cierra el propio FrameRush, que es quien reanuda al resto.
-    fn refuse_own(target: &Target) -> Result<()> {
-        if target.pid == std::process::id() {
+    /// Plataforma que delega en `helper` lo que el SO deniega.
+    pub fn with_helper(helper: Helper) -> Self {
+        Self {
+            helper: Some(helper),
+        }
+    }
+
+    /// Nunca se congela ni se cierra el propio FrameRush, que es quien reanuda al resto, ni su
+    /// helper.
+    fn refuse_own(&self, target: &Target) -> Result<()> {
+        let helper = self.helper.as_ref().map(Helper::pid);
+        if target.pid == std::process::id() || Some(target.pid) == helper {
             Err(PlatformError::AccessDenied(
                 "FrameRush no actúa sobre sus propios procesos".into(),
             ))
         } else {
             Ok(())
+        }
+    }
+
+    /// `here` o, si el SO lo deniega y hay helper, la misma acción en el helper.
+    pub(super) fn or_helper(
+        &self,
+        here: impl FnOnce() -> Result<()>,
+        elevated: impl FnOnce(&Helper) -> Result<()>,
+    ) -> Result<()> {
+        match (here(), &self.helper) {
+            (Err(PlatformError::AccessDenied(_)), Some(helper)) => elevated(helper),
+            (result, _) => result,
         }
     }
 }
@@ -203,6 +237,48 @@ fn set_nice(tid: libc::pid_t, nice: libc::c_int) -> io::Result<()> {
     }
 }
 
+const IOPRIO_WHO_PROCESS: libc::c_int = 1;
+const IOPRIO_CLASS_SHIFT: libc::c_int = 13;
+const IOPRIO_CLASS_IDLE: libc::c_int = 3;
+/// Clase IDLE (no tiene nivel).
+const IOPRIO_IDLE: libc::c_int = IOPRIO_CLASS_IDLE << IOPRIO_CLASS_SHIFT;
+
+/// Clase de un valor de `ioprio` (`IOPRIO_PRIO_CLASS`).
+fn io_class(ioprio: libc::c_int) -> libc::c_int {
+    (ioprio >> IOPRIO_CLASS_SHIFT) & 7
+}
+
+fn get_ioprio(tid: libc::pid_t) -> io::Result<libc::c_int> {
+    // SAFETY: ioprio_get no toma punteros.
+    let r = unsafe { libc::syscall(libc::SYS_ioprio_get, IOPRIO_WHO_PROCESS, tid) };
+    if r < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        libc::c_int::try_from(r).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))
+    }
+}
+
+fn set_ioprio(tid: libc::pid_t, ioprio: libc::c_int) -> io::Result<()> {
+    // SAFETY: ioprio_set no toma punteros.
+    let r = unsafe { libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, tid, ioprio) };
+    if r == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Prioridad de E/S de un hilo según `priority`: Baja → IDLE; otra → si estaba en IDLE, 0.
+fn set_io_priority(tid: libc::pid_t, priority: Priority) -> io::Result<()> {
+    if priority == Priority::Idle {
+        set_ioprio(tid, IOPRIO_IDLE)
+    } else if io_class(get_ioprio(tid)?) == IOPRIO_CLASS_IDLE {
+        set_ioprio(tid, 0)
+    } else {
+        Ok(())
+    }
+}
+
 /// Número de CPU que caben en un `cpu_set_t`.
 const CPU_SETSIZE: usize = libc::CPU_SETSIZE as usize;
 
@@ -294,24 +370,42 @@ impl ProcessControl for LinuxPlatform {
         Ok(priority_of(nice))
     }
 
-    /// En todos los hilos. Subir la prioridad (bajar el nice) pide `CAP_SYS_NICE`.
+    /// En todos los hilos, el nice y la prioridad de E/S. Subir la prioridad (bajar el nice) pide
+    /// `CAP_SYS_NICE`.
     fn set_priority(&self, target: &Target, priority: Priority) -> Result<()> {
         let nice = nice_of(priority);
-        Pidfd::open(target)?.each_thread(|tid| set_nice(tid, nice))
+        self.or_helper(
+            || {
+                Pidfd::open(target)?.each_thread(|tid| {
+                    set_nice(tid, nice)?;
+                    set_io_priority(tid, priority)
+                })
+            },
+            |h| h.set_priority(target, priority),
+        )
     }
 
     fn suspend(&self, target: &Target) -> Result<()> {
-        Self::refuse_own(target)?;
-        Pidfd::open(target)?.signal(libc::SIGSTOP)
+        self.refuse_own(target)?;
+        self.or_helper(
+            || Pidfd::open(target)?.signal(libc::SIGSTOP),
+            |h| h.suspend(target),
+        )
     }
 
     fn resume(&self, target: &Target) -> Result<()> {
-        Pidfd::open(target)?.signal(libc::SIGCONT)
+        self.or_helper(
+            || Pidfd::open(target)?.signal(libc::SIGCONT),
+            |h| h.resume(target),
+        )
     }
 
     fn kill(&self, target: &Target) -> Result<()> {
-        Self::refuse_own(target)?;
-        Pidfd::open(target)?.signal(libc::SIGKILL)
+        self.refuse_own(target)?;
+        self.or_helper(
+            || Pidfd::open(target)?.signal(libc::SIGKILL),
+            |h| h.kill(target),
+        )
     }
 
     /// Linux no tiene una ventana en primer plano común a X11 y Wayland.
@@ -377,6 +471,19 @@ impl GameTuning for LinuxPlatform {
     fn restore_persistent_priority(&self, _exe: &Path, _saved: &[SavedValue]) -> Result<()> {
         Err(PlatformError::Unsupported("prioridad persistente"))
     }
+
+    fn gamemode_available(&self) -> bool {
+        super::gamemode::available()
+    }
+
+    /// En este proceso, nunca en el helper: GameMode vive en el bus de sesión del usuario.
+    fn register_gamemode(&self, target: &Target) -> Result<()> {
+        super::gamemode::register(target)
+    }
+
+    fn unregister_gamemode(&self, target: &Target) -> Result<()> {
+        super::gamemode::unregister(target)
+    }
 }
 
 #[cfg(test)]
@@ -390,7 +497,23 @@ mod tests {
 
     impl Sleeper {
         fn spawn() -> Self {
-            Self(Command::new("sleep").arg("60").spawn().unwrap())
+            let sleeper = Self(Command::new("sleep").arg("60").spawn().unwrap());
+            // `spawn` vuelve antes del `exec`: mientras el hijo siga siendo la copia del test,
+            // su `exe` no es `sleep` y el `Target` cambiaría entre capturarlo y usarlo (It2.4).
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_secs(5) {
+                if sleeper.exec_done() {
+                    return sleeper;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!("el hijo no llegó a hacer `exec`");
+        }
+
+        /// El hijo ya ejecuta `sleep` y no la copia del test anterior al `exec`.
+        fn exec_done(&self) -> bool {
+            std::fs::read_to_string(format!("/proc/{}/comm", self.0.id()))
+                .is_ok_and(|comm| comm.trim_end() == "sleep")
         }
 
         fn target(&self) -> Target {
@@ -443,6 +566,14 @@ mod tests {
     }
 
     #[test]
+    fn io_class_reads_the_high_bits() {
+        assert_eq!(io_class(IOPRIO_IDLE), IOPRIO_CLASS_IDLE);
+        assert_eq!(io_class(0), 0);
+        // BE (2), nivel 4.
+        assert_eq!(io_class((2 << IOPRIO_CLASS_SHIFT) | 4), 2);
+    }
+
+    #[test]
     fn cpu_set_rejects_empty_and_out_of_range() {
         assert!(cpu_set(&[]).is_err());
         assert!(cpu_set(&[CPU_SETSIZE]).is_err());
@@ -472,10 +603,16 @@ mod tests {
             linux.priority(&target).unwrap(),
             priority_of(get_nice(0).unwrap())
         );
+        let tid = main_thread(&target).unwrap();
+        assert_ne!(io_class(get_ioprio(tid).unwrap()), IOPRIO_CLASS_IDLE);
         linux.set_priority(&target, Priority::Idle).unwrap();
         assert_eq!(linux.priority(&target).unwrap(), Priority::Idle);
+        assert_eq!(io_class(get_ioprio(tid).unwrap()), IOPRIO_CLASS_IDLE);
         match linux.set_priority(&target, Priority::Normal) {
-            Ok(()) => assert_eq!(linux.priority(&target).unwrap(), Priority::Normal),
+            Ok(()) => {
+                assert_eq!(linux.priority(&target).unwrap(), Priority::Normal);
+                assert_ne!(io_class(get_ioprio(tid).unwrap()), IOPRIO_CLASS_IDLE);
+            }
             Err(e) => assert!(matches!(e, PlatformError::AccessDenied(_)), "{e}"),
         }
     }

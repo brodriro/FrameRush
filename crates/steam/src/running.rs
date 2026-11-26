@@ -1,7 +1,8 @@
 //! Qué juego de Steam está en marcha (V12).
 //!
-//! Primero el `RunningAppID` que publica Steam (solo Windows); si no hay, el proceso en primer
-//! plano cuando su exe está bajo la carpeta de un juego instalado (todos los SO).
+//! Primero el `appid` que publica Steam: `RunningAppID` en Windows y `SteamAppId` en el entorno
+//! del juego en Linux. Si no hay, el proceso en primer plano cuando su exe está bajo la carpeta
+//! de un juego instalado (todos los SO).
 
 use crate::{App, Result};
 use framerush_platform::ProcessInfo;
@@ -10,7 +11,7 @@ use std::path::{Component, Path};
 /// De dónde salió el juego detectado.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    /// `RunningAppID` de Steam.
+    /// El `appid` que publica Steam (`RunningAppID` en Windows, `SteamAppId` en Linux).
     RunningAppId,
     /// El proceso en primer plano está bajo la carpeta del juego.
     Foreground,
@@ -20,7 +21,9 @@ pub enum Source {
 pub fn running_app_id() -> Result<Option<u32>> {
     #[cfg(windows)]
     return Ok(framerush_platform::steam_running_app()?);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return Ok(framerush_platform::steam_running_app());
+    #[cfg(not(any(windows, target_os = "linux")))]
     Ok(None)
 }
 

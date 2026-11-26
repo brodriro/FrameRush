@@ -15,7 +15,7 @@
 
 use super::display::current_modes;
 use super::helper::wide;
-use crate::{Mode, PlatformError, Result};
+use crate::{HardwareChange, Mode, PlatformError, Result};
 use std::cell::RefCell;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
@@ -27,17 +27,6 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     RegisterClassExW, SetTimer, UnregisterClassW, WM_CLOSE, WM_DESTROY, WM_DEVICECHANGE,
     WM_DISPLAYCHANGE, WM_POWERBROADCAST, WM_TIMER, WNDCLASSEXW,
 };
-
-/// Qué cambió.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum HardwareChange {
-    /// Resolución, frecuencia o monitores.
-    Display,
-    /// Corriente alterna, batería o su carga.
-    Power,
-    /// Se conectó o desconectó un dispositivo.
-    Devices,
-}
 
 type Callback = Box<dyn Fn(HardwareChange)>;
 

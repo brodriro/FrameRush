@@ -3,6 +3,7 @@ name = "framerush-cli"
 description = "CLI de FrameRush: scan, plan, apply, revert, sensors y power."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
@@ -24,8 +25,8 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-# Ctrl+C de `turbo`, que de momento solo existe en Windows.
-[target.'cfg(windows)'.dependencies]
+# Ctrl+C de `turbo` (Windows y Linux).
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
 ctrlc.workspace = true
 
 [lints]

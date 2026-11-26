@@ -271,7 +271,12 @@ pub fn plan(
                 let procs: Vec<ProcessInfo> = snapshot
                     .processes
                     .iter()
-                    .filter(|p| rule.matches_process(os, &p.name))
+                    // También por el ejecutable: en Linux el nombre (`comm`) se corta a 15
+                    // caracteres (`tracker-miner-fs-3`).
+                    .filter(|p| {
+                        rule.matches_process(os, &p.name)
+                            || rule.matches_process(os, &p.target.exe_path.to_string_lossy())
+                    })
                     // Ni FrameRush ni sus hijos (el WebView2 de la GUI) entran nunca.
                     .filter(|p| !p.framerush)
                     .filter(|p| {
@@ -572,6 +577,40 @@ mod tests {
             assert_eq!(rows(&n), rows(&e));
             assert_eq!(n.items.len(), rules.len());
         }
+    }
+
+    /// En Linux el `comm` se corta a 15 caracteres: la regla también empareja por el ejecutable.
+    #[test]
+    fn a_truncated_name_matches_by_the_executable() {
+        let rules = vec![rule(
+            "indexer",
+            &["tracker-miner-fs-3"],
+            Action::Suspend,
+            Level::Normal,
+            Risk::Low,
+        )];
+        let mut cut = proc(7, "tracker-miner-f");
+        cut.target.exe_path = PathBuf::from("/usr/libexec/tracker-miner-fs-3");
+        let snap = Snapshot {
+            processes: vec![cut, proc(8, "tracker-miner-f")],
+            ..Snapshot::default()
+        };
+        let p = plan(
+            Level::Normal,
+            &snap,
+            &rules,
+            &samples::hybrid_laptop(),
+            &PlanOptions::default(),
+        );
+        let pids: Vec<u32> = p
+            .items
+            .iter()
+            .flat_map(|i| match &i.subject {
+                Subject::Processes(ps) => ps.iter().map(|p| p.target.pid).collect(),
+                Subject::Services(_) => vec![],
+            })
+            .collect();
+        assert_eq!(pids, [7]);
     }
 
     #[test]

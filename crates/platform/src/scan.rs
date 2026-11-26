@@ -3,7 +3,7 @@
 use crate::{ProcessInfo, Result, StartTime, Target};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, Uid, UpdateKind};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, ThreadKind, Uid, UpdateKind};
 
 /// Procesos en ejecución, ordenados por PID.
 ///
@@ -13,6 +13,11 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, Uid, UpdateKin
 /// queda en `None`. El dueño se compara con el de este proceso (SID en Windows, uid en Unix) y,
 /// en Windows, también el nivel de integridad: un proceso elevado no es propio. `framerush`
 /// marca este proceso y los que cuelgan de él.
+///
+/// En Linux, `sysinfo` recorre también `/proc/<pid>/task` y devuelve cada hilo como una entrada
+/// más (el TID en el PID y `parent` = su proceso). Aquí se descartan: un hilo no es un proceso,
+/// y contarlo duplicaría los del plan, sumaría su RSS una vez por hilo y haría que congelar por
+/// TID parase solo ese hilo. Los hilos del kernel sí son procesos (`PF_KTHREAD`) y se quedan.
 pub fn scan_processes() -> Result<Vec<ProcessInfo>> {
     let mut sys = System::new();
     sys.refresh_processes_specifics(
@@ -36,6 +41,7 @@ pub fn scan_processes() -> Result<Vec<ProcessInfo>> {
     let mut out: Vec<ProcessInfo> = sys
         .processes()
         .iter()
+        .filter(|(_, p)| p.thread_kind() != Some(ThreadKind::Userland))
         .map(|(pid, p)| ProcessInfo {
             target: Target {
                 pid: pid.as_u32(),
@@ -142,6 +148,44 @@ mod tests {
         assert!(!descends_from(&tree, 4, 1));
         assert!(!descends_from(&tree, 5, 1));
         assert!(!descends_from(&tree, 9, 1));
+    }
+
+    /// `sysinfo` en Linux devuelve cada hilo como una entrada más; ninguno puede salir como
+    /// proceso. Se compara con el `Tgid` de `/proc`, que es el PID del proceso del hilo.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn threads_are_not_listed_as_processes() {
+        // Un hilo más, para que su TID exista mientras se escanea.
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let worker = std::thread::spawn(move || {
+            let _ = rx.recv();
+        });
+        let procs = scan_processes().unwrap();
+        let mut bad = vec![];
+        for p in &procs {
+            // Un proceso puede terminar entre el scan y la lectura del estado.
+            let Ok(status) = std::fs::read_to_string(format!("/proc/{}/status", p.target.pid))
+            else {
+                continue;
+            };
+            let tgid = status
+                .lines()
+                .find_map(|l| l.strip_prefix("Tgid:"))
+                .and_then(|t| t.trim().parse::<u32>().ok());
+            if tgid != Some(p.target.pid) {
+                bad.push((p.target.pid, tgid, p.name.clone()));
+            }
+        }
+        drop(tx);
+        worker.join().unwrap();
+        assert!(bad.is_empty(), "hilos listados como procesos: {bad:?}");
+        assert_eq!(
+            procs
+                .iter()
+                .filter(|p| p.target.pid == std::process::id())
+                .count(),
+            1
+        );
     }
 
     /// Un proceso hijo de este test sale marcado como de FrameRush.

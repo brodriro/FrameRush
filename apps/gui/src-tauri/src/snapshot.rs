@@ -323,6 +323,9 @@ pub fn build(sensors: SensorInfo, phase: &dyn Fn(&'static str), lang: Lang) -> R
     if windows && gpu_pref.is_some() {
         available.push("gpu-preference");
     }
+    if native_gamemode() {
+        available.push("linux-gamemode");
+    }
     // Solo con Defender como antivirus activo: con otro, excluir en Defender no sirve (P15).
     if caps.defender_exclusions && device.defender_active == Some(true) {
         available.push("defender-exclusions");
@@ -615,6 +618,8 @@ struct AdapterView {
     cfg: String,
     bench: String,
     launch_options: &'static str,
+    /// Anticheat sin proceso propio (p. ej. VAC): solo se muestra, no activa P2 ni P10.
+    anticheat: Option<&'static str>,
 }
 
 fn adapter_view(
@@ -657,8 +662,18 @@ fn adapter_view(
             format!("{} in the console", adapter.bench_command()),
         ),
         launch_options: adapter.launch_options(),
+        anticheat: adapter.anticheat(),
     })
 }
+
+/// Dónde publica Steam el `appid` del juego en marcha: `RunningAppID` en el registro de Windows
+/// y `SteamAppId` en el entorno del juego en Linux (PLAN.md §6, V12).
+#[cfg(windows)]
+const APPID_SOURCE: &str = "RunningAppID";
+#[cfg(target_os = "linux")]
+const APPID_SOURCE: &str = "SteamAppId";
+#[cfg(not(any(windows, target_os = "linux")))]
+const APPID_SOURCE: &str = "Steam";
 
 /// Juegos instalados en Steam, o `None` si Steam no está instalado.
 fn steam_apps() -> framerush_steam::Result<Option<Vec<framerush_steam::App>>> {
@@ -722,10 +737,12 @@ pub(crate) fn detected_game(
     let apps = steam_apps()
         .context(lang.pick("no se pudo leer Steam", "could not read Steam"))?
         .unwrap_or_default();
-    let running = framerush_steam::running_app_id().context(lang.pick(
-        "no se pudo leer RunningAppID",
-        "could not read RunningAppID",
-    ))?;
+    let running = framerush_steam::running_app_id().with_context(|| {
+        lang.pick(
+            format!("no se pudo leer {APPID_SOURCE}"),
+            format!("could not read {APPID_SOURCE}"),
+        )
+    })?;
     let foreground = foreground_exe();
     Ok(
         framerush_steam::detect(&apps, running, foreground.as_deref()).and_then(|(app, _)| {
@@ -998,11 +1015,29 @@ pub(crate) fn native_device(os: Os) -> DeviceProfile {
 
 type Tweaks = Vec<framerush_platform::Tweak>;
 
-/// Ajustes que admite la plataforma, los que piden admin y sus capacidades.
+/// Plataforma nativa (en macOS aún no hay motor).
 #[cfg(windows)]
+type Native = framerush_platform::WindowsPlatform;
+#[cfg(target_os = "linux")]
+type Native = framerush_platform::LinuxPlatform;
+
+/// Feral GameMode está en el bus de sesión o se puede activar (`linux-gamemode`).
+#[cfg(target_os = "linux")]
+fn native_gamemode() -> bool {
+    use framerush_platform::GameTuning;
+    Native::new().gamemode_available()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn native_gamemode() -> bool {
+    false
+}
+
+/// Ajustes que admite la plataforma, los que piden admin y sus capacidades.
+#[cfg(any(windows, target_os = "linux"))]
 fn native_caps() -> (Tweaks, Tweaks, framerush_platform::CapabilitySet) {
     use framerush_platform::{Capabilities, SystemTweaks};
-    let w = framerush_platform::WindowsPlatform::new();
+    let w = Native::new();
     let all = w.supported_tweaks();
     let admin = all
         .iter()
@@ -1012,21 +1047,22 @@ fn native_caps() -> (Tweaks, Tweaks, framerush_platform::CapabilitySet) {
     (all, admin, w.capabilities())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn native_caps() -> (Tweaks, Tweaks, framerush_platform::CapabilitySet) {
     (vec![], vec![], framerush_platform::CapabilitySet::default())
 }
 
-/// Servicios de las reglas que existen en este equipo, con su estado (SCM).
-#[cfg(windows)]
+/// Servicios de las reglas que existen en este equipo, con su estado (SCM en Windows, systemd
+/// en Linux).
+#[cfg(any(windows, target_os = "linux"))]
 fn native_services(
     rules: &[framerush_core::Rule],
     os: Os,
 ) -> Vec<(String, framerush_platform::ServiceState)> {
-    framerush_core::scan_services(&framerush_platform::WindowsPlatform::new(), rules, os).0
+    framerush_core::scan_services(&Native::new(), rules, os).0
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn native_services(
     _rules: &[framerush_core::Rule],
     _os: Os,

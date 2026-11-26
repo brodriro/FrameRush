@@ -3,6 +3,7 @@ name = "framerush-helper"
 description = "Proceso elevado mínimo de FrameRush con IPC tipado y lista blanca de comandos."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
@@ -14,10 +15,12 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
 framerush-core.workspace = true
 framerush-platform.workspace = true
 framerush-rules.workspace = true
+
+[target.'cfg(windows)'.dependencies]
 framerush-steam.workspace = true
 
 [lints]

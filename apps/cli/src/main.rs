@@ -24,7 +24,7 @@
 //! Las opciones del adaptador del juego (`--tune`, `--lock`, `--fps-cap`, `--bench`) son opt-in
 //! y van al juego de `--appid` (aunque esté cerrado) o al de Steam en marcha.
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod turbo;
 
 use anyhow::{Context, Result, bail};
@@ -42,7 +42,13 @@ use framerush_platform::{
 };
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
+
+/// Plataforma nativa con la que se aplica (en macOS aún no hay motor).
 #[cfg(windows)]
+type Native = framerush_platform::WindowsPlatform;
+#[cfg(target_os = "linux")]
+type Native = framerush_platform::LinuxPlatform;
+#[cfg(any(windows, target_os = "linux"))]
 use turbo::{TurboArgs, turbo};
 
 /// Sube los FPS limitando procesos de fondo por niveles.
@@ -98,8 +104,8 @@ enum Command {
     },
     /// Turbo (It5.2): lanza el juego de Steam si no está abierto, aplica el nivel congelando en
     /// vez de cerrar, congela cada `--rescan` lo nuevo y lo deshace al cerrar el juego o con
-    /// Ctrl+C. Sin `--yes` solo muestra el plan. Solo Windows por ahora.
-    #[cfg(windows)]
+    /// Ctrl+C. Sin `--yes` solo muestra el plan.
+    #[cfg(any(windows, target_os = "linux"))]
     Turbo(TurboArgs),
     /// Procesos congelados por otro programa: todos sus hilos suspendidos y no los congeló
     /// FrameRush (p. ej. un script «Turbo» que se cerró sin reanudarlos). Con `--resume` los
@@ -181,10 +187,15 @@ struct GameArgs {
     /// persistente). Puede empeorar juegos DX12 (PLAN.md V10).
     #[arg(long)]
     fso_off: bool,
-    /// `gpu-preference = alto`: el exe del juego usa la GPU de alto rendimiento (persistente).
-    /// Solo con más de una GPU detectada (R8).
+    /// No aplicar `gpu-preference = alto`, que por defecto hace que el exe del juego use la GPU
+    /// de alto rendimiento (persistente, P13). Solo se ofrece en Windows con más de una GPU
+    /// detectada (R8).
     #[arg(long)]
-    gpu_alto: bool,
+    no_gpu_alto: bool,
+    /// No registrar el juego en Feral GameMode (`linux-gamemode`, de sesión), que por defecto se
+    /// usa si está instalado. Solo Linux.
+    #[arg(long)]
+    no_gamemode: bool,
     /// `cpu-affinity` (opt-in, de sesión): CPU lógicas para el juego, como `2,3,6-11`, o `auto`
     /// para `cpu-affinity-cores` del equipo. Con anticheat se rechaza (P2).
     #[arg(long, value_name = "CPUS|auto")]
@@ -306,7 +317,7 @@ fn run_command(command: Command) -> Result<()> {
             Some(PowerCommand::Set { id, yes }) => power_set(&id, yes),
         },
         Command::Steam => steam(),
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         Command::Turbo(args) => turbo(&args),
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         Command::Frozen { resume } => frozen(resume),
@@ -376,11 +387,11 @@ fn frozen(resume: bool) -> Result<()> {
             p.name
         );
     }
-    // Reanudar pasa por el motor, que en Linux y macOS aún no tiene una plataforma completa.
-    if cfg!(not(windows)) {
+    // Reanudar pasa por el motor, que en macOS aún no tiene una plataforma completa.
+    if cfg!(not(any(windows, target_os = "linux"))) {
         println!("\nReanúdalos con `kill -CONT <PID>`.");
         if resume {
-            bail!("`frozen --resume` solo está implementado en Windows por ahora");
+            bail!("`frozen --resume` solo está implementado en Windows y Linux por ahora");
         }
         return Ok(());
     }
@@ -531,7 +542,7 @@ fn steam_game(processes: &[ProcessInfo]) -> Option<Game> {
 
 /// Las opciones del juego necesitan un juego (`--game` o uno de Steam en marcha).
 fn require_game(args: &GameArgs, game: Option<&Game>) -> Result<()> {
-    let wants = args.fso_off || args.gpu_alto || args.affinity.is_some() || args.confirm_realtime;
+    let wants = args.fso_off || args.affinity.is_some() || args.confirm_realtime;
     if wants && game.is_none() {
         bail!("esa opción necesita un juego: indica --game o abre el juego desde Steam");
     }
@@ -774,16 +785,40 @@ fn print_adapter(adapter: Option<&AdapterPlan>, args: &GameArgs) {
     println!();
 }
 
-/// `--gpu-alto` solo se ofrece si el equipo tiene más de una GPU (PLAN.md It6: con una sola no
-/// hay nada que elegir).
-fn check_gpu_preference(args: &GameArgs, device: &DeviceProfile) -> Result<()> {
-    if args.gpu_alto && defaults::gpu_preference(device).is_none() {
-        bail!(
-            "`gpu-preference` solo se ofrece con más de una GPU detectada (este equipo: {})",
-            device.gpus.len()
-        );
-    }
-    Ok(())
+/// `gpu-preference` para este juego, o `None` si no se ofrece: sin juego, fuera de Windows o con
+/// una sola GPU (PLAN.md It6: no hay nada que elegir). Por defecto `alto` (P13);
+/// `--no-gpu-alto` lo desmarca.
+fn gpu_mark(args: &GameArgs, device: &DeviceProfile, has_game: bool) -> Option<Mark> {
+    let offered = has_game
+        && device.os == framerush_platform::Os::Windows
+        && defaults::gpu_preference(device).is_some();
+    offered.then_some(if args.no_gpu_alto {
+        Mark::Off
+    } else {
+        Mark::On
+    })
+}
+
+/// `linux-gamemode` para este juego, o `None` si no se ofrece: sin juego o sin Feral GameMode
+/// en el bus de sesión. Por defecto activo; `--no-gamemode` lo desmarca.
+fn gamemode_mark(args: &GameArgs, has_game: bool) -> Option<Mark> {
+    (has_game && native_gamemode()).then_some(if args.no_gamemode {
+        Mark::Off
+    } else {
+        Mark::On
+    })
+}
+
+/// Feral GameMode está en el bus de sesión o se puede activar.
+#[cfg(target_os = "linux")]
+fn native_gamemode() -> bool {
+    use framerush_platform::GameTuning;
+    Native::new().gamemode_available()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn native_gamemode() -> bool {
+    false
 }
 
 /// CPU de `--affinity`, o `None` si no se pidió. Falla con anticheat (P2) o si `auto` no tiene
@@ -958,16 +993,22 @@ enum Mark {
     Locked,
 }
 
-/// `game-priority-persistent` para este juego, o `None` si no aplica (sin juego, por el nivel o
-/// por la prioridad, P1). `--exclude game-priority-persistent` lo desmarca.
+/// `game-priority-persistent` para este juego, o `None` si no aplica (sin juego, fuera de
+/// Windows, por el nivel o por la prioridad, P1). Escribe el IFEO del exe, que solo existe en
+/// Windows (SETTINGS.md); en Linux y macOS la GUI tampoco lo ofrece.
+/// `--exclude game-priority-persistent` lo desmarca.
 fn persistent_mark(
     level: Level,
     admin: bool,
     args: &GameArgs,
     has_game: bool,
     exclude: &[String],
+    device: &DeviceProfile,
 ) -> Option<Mark> {
-    if !has_game || !persistent_priority_default(level, args.game_priority.into()) {
+    if !has_game
+        || device.os != framerush_platform::Os::Windows
+        || !persistent_priority_default(level, args.game_priority.into())
+    {
         return None;
     }
     Some(if !admin {
@@ -977,6 +1018,22 @@ fn persistent_mark(
     } else {
         Mark::On
     })
+}
+
+/// `--fso-off` y `--include game-priority-persistent` escriben ajustes del exe que solo existen
+/// en Windows (SETTINGS.md): en Linux y macOS se rechazan en vez de imprimirse y fallar al
+/// aplicarlos, igual que la GUI los oculta.
+fn windows_only_game_args(fso_off: bool, include: &[String], device: &DeviceProfile) -> Result<()> {
+    if device.os == framerush_platform::Os::Windows {
+        return Ok(());
+    }
+    if fso_off {
+        bail!("`--fso-off` solo existe en Windows (PLAN.md It5.4)");
+    }
+    if include.iter().any(|id| id == PERSISTENT_PRIORITY) {
+        bail!("`{PERSISTENT_PRIORITY}` solo existe en Windows (IFEO, PLAN.md P1)");
+    }
+    Ok(())
 }
 
 /// Perfil de hardware detectado (R8). Lo que falta sale como "no detectado".
@@ -1081,11 +1138,17 @@ fn print_game(
     game: Option<&Game>,
     args: &GameArgs,
     persistent: Option<Mark>,
+    gpu: Option<Mark>,
+    gamemode: Option<Mark>,
     affinity: Option<&[usize]>,
 ) {
     match game {
         Some(g) => {
             println!("Juego: {} → prioridad {:?}", g.label, args.game_priority);
+            let adapter = g.appid.and_then(framerush_games::adapter);
+            if let Some(ac) = adapter.and_then(|a| a.anticheat()) {
+                println!("Anticheat del juego: {ac} (sin proceso propio; no limita ningún ajuste)");
+            }
             let mut exes: Vec<String> = g
                 .processes
                 .iter()
@@ -1097,8 +1160,19 @@ fn print_game(
             if args.fso_off {
                 println!("[x] fullscreen-optimizations-off   persistente · {exes}");
             }
-            if args.gpu_alto {
-                println!("[x] gpu-preference = alto             persistente · {exes}");
+            match gpu {
+                Some(Mark::On) => {
+                    println!("[x] gpu-preference = alto          persistente · {exes}")
+                }
+                Some(_) => println!("[ ] gpu-preference = alto          persistente · {exes}"),
+                None => {}
+            }
+            match gamemode {
+                Some(Mark::On) => {
+                    println!("[x] linux-gamemode                   sesión · Feral GameMode")
+                }
+                Some(_) => println!("[ ] linux-gamemode                   sesión · Feral GameMode"),
+                None => {}
             }
             if let Some(cpus) = affinity {
                 let list: Vec<String> = cpus.iter().map(ToString::to_string).collect();
@@ -1128,15 +1202,17 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     let (plan, game, device) = build_plan(level, admin, args.game.as_deref(), None)?;
     require_game(args, game.as_ref())?;
     let affinity = game_affinity(args, &plan, &device)?;
-    check_gpu_preference(args, &device)?;
     let adapter = adapter_plan(args, game.as_ref(), &device)?;
     let defender = defender_plan(args, game.as_ref(), &device)?;
+    windows_only_game_args(args.fso_off, &[], &device)?;
     println!("Plan para el nivel {level} (dry-run: no se toca nada)");
     print_device(&device);
     print_game(
         game.as_ref(),
         args,
-        persistent_mark(level, admin, args, game.is_some(), &[]),
+        persistent_mark(level, admin, args, game.is_some(), &[], &device),
+        gpu_mark(args, &device, game.is_some()),
+        gamemode_mark(args, game.is_some()),
         affinity.as_deref(),
     );
     print_adapter(adapter.as_ref(), args);
@@ -1254,8 +1330,8 @@ struct TurboApply<'a> {
 
 /// Lo que Turbo vigila tras aplicar: las reglas congeladas y los procesos del juego.
 #[cfg_attr(
-    not(windows),
-    expect(dead_code, reason = "Turbo solo existe en Windows por ahora")
+    not(any(windows, target_os = "linux")),
+    expect(dead_code, reason = "Turbo solo existe en Windows y Linux")
 )]
 struct Applied {
     suspended: Vec<String>,
@@ -1284,7 +1360,8 @@ fn apply_with(
         build_plan(level, args.admin, args.game.game.as_deref(), keep_alive)?;
     require_game(&args.game, game.as_ref())?;
     let affinity = game_affinity(&args.game, &plan, &device)?;
-    check_gpu_preference(&args.game, &device)?;
+    let gpu = gpu_mark(&args.game, &device, game.is_some());
+    let gamemode = gamemode_mark(&args.game, game.is_some());
     // En Turbo, `--appid` elige el juego aunque no se toque su config.
     let adapter = if turbo.is_some() && !args.game.wants_adapter() {
         None
@@ -1295,7 +1372,15 @@ fn apply_with(
     if !defender.is_empty() && !args.admin && args.yes {
         bail!("--defender-exclusions requiere admin: usa --admin");
     }
-    let persistent = persistent_mark(level, args.admin, &args.game, game.is_some(), &args.exclude);
+    let persistent = persistent_mark(
+        level,
+        args.admin,
+        &args.game,
+        game.is_some(),
+        &args.exclude,
+        &device,
+    );
+    windows_only_game_args(args.game.fso_off, &args.include, &device)?;
     if args.include.iter().any(|id| id == PERSISTENT_PRIORITY) {
         match persistent {
             None => bail!(
@@ -1358,7 +1443,14 @@ fn apply_with(
     if !args.yes {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
         print_device(&device);
-        print_game(game.as_ref(), &args.game, persistent, affinity.as_deref());
+        print_game(
+            game.as_ref(),
+            &args.game,
+            persistent,
+            gpu,
+            gamemode,
+            affinity.as_deref(),
+        );
         print_adapter(adapter.as_ref(), &args.game);
         print_defender(&defender, args.admin);
         print_refresh(level, &device, &refresh);
@@ -1405,8 +1497,9 @@ fn apply_with(
             realtime_confirmed: args.game.confirm_realtime,
             fullscreen_optimizations_off: args.game.fso_off,
             affinity,
-            high_performance_gpu: args.game.gpu_alto,
+            high_performance_gpu: gpu == Some(Mark::On),
             persistent_priority: persistent == Some(Mark::On),
+            gamemode: gamemode == Some(Mark::On),
         }),
         game_files: adapter.map(|a| a.plan.writes).unwrap_or_default(),
         defender_exclusions: defender,
@@ -1423,6 +1516,21 @@ fn apply_with(
     Ok(Some(applied))
 }
 
+/// Dónde publica Steam el `appid` del juego en marcha: la clave `RunningAppID` del registro en
+/// Windows y la variable `SteamAppId` del entorno del juego en Linux (PLAN.md §6, V12).
+#[cfg(windows)]
+const APPID_SOURCE: &str = "RunningAppID";
+#[cfg(target_os = "linux")]
+const APPID_SOURCE: &str = "SteamAppId";
+#[cfg(not(any(windows, target_os = "linux")))]
+const APPID_SOURCE: &str = "el appid de Steam";
+
+/// Aclaración cuando Steam no está instalado: macOS aún no busca sus rutas.
+#[cfg(target_os = "macos")]
+const NOT_SEARCHED_NOTE: &str = " (en macOS aún no se busca)";
+#[cfg(not(target_os = "macos"))]
+const NOT_SEARCHED_NOTE: &str = "";
+
 fn power_get() -> Result<()> {
     let (plans, active) = native_power()?;
     for p in &plans {
@@ -1435,7 +1543,7 @@ fn power_get() -> Result<()> {
 
 fn steam() -> Result<()> {
     let Some(root) = framerush_steam::locate().context("no se pudo buscar Steam")? else {
-        println!("Steam no está instalado (en Linux y macOS aún no se busca).");
+        println!("Steam no está instalado{NOT_SEARCHED_NOTE}");
         return Ok(());
     };
     println!("Steam: {}", root.display());
@@ -1446,7 +1554,8 @@ fn steam() -> Result<()> {
     for e in &found.errors {
         println!("aviso: {e}");
     }
-    let running = framerush_steam::running_app_id().context("no se pudo leer RunningAppID")?;
+    let running = framerush_steam::running_app_id()
+        .with_context(|| format!("no se pudo leer {APPID_SOURCE}"))?;
     let foreground = foreground_exe()?;
     let Some((app, source)) = framerush_steam::detect(&found.apps, running, foreground.as_deref())
     else {
@@ -1454,7 +1563,7 @@ fn steam() -> Result<()> {
         return Ok(());
     };
     let source = match source {
-        framerush_steam::Source::RunningAppId => "RunningAppID",
+        framerush_steam::Source::RunningAppId => APPID_SOURCE,
         framerush_steam::Source::Foreground => "primer plano",
     };
     println!(
@@ -1609,10 +1718,10 @@ fn native_device(os: Os) -> DeviceProfile {
 }
 
 /// Planes de energía de la plataforma nativa y el activo.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn native_power() -> Result<(Vec<PowerPlan>, PowerPlan)> {
     use framerush_platform::PowerControl;
-    let w = framerush_platform::WindowsPlatform::new();
+    let w = Native::new();
     let plans = w
         .power_plans()
         .context("no se pudo leer los planes de energía")?;
@@ -1622,9 +1731,9 @@ fn native_power() -> Result<(Vec<PowerPlan>, PowerPlan)> {
     Ok((plans, active))
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn native_power() -> Result<(Vec<PowerPlan>, PowerPlan)> {
-    bail!("los planes de energía solo están implementados en Windows por ahora")
+    bail!("los planes de energía solo están implementados en Windows y Linux por ahora")
 }
 
 fn undo() -> Result<()> {
@@ -1778,8 +1887,8 @@ fn tweak_states() -> Result<Vec<(Tweak, Vec<SavedValue>)>> {
 /// Operación del motor sobre la plataforma nativa.
 #[derive(Debug)]
 #[cfg_attr(
-    not(windows),
-    expect(dead_code, reason = "fuera de Windows `run` todavía no ejecuta nada")
+    not(any(windows, target_os = "linux")),
+    expect(dead_code, reason = "en macOS `run` todavía no ejecuta nada")
 )]
 enum Op<'a> {
     Apply(Box<ApplyRequest<'a>>),
@@ -1822,15 +1931,7 @@ fn platform_for(op: &Op<'_>) -> Result<framerush_platform::WindowsPlatform> {
                 || foreign(request.game.iter().flat_map(|g| &g.targets))?
         }
         Op::Undo | Op::Revert | Op::RevertSession | Op::ResumeFrozen => {
-            let journal = store.load()?;
-            let last = journal.last_batch();
-            let pending: Vec<&Change> = journal
-                .entries
-                .iter()
-                .filter(|e| e.status != EntryStatus::Failed)
-                .filter(|e| !matches!(op, Op::Undo) || Some(e.batch) == last)
-                .map(|e| &e.change)
-                .collect();
+            let pending = pending_changes(op, &store)?;
             pending.iter().any(|c| match c {
                 Change::Tweak { tweak, .. } => admin(*tweak),
                 Change::PersistentPriority { .. }
@@ -1850,9 +1951,68 @@ fn platform_for(op: &Op<'_>) -> Result<framerush_platform::WindowsPlatform> {
     })
 }
 
+#[cfg(target_os = "linux")]
+fn run(op: Op<'_>) -> Result<Report> {
+    let platform = platform_for(&op)?;
+    run_on(&platform, op)
+}
+
+/// Plataforma para `op`: con el helper (`pkexec`) si algo pide privilegios. En Linux los piden
+/// los servicios (polkit de systemd), los procesos de otro usuario (P12) y bajar el `nice`
+/// (setpriority(2)): subir la prioridad del juego o devolver la suya a un proceso al que se le
+/// bajó.
+#[cfg(target_os = "linux")]
+fn platform_for(op: &Op<'_>) -> Result<Native> {
+    let needs_helper = match &op {
+        Op::Apply(request) => {
+            request.items.iter().any(|i| match &i.subject {
+                Subject::Processes(ps) => ps.iter().any(|p| p.own != Some(true)),
+                Subject::Services(names) => !names.is_empty(),
+            }) || request
+                .game
+                .as_ref()
+                .is_some_and(|g| !g.targets.is_empty() && g.priority > Priority::Normal)
+                || foreign(request.game.iter().flat_map(|g| &g.targets))?
+        }
+        Op::Undo | Op::Revert | Op::RevertSession | Op::ResumeFrozen => {
+            let pending = pending_changes(op, &store()?)?;
+            pending.iter().any(|c| match c {
+                Change::StopService { .. } => true,
+                Change::Priority {
+                    previous, applied, ..
+                } => previous > applied,
+                _ => false,
+            }) || foreign(pending.iter().filter_map(|c| c.target()))?
+        }
+        Op::ResumeForeign(targets) => foreign(targets.iter())?,
+    };
+    Ok(if needs_helper {
+        println!("Hay cambios que piden privilegios: se abre el helper con pkexec (polkit).");
+        let helper = framerush_platform::Helper::launch(&helper_exe()?)
+            .context("no se pudo abrir el helper")?;
+        Native::with_helper(helper)
+    } else {
+        Native::new()
+    })
+}
+
+/// Cambios del journal que tocaría `op` (deshacer, restaurar o reanudar), sin los fallidos.
+#[cfg(any(windows, target_os = "linux"))]
+fn pending_changes(op: &Op<'_>, store: &FileStore) -> Result<Vec<Change>> {
+    let journal = store.load()?;
+    let last = journal.last_batch();
+    Ok(journal
+        .entries
+        .into_iter()
+        .filter(|e| e.status != EntryStatus::Failed)
+        .filter(|e| !matches!(op, Op::Undo) || Some(e.batch) == last)
+        .map(|e| e.change)
+        .collect())
+}
+
 /// Ejecuta `op` con el journal de la CLI sobre `platform`.
-#[cfg(windows)]
-fn run_on(platform: &framerush_platform::WindowsPlatform, op: Op<'_>) -> Result<Report> {
+#[cfg(any(windows, target_os = "linux"))]
+fn run_on(platform: &Native, op: Op<'_>) -> Result<Report> {
     let store = store()?;
     let engine = framerush_core::Engine::new(platform, &store);
     Ok(match op {
@@ -1871,14 +2031,14 @@ fn run_on(platform: &framerush_platform::WindowsPlatform, op: Op<'_>) -> Result<
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn run(_op: Op<'_>) -> Result<Report> {
-    bail!("apply, undo y revert solo están implementados en Windows por ahora")
+    bail!("apply, undo y revert solo están implementados en Windows y Linux por ahora")
 }
 
 /// P12: alguno de `targets` sigue vivo y no es propio (otro usuario, SYSTEM o elevado), así
 /// que solo el helper puede tocarlo.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn foreign<'a>(mut targets: impl Iterator<Item = &'a framerush_platform::Target>) -> Result<bool> {
     let running = scan_processes().context("no se pudo listar los procesos")?;
     Ok(targets.any(|t| {
@@ -1888,11 +2048,11 @@ fn foreign<'a>(mut targets: impl Iterator<Item = &'a framerush_platform::Target>
     }))
 }
 
-/// `framerush-helper.exe`, junto al ejecutable de la CLI.
-#[cfg(windows)]
+/// `framerush-helper`, junto al ejecutable de la CLI.
+#[cfg(any(windows, target_os = "linux"))]
 fn helper_exe() -> Result<PathBuf> {
     let exe = std::env::current_exe().context("no se encontró el ejecutable de la CLI")?;
-    let helper = exe.with_file_name("framerush-helper.exe");
+    let helper = exe.with_file_name(format!("framerush-helper{}", std::env::consts::EXE_SUFFIX));
     if !helper.is_file() {
         bail!(
             "falta {} (compílalo con `cargo build --workspace`)",
@@ -1903,10 +2063,10 @@ fn helper_exe() -> Result<PathBuf> {
 }
 
 /// Ajustes que admite la plataforma nativa y, de ellos, los que piden admin.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn native_tweaks() -> (Vec<Tweak>, Vec<Tweak>) {
     use framerush_platform::SystemTweaks;
-    let w = framerush_platform::WindowsPlatform::new();
+    let w = Native::new();
     let all = w.supported_tweaks();
     let admin = all
         .iter()
@@ -1916,19 +2076,19 @@ fn native_tweaks() -> (Vec<Tweak>, Vec<Tweak>) {
     (all, admin)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn native_tweaks() -> (Vec<Tweak>, Vec<Tweak>) {
     (vec![], vec![])
 }
 
-/// Servicios de las reglas que existen en este equipo, con su estado (SCM). Los que no se
-/// pudieron leer se avisan y no se listan.
-#[cfg(windows)]
+/// Servicios de las reglas que existen en este equipo, con su estado (SCM en Windows, systemd
+/// en Linux). Los que no se pudieron leer se avisan y no se listan.
+#[cfg(any(windows, target_os = "linux"))]
 fn native_services(
     rules: &[framerush_core::Rule],
     os: Os,
 ) -> Vec<(String, framerush_platform::ServiceState)> {
-    let w = framerush_platform::WindowsPlatform::new();
+    let w = Native::new();
     let (found, errors) = framerush_core::scan_services(&w, rules, os);
     for e in errors {
         println!("Aviso: no se pudo leer el servicio {e}");
@@ -1936,7 +2096,7 @@ fn native_services(
     found
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn native_services(
     _rules: &[framerush_core::Rule],
     _os: Os,
@@ -1946,13 +2106,10 @@ fn native_services(
 
 /// Operaciones de memoria que admite la plataforma nativa.
 fn native_memory() -> Vec<MemoryOp> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
         use framerush_platform::Capabilities;
-        if framerush_platform::WindowsPlatform::new()
-            .capabilities()
-            .memory
-        {
+        if Native::new().capabilities().memory {
             return MemoryOp::ALL.to_vec();
         }
     }

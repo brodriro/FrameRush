@@ -1,8 +1,20 @@
 //! Implementaciones para Linux.
 
+mod dbus;
+mod drm;
+mod gamemode;
+mod hardware;
+mod helper;
+mod power;
 mod process;
+mod services;
+mod steam;
+mod system;
 
+pub use hardware::{HardwareWatch, watch_hardware};
+pub use helper::{Helper, serve_helper};
 pub use process::LinuxPlatform;
+pub use steam::{steam_launch, steam_root, steam_running_app};
 
 use crate::xdg::{base_dir, user_dir};
 use std::path::PathBuf;

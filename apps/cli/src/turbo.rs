@@ -5,13 +5,13 @@
 //! elevado, si hace falta, se abre una vez.
 
 use super::{
-    ApplyArgs, Op, TurboApply, apply_with, build_plan, freeze_instead_of_kill, marked,
+    ApplyArgs, Native, Op, TurboApply, apply_with, build_plan, freeze_instead_of_kill, marked,
     platform_for, print_report, run_on,
 };
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use framerush_core::{Action, ApplyRequest, PlanItem, Report, game_running, is_protected};
-use framerush_platform::{ProcessInfo, Target, WindowsPlatform, scan_processes};
+use framerush_platform::{ProcessInfo, Target, scan_processes};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -105,7 +105,7 @@ pub(super) fn turbo(args: &TurboArgs) -> Result<()> {
         return Ok(());
     }
 
-    let mut platform: Option<WindowsPlatform> = None;
+    let mut platform: Option<Native> = None;
     let applied = apply_with(&args.apply, Some(&opts), |op| {
         let p = platform_for(&op)?;
         let report = run_on(&p, op);
@@ -195,7 +195,7 @@ fn wait_for_game(game: &SteamGame, stop: &AtomicBool) -> Result<bool> {
 /// `turbo-rescan`: congela los procesos nuevos de todas las reglas que marca el nivel (con
 /// `--include` y `--exclude`), aunque no estuvieran abiertas al aplicar: en la CLI no hay
 /// checklist donde marcarlas. Lo ya congelado se salta (el journal lo tiene).
-fn rescan(platform: &WindowsPlatform, args: &TurboArgs) -> Result<Report> {
+fn rescan(platform: &Native, args: &TurboArgs) -> Result<Report> {
     let a = &args.apply;
     let (plan, _, _) = build_plan(a.level, a.admin, None, args.keep_alive.as_deref())?;
     let owned: Vec<PlanItem> = plan

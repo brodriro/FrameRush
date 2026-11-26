@@ -83,12 +83,12 @@ fn start(
 }
 
 /// Espera sin avisos nuevos antes de releer el equipo: conectar un dispositivo manda varios.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 const HARDWARE_SETTLE: Duration = Duration::from_millis(1500);
 
 /// Vigila los cambios de hardware y emite `device-changed` con lo que cambió (`display`,
 /// `power`, `devices`) cuando paran los avisos. La vigilancia dura lo que el valor devuelto.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn watch_hardware(app: &AppHandle) -> Option<framerush_platform::HardwareWatch> {
     use framerush_platform::HardwareChange;
     let (tx, rx) = mpsc::channel::<HardwareChange>();
@@ -123,9 +123,9 @@ fn watch_hardware(app: &AppHandle) -> Option<framerush_platform::HardwareWatch> 
 }
 
 /// Mantiene viva la vigilancia de hardware mientras dure la app.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 struct HardwareWatch(#[allow(dead_code)] Option<framerush_platform::HardwareWatch>);
-// Fuera de Windows todavía no hay avisos de hardware.
+// En macOS todavía no hay avisos de hardware.
 
 /// Cada cuánto mira el watchdog si el juego sigue en marcha.
 const WATCH_INTERVAL: Duration = Duration::from_secs(2);
@@ -597,8 +597,9 @@ async fn elevate(app: AppHandle, lang: Lang) -> Result<(), String> {
     Ok(())
 }
 
-/// El helper va junto al ejecutable de la app (`cargo build --workspace` lo compila).
-#[cfg(windows)]
+/// El helper va junto al ejecutable de la app (`cargo build --workspace` lo compila). En Linux
+/// lo abre `pkexec` y los sensores no cambian: hwmon se lee sin privilegios.
+#[cfg(any(windows, target_os = "linux"))]
 fn elevated_sources(lang: Lang) -> anyhow::Result<(framerush_sensors::Sources, Elevated)> {
     use anyhow::Context;
     let exe = std::env::current_exe()
@@ -606,7 +607,7 @@ fn elevated_sources(lang: Lang) -> anyhow::Result<(framerush_sensors::Sources, E
             "no se encontró el ejecutable de la app",
             "the app executable was not found",
         ))?
-        .with_file_name("framerush-helper.exe");
+        .with_file_name(format!("framerush-helper{}", std::env::consts::EXE_SUFFIX));
     anyhow::ensure!(
         exe.is_file(),
         lang.pick(
@@ -622,10 +623,14 @@ fn elevated_sources(lang: Lang) -> anyhow::Result<(framerush_sensors::Sources, E
     );
     let helper = framerush_platform::Helper::launch(&exe)
         .context(lang.pick("no se pudo abrir el helper", "could not open the helper"))?;
-    Ok((framerush_sensors::detect_elevated(helper.clone()), helper))
+    #[cfg(windows)]
+    let sources = framerush_sensors::detect_elevated(helper.clone());
+    #[cfg(target_os = "linux")]
+    let sources = framerush_sensors::detect();
+    Ok((sources, helper))
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn elevated_sources(lang: Lang) -> anyhow::Result<(framerush_sensors::Sources, Elevated)> {
     anyhow::bail!(lang.pick(
         "en este sistema todavía no hay helper elevado",
@@ -715,7 +720,7 @@ fn main() -> anyhow::Result<()> {
             app.manage(launch::Launch::default());
             launch::spawn(app.handle().clone());
             overlay::tray(app)?;
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             app.manage(HardwareWatch(watch_hardware(app.handle())));
             Ok(())
         })

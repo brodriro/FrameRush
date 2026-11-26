@@ -231,6 +231,18 @@ pub trait GameTuning {
     fn set_persistent_priority(&self, exe: &Path) -> Result<()>;
     /// Deja la prioridad persistente como en `saved`.
     fn restore_persistent_priority(&self, exe: &Path, saved: &[SavedValue]) -> Result<()>;
+    /// `linux-gamemode`: Feral GameMode está en el bus de sesión o se puede activar. Solo Linux.
+    fn gamemode_available(&self) -> bool {
+        false
+    }
+    /// Pide a GameMode que trate el proceso como un juego (`RegisterGameByPID`).
+    fn register_gamemode(&self, _target: &Target) -> Result<()> {
+        Err(crate::PlatformError::Unsupported("GameMode"))
+    }
+    /// Se lo quita (`UnregisterGameByPID`). Que GameMode ya no lo tenga no es un error.
+    fn unregister_gamemode(&self, _target: &Target) -> Result<()> {
+        Err(crate::PlatformError::Unsupported("GameMode"))
+    }
 }
 
 /// Ajuste de sistema (PLAN.md It5.4). Qué valores toca cada uno lo decide la plataforma; su

@@ -81,6 +81,10 @@ pub trait GameAdapter {
     fn bench_command(&self) -> &'static str;
     /// Opciones de lanzamiento recomendadas (`launch-options-copy`).
     fn launch_options(&self) -> &'static str;
+    /// Anticheat del juego sin proceso propio que detectar (p. ej. VAC), con fuente. Solo se
+    /// muestra: P2 y P10 siguen dependiendo de los anticheats en ejecución (decisión del
+    /// usuario, 2026-11-26).
+    fn anticheat(&self) -> Option<&'static str>;
     /// Qué archivos dejar y cómo, según el equipo y lo marcado. Lee la config actual.
     fn plan(
         &self,

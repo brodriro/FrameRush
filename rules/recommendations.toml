@@ -2,9 +2,10 @@
 # no se puede automatizar de forma segura. Cada una solo se muestra si el equipo cumple su
 # `when` (os, gpu_vendor, laptop, appid); un dato que no se pudo detectar no la cumple.
 # `title_en` y `steps_en` son la versión en inglés (la GUI en inglés); sin ellos se usa la española.
-# Fuente: proyecto de referencia CS2-FPS-Boost, LEEME.md, «Lo que tienes que hacer a mano».
-# Sin fuente todavía (PLAN.md §6, «Por verificar»): paneles de AMD e Intel y el software de
-# cada fabricante del equipo.
+# Fuentes: proyecto de referencia CS2-FPS-Boost, LEEME.md, «Lo que tienes que hacer a mano»
+# (las de NVIDIA y jugar enchufado) y las páginas de soporte de AMD e Intel (investigación
+# 2026-11-26, PLAN.md §6). Sin fuente todavía: el software de cada fabricante del equipo (falta
+# cómo detectarlo) y los pasos de Intel Arc (no se distingue una Arc de una integrada).
 
 [[recommendation]]
 id = "play-plugged-in"
@@ -49,3 +50,48 @@ steps_en = [
 ]
 when = { os = ["windows"], gpu_vendor = "nvidia", appid = 730 }
 source = "CS2-FPS-Boost, LEEME.md («Panel de control NVIDIA»)"
+
+[[recommendation]]
+id = "amd-driver-update"
+title = "Actualiza el driver de AMD"
+steps = ["Actualiza el driver con AMD Software: Adrenalin Edition o con la herramienta AMD Auto-Detect and Install (amd.com/drivers)."]
+title_en = "Update the AMD driver"
+steps_en = ["Update the driver with AMD Software: Adrenalin Edition or with the AMD Auto-Detect and Install tool (amd.com/drivers)."]
+when = { os = ["windows"], gpu_vendor = "amd" }
+# amd.com/en/resources/support-articles/faqs/GPU-131.html y RSX2-INSTALL.
+source = "AMD, artículos GPU-131 y RSX2-INSTALL"
+
+[[recommendation]]
+id = "amd-adrenalin-latency"
+title = "AMD Software: Anti-Lag y Chill"
+steps = [
+    "Radeon Anti-Lag reduce el retardo entre lo que haces y lo que ves: actívalo en Global Graphics o en el perfil del juego (el perfil manda).",
+    "Radeon Chill limita los FPS para ahorrar energía y no funciona junto con Anti-Lag: déjalo desactivado para jugar.",
+]
+title_en = "AMD Software: Anti-Lag and Chill"
+steps_en = [
+    "Radeon Anti-Lag reduces the lag between your input and what you see: turn it on in Global Graphics or in the game profile (the profile wins).",
+    "Radeon Chill limits the frame rate to save power and does not work together with Anti-Lag: leave it off for gaming.",
+]
+when = { os = ["windows"], gpu_vendor = "amd" }
+# amd.com/en/resources/support-articles/faqs/DH3-012.html, DH3-033.html y DH-033.html.
+source = "AMD, artículos DH3-012, DH3-033 y DH-033"
+
+[[recommendation]]
+id = "amd-cs2-anti-lag-2"
+title = "Anti-Lag 2 en CS2"
+steps = ["CS2 trae AMD Anti-Lag 2 integrado y activado por defecto en «ADVANCED VIDEO»: déjalo activado si aparece."]
+title_en = "Anti-Lag 2 in CS2"
+steps_en = ["CS2 has AMD Anti-Lag 2 built in and on by default under \"ADVANCED VIDEO\": leave it on if it is listed."]
+when = { os = ["windows"], gpu_vendor = "amd", appid = 730 }
+# amd.com/en/resources/support-articles/release-notes/RN-RAD-WIN-24-5-1-AL2-TECH-PREVIEW.html
+source = "AMD, notas de la versión 24.5.1 (Anti-Lag 2)"
+
+[[recommendation]]
+id = "intel-driver-update"
+title = "Actualiza el driver de Intel"
+steps = ["Actualiza los drivers de Intel con Intel Driver & Support Assistant (intel.com/content/www/us/en/support/detect.html)."]
+title_en = "Update the Intel driver"
+steps_en = ["Update the Intel drivers with Intel Driver & Support Assistant (intel.com/content/www/us/en/support/detect.html)."]
+when = { os = ["windows"], gpu_vendor = "intel" }
+source = "Intel, Driver & Support Assistant"

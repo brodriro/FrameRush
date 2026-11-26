@@ -24,6 +24,8 @@ const REFRESH_RATE_MAX: &str = "refresh-rate-max";
 /// Ajustes del exe del juego que llegan como ids de `settings`.
 const PERSISTENT_PRIORITY: &str = "game-priority-persistent";
 const FSO_OFF: &str = "fullscreen-optimizations-off";
+/// `linux-gamemode`: registrar el juego en Feral GameMode durante la sesión (P16).
+const GAMEMODE: &str = "linux-gamemode";
 /// `defender-exclusions`: opt-in, carpeta y exe del juego (It5.9).
 const DEFENDER_EXCLUSIONS: &str = "defender-exclusions";
 /// `game-config-lock` llega en `settings` (es del nivel); lo aplica el adaptador.
@@ -365,10 +367,11 @@ pub fn apply(
             high_performance_gpu: g.high_performance_gpu
                 && defaults::gpu_preference(&device).is_some(),
             persistent_priority: persistent && helper.is_some(),
+            gamemode: wanted(GAMEMODE),
         })
     });
     if game.is_none() {
-        for id in [FSO_OFF, PERSISTENT_PRIORITY] {
+        for id in [FSO_OFF, PERSISTENT_PRIORITY, GAMEMODE] {
             if wanted(id) {
                 notes.push(lang.pick(
                     format!("{id}: no hay juego en marcha"),
@@ -603,7 +606,7 @@ pub fn launch_game(appid: u32, lang: Lang) -> Result<bool> {
     Ok(false)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn steam_launch(appid: u32, lang: Lang) -> Result<()> {
     framerush_platform::steam_launch(appid).context(lang.pick(
         "no se pudo lanzar el juego desde Steam",
@@ -611,11 +614,11 @@ fn steam_launch(appid: u32, lang: Lang) -> Result<()> {
     ))
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn steam_launch(_appid: u32, lang: Lang) -> Result<()> {
     anyhow::bail!(lang.pick(
-        "lanzar juegos de Steam solo está implementado en Windows por ahora",
-        "launching Steam games is only implemented on Windows for now",
+        "lanzar juegos de Steam solo está implementado en Windows y Linux por ahora",
+        "launching Steam games is only implemented on Windows and Linux for now",
     ))
 }
 
@@ -898,17 +901,16 @@ fn line(l: framerush_core::ReportLine, lang: Lang) -> Line {
     }
 }
 
-/// Lo que mantiene abierto el helper elevado.
-#[cfg(windows)]
+/// Lo que mantiene abierto el helper elevado (UAC en Windows, `pkexec` en Linux).
+#[cfg(any(windows, target_os = "linux"))]
 pub type Elevated = framerush_platform::Helper;
-/// Fuera de Windows aún no hay helper: el tipo no tiene valores y `Option<Elevated>` siempre es
-/// `None`.
-#[cfg(not(windows))]
+/// En macOS aún no hay helper: el tipo no tiene valores y `Option<Elevated>` siempre es `None`.
+#[cfg(not(any(windows, target_os = "linux")))]
 #[derive(Clone)]
 pub enum Elevated {}
 
-// Fuera de Windows `run` no las ejecuta, así que no se leen.
-#[cfg_attr(not(windows), allow(dead_code))]
+// En macOS `run` no las ejecuta, así que no se leen.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 enum Op<'a> {
     Apply(Box<ApplyRequest<'a>>),
     Undo,
@@ -919,16 +921,24 @@ enum Op<'a> {
     ResumeForeign(Vec<Target>),
 }
 
-#[cfg(windows)]
+/// Sin helper, lo que pide privilegios falla con «acceso denegado» y el informe pide el botón de
+/// administrador.
+#[cfg(any(windows, target_os = "linux"))]
 fn run(
     helper: Option<Elevated>,
     op: Op<'_>,
     progress: Option<OnProgress<'_>>,
     lang: Lang,
 ) -> Result<Report> {
+    #[cfg(windows)]
     let platform = match helper {
         Some(h) => framerush_platform::WindowsPlatform::with_helper(h),
         None => framerush_platform::WindowsPlatform::new(),
+    };
+    #[cfg(target_os = "linux")]
+    let platform = match helper {
+        Some(h) => framerush_platform::LinuxPlatform::with_helper(h),
+        None => framerush_platform::LinuxPlatform::new(),
     };
     let store = store(lang)?;
     let mut engine = framerush_core::Engine::new(&platform, &store).with_lang(lang);
@@ -963,7 +973,7 @@ fn run(
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn run(
     _helper: Option<Elevated>,
     _op: Op<'_>,
@@ -971,8 +981,8 @@ fn run(
     lang: Lang,
 ) -> Result<Report> {
     anyhow::bail!(lang.pick(
-        "aplicar, deshacer y restaurar solo están implementados en Windows por ahora",
-        "apply, undo and restore are only implemented on Windows for now",
+        "aplicar, deshacer y restaurar solo están implementados en Windows y Linux por ahora",
+        "apply, undo and restore are only implemented on Windows and Linux for now",
     ))
 }
 

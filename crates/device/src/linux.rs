@@ -32,10 +32,18 @@ use framerush_platform::{Battery, Core, CoreKind, Cpu, Gpu, GpuVendor, Os, PciId
 use std::fs;
 use std::path::Path;
 
-/// Perfil del equipo con lo que exponen sysfs y procfs.
+/// Perfil del equipo con lo que exponen sysfs y procfs, y los perfiles de energía de
+/// power-profiles-daemon (sin él, ninguno).
 #[cfg(target_os = "linux")]
 pub fn detect() -> DeviceProfile {
-    detect_at(Path::new("/"))
+    use framerush_platform::{DisplayControl, LinuxPlatform, PowerControl};
+    let mut device = detect_at(Path::new("/"));
+    let platform = LinuxPlatform::new();
+    device.power_plans = platform.power_plans().unwrap_or_default();
+    device.active_power_plan = platform.active_power_plan().ok().map(|p| p.id);
+    // Monitores y Hz por DRM/KMS; sin permisos en los nodos, ninguno.
+    device.displays = platform.displays().unwrap_or_default();
+    device
 }
 
 fn detect_at(root: &Path) -> DeviceProfile {
@@ -191,8 +199,69 @@ fn id_pair(text: &str) -> Option<(u16, u16)> {
     ))
 }
 
-/// GPU de una tarjeta DRM; `None` si su dispositivo no es PCI.
-fn gpu(card: &Path) -> Option<Gpu> {
+/// Rutas del `pci.ids` de las distribuciones: Arch y Fedora lo traen en `hwdata`, Debian y
+/// Ubuntu en `misc` y otras en `/usr/share`. La primera que exista es la que se lee.
+const PCI_IDS: [&str; 3] = [
+    "usr/share/hwdata/pci.ids",
+    "usr/share/misc/pci.ids",
+    "usr/share/pci.ids",
+];
+
+/// Texto del `pci.ids` del equipo, o `None` si no está instalado (no es obligatorio: sin él la
+/// GPU se queda con sus ids).
+fn pci_ids(root: &Path) -> Option<String> {
+    PCI_IDS
+        .iter()
+        .find_map(|path| fs::read_to_string(root.join(path)).ok())
+}
+
+/// Nombre del dispositivo en el formato de `pci.ids` (pciutils): el fabricante va en una línea
+/// sin tabular (`10de  NVIDIA Corporation`), sus dispositivos con un tabulador (`\t1f91  GA107M
+/// [GeForce GTX 1650 Mobile]`) y los subsistemas con dos (no cuentan).
+fn pci_ids_device(text: &str, vendor: u16, device: u16) -> Option<String> {
+    let mut current = None;
+    for line in text.lines() {
+        match line.strip_prefix('\t') {
+            // Dos tabuladores es un subsistema: no se mira.
+            Some(rest) if !rest.starts_with('\t') => {
+                if current == Some(vendor) {
+                    let (id, name) = rest.split_once("  ")?;
+                    if u16::from_str_radix(id.trim(), 16).ok() == Some(device) {
+                        return Some(name.trim().to_owned()).filter(|n| !n.is_empty());
+                    }
+                }
+            }
+            Some(_) => {}
+            None => {
+                if line.starts_with('#') || line.trim().is_empty() {
+                    continue;
+                }
+                current = u16::from_str_radix(line.get(..4)?, 16).ok();
+            }
+        }
+    }
+    None
+}
+
+/// `Model:` de `/proc/driver/nvidia/gpus/<ranura>/information`, la interfaz `/proc` del driver
+/// propietario de NVIDIA («Model: the model name of the GPU», NVIDIA Driver README, capítulo de
+/// `/proc`): da el nombre comercial tal cual (`NVIDIA GeForce GTX 1650`).
+fn nvidia_model(root: &Path, slot: &str) -> Option<String> {
+    let path = root
+        .join("proc/driver/nvidia/gpus")
+        .join(slot)
+        .join("information");
+    fs::read_to_string(path)
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("Model:"))
+        .map(|model| model.trim().to_owned())
+        .filter(|model| !model.is_empty())
+}
+
+/// GPU de una tarjeta DRM; `None` si su dispositivo no es PCI. `ids` es el texto de `pci.ids`, si
+/// el equipo lo tiene.
+fn gpu(card: &Path, root: &Path, ids_file: Option<&str>) -> Option<Gpu> {
     let device = card.join("device");
     let uevent = fs::read_to_string(device.join("uevent")).ok()?;
     let field = |key: &str| {
@@ -209,12 +278,28 @@ fn gpu(card: &Path) -> Option<Gpu> {
         .map_or(0, |(v, d)| (u32::from(d) << 16) | u32::from(v));
     let vendor = vendor(vendor_id);
     let ids = format!("{vendor_id:04x}:{device_id:04x}");
-    let name = match vendor {
-        GpuVendor::Nvidia => format!("NVIDIA {ids}"),
-        GpuVendor::Amd => format!("AMD {ids}"),
-        GpuVendor::Intel => format!("Intel {ids}"),
-        GpuVendor::Apple | GpuVendor::Other => ids,
+    // Nombre comercial: el del driver de NVIDIA o el del `pci.ids`; si no hay ninguno, los ids
+    // con el fabricante (P15: se dice lo que es, no se adivina).
+    let label = match vendor {
+        GpuVendor::Nvidia => "NVIDIA",
+        GpuVendor::Amd => "AMD",
+        GpuVendor::Intel => "Intel",
+        GpuVendor::Apple | GpuVendor::Other => "",
     };
+    let name = (vendor == GpuVendor::Nvidia)
+        .then(|| nvidia_model(root, &slot))
+        .flatten()
+        .or_else(|| {
+            let device = pci_ids_device(ids_file?, vendor_id, device_id)?;
+            Some(match label {
+                "" => device,
+                label => format!("{label} {device}"),
+            })
+        })
+        .unwrap_or_else(|| match label {
+            "" => ids,
+            label => format!("{label} {ids}"),
+        });
     let vram = (field("DRIVER") == Some("amdgpu"))
         .then(|| {
             read_trimmed(&device.join("mem_info_vram_total"))?
@@ -249,10 +334,13 @@ fn gpus(root: &Path) -> Vec<Gpu> {
         })
         .collect();
     cards.sort();
+    let ids_file = pci_ids(root);
     let mut gpus: Vec<Gpu> = vec![];
     for (_, card) in cards {
         // Dos tarjetas DRM pueden ser el mismo dispositivo PCI.
-        if let Some(g) = gpu(&card).filter(|g| gpus.iter().all(|o| o.id != g.id)) {
+        if let Some(g) =
+            gpu(&card, root, ids_file.as_deref()).filter(|g| gpus.iter().all(|o| o.id != g.id))
+        {
             gpus.push(g);
         }
     }
@@ -428,6 +516,59 @@ mod tests {
         let cpu = detect_at(&t.0).cpu.unwrap();
         assert_eq!(cpu.logical_cpus, 3);
         assert_eq!(cpu.physical_cores(), None);
+    }
+
+    #[test]
+    fn reads_the_device_name_from_pci_ids() {
+        let text = "10de  NVIDIA Corporation\n\t1f91  GA107M [GeForce GTX 1650 Mobile]\n\t\t17aa 3fc1  portátil\n121a  3dfx\n";
+        assert_eq!(
+            pci_ids_device(text, 0x10de, 0x1f91).as_deref(),
+            Some("GA107M [GeForce GTX 1650 Mobile]")
+        );
+        // Otro dispositivo, otro fabricante o un archivo vacío: nada.
+        assert_eq!(pci_ids_device(text, 0x10de, 0x1f90), None);
+        assert_eq!(pci_ids_device(text, 0x121a, 0x1f91), None);
+        assert_eq!(pci_ids_device("", 0x10de, 0x1f91), None);
+    }
+
+    #[test]
+    fn names_gpus_from_pci_ids() {
+        let t = Tree::new("gpu-names");
+        t.write(
+            "usr/share/hwdata/pci.ids",
+            "8086  Intel Corporation\n\t3e9b  CoffeeLake-H GT2 [UHD Graphics 630]\n\
+             10de  NVIDIA Corporation\n\t1f91  GA107M [GeForce GTX 1650 Mobile]\n",
+        )
+        .write(
+            "sys/class/drm/card0/device/uevent",
+            "PCI_ID=8086:3E9B\nPCI_SLOT_NAME=0000:00:02.0",
+        );
+        let gpus = detect_at(&t.0).gpus;
+        assert_eq!(gpus[0].name, "Intel CoffeeLake-H GT2 [UHD Graphics 630]");
+    }
+
+    /// La ranura PCI lleva `:` (no vale como nombre de archivo en Windows), así que esta parte
+    /// solo se prueba en Unix; el resto de `device` ya se prueba en la CI de Windows.
+    #[cfg(unix)]
+    #[test]
+    fn names_nvidia_gpus_from_the_driver() {
+        let t = Tree::new("gpu-nvidia");
+        t.write(
+            "usr/share/hwdata/pci.ids",
+            "10de  NVIDIA Corporation\n\t1f91  GA107M [GeForce GTX 1650 Mobile]\n",
+        )
+        .write(
+            "sys/class/drm/card1/device/uevent",
+            "PCI_ID=10DE:1F91\nPCI_SLOT_NAME=0000:01:00.0",
+        )
+        .write(
+            "proc/driver/nvidia/gpus/0000:01:00.0/information",
+            "Model:\t\t NVIDIA GeForce GTX 1650\nIRQ:\t\t 132",
+        );
+        let gpus = detect_at(&t.0).gpus;
+        // El `Model:` del driver gana al `pci.ids`.
+        assert_eq!(gpus[0].name, "NVIDIA GeForce GTX 1650");
+        assert_eq!(gpus[0].id, "0000:01:00.0");
     }
 
     #[test]
