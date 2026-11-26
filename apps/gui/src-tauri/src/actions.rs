@@ -898,12 +898,11 @@ fn line(l: framerush_core::ReportLine, lang: Lang) -> Line {
     }
 }
 
-/// Lo que mantiene abierto el helper elevado.
-#[cfg(windows)]
+/// Lo que mantiene abierto el helper elevado (UAC en Windows, `pkexec` en Linux).
+#[cfg(any(windows, target_os = "linux"))]
 pub type Elevated = framerush_platform::Helper;
-/// Fuera de Windows aún no hay helper: el tipo no tiene valores y `Option<Elevated>` siempre es
-/// `None`.
-#[cfg(not(windows))]
+/// En macOS aún no hay helper: el tipo no tiene valores y `Option<Elevated>` siempre es `None`.
+#[cfg(not(any(windows, target_os = "linux")))]
 #[derive(Clone)]
 pub enum Elevated {}
 
@@ -919,8 +918,8 @@ enum Op<'a> {
     ResumeForeign(Vec<Target>),
 }
 
-/// En Linux aún no hay helper: lo que pide privilegios falla con «acceso denegado» y el
-/// informe pide el botón de administrador.
+/// Sin helper, lo que pide privilegios falla con «acceso denegado» y el informe pide el botón de
+/// administrador.
 #[cfg(any(windows, target_os = "linux"))]
 fn run(
     helper: Option<Elevated>,
@@ -935,7 +934,7 @@ fn run(
     };
     #[cfg(target_os = "linux")]
     let platform = match helper {
-        Some(h) => match h {},
+        Some(h) => framerush_platform::LinuxPlatform::with_helper(h),
         None => framerush_platform::LinuxPlatform::new(),
     };
     let store = store(lang)?;

@@ -597,8 +597,9 @@ async fn elevate(app: AppHandle, lang: Lang) -> Result<(), String> {
     Ok(())
 }
 
-/// El helper va junto al ejecutable de la app (`cargo build --workspace` lo compila).
-#[cfg(windows)]
+/// El helper va junto al ejecutable de la app (`cargo build --workspace` lo compila). En Linux
+/// lo abre `pkexec` y los sensores no cambian: hwmon se lee sin privilegios.
+#[cfg(any(windows, target_os = "linux"))]
 fn elevated_sources(lang: Lang) -> anyhow::Result<(framerush_sensors::Sources, Elevated)> {
     use anyhow::Context;
     let exe = std::env::current_exe()
@@ -606,7 +607,7 @@ fn elevated_sources(lang: Lang) -> anyhow::Result<(framerush_sensors::Sources, E
             "no se encontró el ejecutable de la app",
             "the app executable was not found",
         ))?
-        .with_file_name("framerush-helper.exe");
+        .with_file_name(format!("framerush-helper{}", std::env::consts::EXE_SUFFIX));
     anyhow::ensure!(
         exe.is_file(),
         lang.pick(
@@ -622,10 +623,14 @@ fn elevated_sources(lang: Lang) -> anyhow::Result<(framerush_sensors::Sources, E
     );
     let helper = framerush_platform::Helper::launch(&exe)
         .context(lang.pick("no se pudo abrir el helper", "could not open the helper"))?;
-    Ok((framerush_sensors::detect_elevated(helper.clone()), helper))
+    #[cfg(windows)]
+    let sources = framerush_sensors::detect_elevated(helper.clone());
+    #[cfg(target_os = "linux")]
+    let sources = framerush_sensors::detect();
+    Ok((sources, helper))
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn elevated_sources(lang: Lang) -> anyhow::Result<(framerush_sensors::Sources, Elevated)> {
     anyhow::bail!(lang.pick(
         "en este sistema todavía no hay helper elevado",
