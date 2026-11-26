@@ -298,24 +298,33 @@ fn optional_tweaks_need_include() {
 }
 
 #[test]
-fn gpu_alto_needs_a_game() {
+fn gpu_alto_is_the_default_with_a_game() {
     let dir = temp_dir("gpu");
-    let (ok, _) = framerush_in(&dir, &["apply", "--gpu-alto"]);
-    assert!(!ok);
+    let (ok, stdout) = framerush_in(&dir, &["apply"]);
+    assert!(ok);
+    assert!(!stdout.contains("gpu-preference"), "{stdout}");
     let pid = std::process::id().to_string();
-    // Depende del equipo: con más de una GPU se ofrece; con una o ninguna (la CI) se rechaza.
+    // Depende del equipo: solo se ofrece en Windows con más de una GPU (en la CI, no).
     let (_, profile) = framerush_in(&dir, &["plan"]);
     let gpus = profile
         .lines()
         .filter(|l| l.starts_with("GPU: ") && !l.contains("no detectada"))
         .count();
-    let (ok, stdout) = framerush_in(&dir, &["apply", "--game", &pid, "--gpu-alto"]);
-    if gpus > 1 {
-        assert!(ok);
-        assert!(stdout.contains("[x] gpu-preference = alto"), "{stdout}");
-    } else {
-        assert!(!ok, "{stdout}");
-    }
+    let offered = cfg!(windows) && gpus > 1;
+    let (ok, stdout) = framerush_in(&dir, &["apply", "--game", &pid]);
+    assert!(ok, "{stdout}");
+    assert_eq!(
+        stdout.contains("[x] gpu-preference = alto"),
+        offered,
+        "{stdout}"
+    );
+    let (ok, stdout) = framerush_in(&dir, &["apply", "--game", &pid, "--no-gpu-alto"]);
+    assert!(ok, "{stdout}");
+    assert_eq!(
+        stdout.contains("[ ] gpu-preference = alto"),
+        offered,
+        "{stdout}"
+    );
     assert!(!dir.join("session.json").exists());
 }
 

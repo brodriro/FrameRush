@@ -187,10 +187,11 @@ struct GameArgs {
     /// persistente). Puede empeorar juegos DX12 (PLAN.md V10).
     #[arg(long)]
     fso_off: bool,
-    /// `gpu-preference = alto`: el exe del juego usa la GPU de alto rendimiento (persistente).
-    /// Solo con más de una GPU detectada (R8).
+    /// No aplicar `gpu-preference = alto`, que por defecto hace que el exe del juego use la GPU
+    /// de alto rendimiento (persistente, P13). Solo se ofrece en Windows con más de una GPU
+    /// detectada (R8).
     #[arg(long)]
-    gpu_alto: bool,
+    no_gpu_alto: bool,
     /// `cpu-affinity` (opt-in, de sesión): CPU lógicas para el juego, como `2,3,6-11`, o `auto`
     /// para `cpu-affinity-cores` del equipo. Con anticheat se rechaza (P2).
     #[arg(long, value_name = "CPUS|auto")]
@@ -537,7 +538,7 @@ fn steam_game(processes: &[ProcessInfo]) -> Option<Game> {
 
 /// Las opciones del juego necesitan un juego (`--game` o uno de Steam en marcha).
 fn require_game(args: &GameArgs, game: Option<&Game>) -> Result<()> {
-    let wants = args.fso_off || args.gpu_alto || args.affinity.is_some() || args.confirm_realtime;
+    let wants = args.fso_off || args.affinity.is_some() || args.confirm_realtime;
     if wants && game.is_none() {
         bail!("esa opción necesita un juego: indica --game o abre el juego desde Steam");
     }
@@ -780,16 +781,18 @@ fn print_adapter(adapter: Option<&AdapterPlan>, args: &GameArgs) {
     println!();
 }
 
-/// `--gpu-alto` solo se ofrece si el equipo tiene más de una GPU (PLAN.md It6: con una sola no
-/// hay nada que elegir).
-fn check_gpu_preference(args: &GameArgs, device: &DeviceProfile) -> Result<()> {
-    if args.gpu_alto && defaults::gpu_preference(device).is_none() {
-        bail!(
-            "`gpu-preference` solo se ofrece con más de una GPU detectada (este equipo: {})",
-            device.gpus.len()
-        );
-    }
-    Ok(())
+/// `gpu-preference` para este juego, o `None` si no se ofrece: sin juego, fuera de Windows o con
+/// una sola GPU (PLAN.md It6: no hay nada que elegir). Por defecto `alto` (P13);
+/// `--no-gpu-alto` lo desmarca.
+fn gpu_mark(args: &GameArgs, device: &DeviceProfile, has_game: bool) -> Option<Mark> {
+    let offered = has_game
+        && device.os == framerush_platform::Os::Windows
+        && defaults::gpu_preference(device).is_some();
+    offered.then_some(if args.no_gpu_alto {
+        Mark::Off
+    } else {
+        Mark::On
+    })
 }
 
 /// CPU de `--affinity`, o `None` si no se pidió. Falla con anticheat (P2) o si `auto` no tiene
@@ -1087,6 +1090,7 @@ fn print_game(
     game: Option<&Game>,
     args: &GameArgs,
     persistent: Option<Mark>,
+    gpu: Option<Mark>,
     affinity: Option<&[usize]>,
 ) {
     match game {
@@ -1103,8 +1107,12 @@ fn print_game(
             if args.fso_off {
                 println!("[x] fullscreen-optimizations-off   persistente · {exes}");
             }
-            if args.gpu_alto {
-                println!("[x] gpu-preference = alto             persistente · {exes}");
+            match gpu {
+                Some(Mark::On) => {
+                    println!("[x] gpu-preference = alto          persistente · {exes}")
+                }
+                Some(_) => println!("[ ] gpu-preference = alto          persistente · {exes}"),
+                None => {}
             }
             if let Some(cpus) = affinity {
                 let list: Vec<String> = cpus.iter().map(ToString::to_string).collect();
@@ -1134,7 +1142,6 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     let (plan, game, device) = build_plan(level, admin, args.game.as_deref(), None)?;
     require_game(args, game.as_ref())?;
     let affinity = game_affinity(args, &plan, &device)?;
-    check_gpu_preference(args, &device)?;
     let adapter = adapter_plan(args, game.as_ref(), &device)?;
     let defender = defender_plan(args, game.as_ref(), &device)?;
     println!("Plan para el nivel {level} (dry-run: no se toca nada)");
@@ -1143,6 +1150,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
         game.as_ref(),
         args,
         persistent_mark(level, admin, args, game.is_some(), &[]),
+        gpu_mark(args, &device, game.is_some()),
         affinity.as_deref(),
     );
     print_adapter(adapter.as_ref(), args);
@@ -1290,7 +1298,7 @@ fn apply_with(
         build_plan(level, args.admin, args.game.game.as_deref(), keep_alive)?;
     require_game(&args.game, game.as_ref())?;
     let affinity = game_affinity(&args.game, &plan, &device)?;
-    check_gpu_preference(&args.game, &device)?;
+    let gpu = gpu_mark(&args.game, &device, game.is_some());
     // En Turbo, `--appid` elige el juego aunque no se toque su config.
     let adapter = if turbo.is_some() && !args.game.wants_adapter() {
         None
@@ -1364,7 +1372,13 @@ fn apply_with(
     if !args.yes {
         println!("Plan para el nivel {level} (no se aplica sin --yes)");
         print_device(&device);
-        print_game(game.as_ref(), &args.game, persistent, affinity.as_deref());
+        print_game(
+            game.as_ref(),
+            &args.game,
+            persistent,
+            gpu,
+            affinity.as_deref(),
+        );
         print_adapter(adapter.as_ref(), &args.game);
         print_defender(&defender, args.admin);
         print_refresh(level, &device, &refresh);
@@ -1411,7 +1425,7 @@ fn apply_with(
             realtime_confirmed: args.game.confirm_realtime,
             fullscreen_optimizations_off: args.game.fso_off,
             affinity,
-            high_performance_gpu: args.game.gpu_alto,
+            high_performance_gpu: gpu == Some(Mark::On),
             persistent_priority: persistent == Some(Mark::On),
         }),
         game_files: adapter.map(|a| a.plan.writes).unwrap_or_default(),
