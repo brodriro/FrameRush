@@ -998,11 +998,17 @@ pub(crate) fn native_device(os: Os) -> DeviceProfile {
 
 type Tweaks = Vec<framerush_platform::Tweak>;
 
-/// Ajustes que admite la plataforma, los que piden admin y sus capacidades.
+/// Plataforma nativa (en macOS aún no hay motor).
 #[cfg(windows)]
+type Native = framerush_platform::WindowsPlatform;
+#[cfg(target_os = "linux")]
+type Native = framerush_platform::LinuxPlatform;
+
+/// Ajustes que admite la plataforma, los que piden admin y sus capacidades.
+#[cfg(any(windows, target_os = "linux"))]
 fn native_caps() -> (Tweaks, Tweaks, framerush_platform::CapabilitySet) {
     use framerush_platform::{Capabilities, SystemTweaks};
-    let w = framerush_platform::WindowsPlatform::new();
+    let w = Native::new();
     let all = w.supported_tweaks();
     let admin = all
         .iter()
@@ -1012,21 +1018,22 @@ fn native_caps() -> (Tweaks, Tweaks, framerush_platform::CapabilitySet) {
     (all, admin, w.capabilities())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn native_caps() -> (Tweaks, Tweaks, framerush_platform::CapabilitySet) {
     (vec![], vec![], framerush_platform::CapabilitySet::default())
 }
 
-/// Servicios de las reglas que existen en este equipo, con su estado (SCM).
-#[cfg(windows)]
+/// Servicios de las reglas que existen en este equipo, con su estado (SCM en Windows, systemd
+/// en Linux).
+#[cfg(any(windows, target_os = "linux"))]
 fn native_services(
     rules: &[framerush_core::Rule],
     os: Os,
 ) -> Vec<(String, framerush_platform::ServiceState)> {
-    framerush_core::scan_services(&framerush_platform::WindowsPlatform::new(), rules, os).0
+    framerush_core::scan_services(&Native::new(), rules, os).0
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn native_services(
     _rules: &[framerush_core::Rule],
     _os: Os,

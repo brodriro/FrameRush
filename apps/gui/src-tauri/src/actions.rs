@@ -907,8 +907,8 @@ pub type Elevated = framerush_platform::Helper;
 #[derive(Clone)]
 pub enum Elevated {}
 
-// Fuera de Windows `run` no las ejecuta, así que no se leen.
-#[cfg_attr(not(windows), allow(dead_code))]
+// En macOS `run` no las ejecuta, así que no se leen.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 enum Op<'a> {
     Apply(Box<ApplyRequest<'a>>),
     Undo,
@@ -919,16 +919,24 @@ enum Op<'a> {
     ResumeForeign(Vec<Target>),
 }
 
-#[cfg(windows)]
+/// En Linux aún no hay helper: lo que pide privilegios falla con «acceso denegado» y el
+/// informe pide el botón de administrador.
+#[cfg(any(windows, target_os = "linux"))]
 fn run(
     helper: Option<Elevated>,
     op: Op<'_>,
     progress: Option<OnProgress<'_>>,
     lang: Lang,
 ) -> Result<Report> {
+    #[cfg(windows)]
     let platform = match helper {
         Some(h) => framerush_platform::WindowsPlatform::with_helper(h),
         None => framerush_platform::WindowsPlatform::new(),
+    };
+    #[cfg(target_os = "linux")]
+    let platform = match helper {
+        Some(h) => match h {},
+        None => framerush_platform::LinuxPlatform::new(),
     };
     let store = store(lang)?;
     let mut engine = framerush_core::Engine::new(&platform, &store).with_lang(lang);
@@ -963,7 +971,7 @@ fn run(
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn run(
     _helper: Option<Elevated>,
     _op: Op<'_>,
@@ -971,8 +979,8 @@ fn run(
     lang: Lang,
 ) -> Result<Report> {
     anyhow::bail!(lang.pick(
-        "aplicar, deshacer y restaurar solo están implementados en Windows por ahora",
-        "apply, undo and restore are only implemented on Windows for now",
+        "aplicar, deshacer y restaurar solo están implementados en Windows y Linux por ahora",
+        "apply, undo and restore are only implemented on Windows and Linux for now",
     ))
 }
 
