@@ -993,16 +993,22 @@ enum Mark {
     Locked,
 }
 
-/// `game-priority-persistent` para este juego, o `None` si no aplica (sin juego, por el nivel o
-/// por la prioridad, P1). `--exclude game-priority-persistent` lo desmarca.
+/// `game-priority-persistent` para este juego, o `None` si no aplica (sin juego, fuera de
+/// Windows, por el nivel o por la prioridad, P1). Escribe el IFEO del exe, que solo existe en
+/// Windows (SETTINGS.md); en Linux y macOS la GUI tampoco lo ofrece.
+/// `--exclude game-priority-persistent` lo desmarca.
 fn persistent_mark(
     level: Level,
     admin: bool,
     args: &GameArgs,
     has_game: bool,
     exclude: &[String],
+    device: &DeviceProfile,
 ) -> Option<Mark> {
-    if !has_game || !persistent_priority_default(level, args.game_priority.into()) {
+    if !has_game
+        || device.os != framerush_platform::Os::Windows
+        || !persistent_priority_default(level, args.game_priority.into())
+    {
         return None;
     }
     Some(if !admin {
@@ -1012,6 +1018,22 @@ fn persistent_mark(
     } else {
         Mark::On
     })
+}
+
+/// `--fso-off` y `--include game-priority-persistent` escriben ajustes del exe que solo existen
+/// en Windows (SETTINGS.md): en Linux y macOS se rechazan en vez de imprimirse y fallar al
+/// aplicarlos, igual que la GUI los oculta.
+fn windows_only_game_args(fso_off: bool, include: &[String], device: &DeviceProfile) -> Result<()> {
+    if device.os == framerush_platform::Os::Windows {
+        return Ok(());
+    }
+    if fso_off {
+        bail!("`--fso-off` solo existe en Windows (PLAN.md It5.4)");
+    }
+    if include.iter().any(|id| id == PERSISTENT_PRIORITY) {
+        bail!("`{PERSISTENT_PRIORITY}` solo existe en Windows (IFEO, PLAN.md P1)");
+    }
+    Ok(())
 }
 
 /// Perfil de hardware detectado (R8). Lo que falta sale como "no detectado".
@@ -1182,12 +1204,13 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
     let affinity = game_affinity(args, &plan, &device)?;
     let adapter = adapter_plan(args, game.as_ref(), &device)?;
     let defender = defender_plan(args, game.as_ref(), &device)?;
+    windows_only_game_args(args.fso_off, &[], &device)?;
     println!("Plan para el nivel {level} (dry-run: no se toca nada)");
     print_device(&device);
     print_game(
         game.as_ref(),
         args,
-        persistent_mark(level, admin, args, game.is_some(), &[]),
+        persistent_mark(level, admin, args, game.is_some(), &[], &device),
         gpu_mark(args, &device, game.is_some()),
         gamemode_mark(args, game.is_some()),
         affinity.as_deref(),
@@ -1349,7 +1372,15 @@ fn apply_with(
     if !defender.is_empty() && !args.admin && args.yes {
         bail!("--defender-exclusions requiere admin: usa --admin");
     }
-    let persistent = persistent_mark(level, args.admin, &args.game, game.is_some(), &args.exclude);
+    let persistent = persistent_mark(
+        level,
+        args.admin,
+        &args.game,
+        game.is_some(),
+        &args.exclude,
+        &device,
+    );
+    windows_only_game_args(args.game.fso_off, &args.include, &device)?;
     if args.include.iter().any(|id| id == PERSISTENT_PRIORITY) {
         match persistent {
             None => bail!(

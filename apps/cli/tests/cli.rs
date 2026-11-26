@@ -329,17 +329,46 @@ fn gpu_alto_is_the_default_with_a_game() {
 }
 
 #[test]
-fn fso_off_needs_a_game() {
+fn fso_off_needs_a_game_and_is_windows_only() {
     let dir = temp_dir("fso");
     let (ok, _) = framerush_in(&dir, &["apply", "--fso-off"]);
     assert!(!ok);
     let pid = std::process::id().to_string();
     let (ok, stdout) = framerush_in(&dir, &["apply", "--game", &pid, "--fso-off"]);
-    assert!(ok);
-    assert!(
-        stdout.contains("[x] fullscreen-optimizations-off"),
-        "{stdout}"
-    );
+    // Es un ajuste del exe de Windows (SETTINGS.md): fuera de Windows se rechaza.
+    assert_eq!(ok, cfg!(windows), "{stdout}");
+    if cfg!(windows) {
+        assert!(
+            stdout.contains("[x] fullscreen-optimizations-off"),
+            "{stdout}"
+        );
+    }
+    assert!(!dir.join("session.json").exists());
+}
+
+/// En Linux y macOS no hay IFEO: `game-priority-persistent` ni se ofrece ni se acepta.
+#[cfg(not(windows))]
+#[test]
+fn persistent_priority_is_not_offered_outside_windows() {
+    let dir = temp_dir("persistent-priority-os");
+    let pid = std::process::id().to_string();
+    let game = ["--game", pid.as_str()];
+    for level in ["agresivo", "extremo"] {
+        let args = [&["plan"][..], &game, &["--level", level, "--admin"]].concat();
+        let (ok, stdout) = framerush_in(&dir, &args);
+        assert!(ok, "{stdout}");
+        assert!(!stdout.contains("game-priority-persistent"), "{stdout}");
+    }
+    let args = [
+        "apply",
+        "--game",
+        &pid,
+        "--admin",
+        "--include",
+        "game-priority-persistent",
+    ];
+    let (ok, stdout) = framerush_in(&dir, &args);
+    assert!(!ok, "{stdout}");
     assert!(!dir.join("session.json").exists());
 }
 
