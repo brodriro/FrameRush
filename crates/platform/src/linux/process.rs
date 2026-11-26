@@ -20,6 +20,15 @@
 //!   a otro que reutilice el PID.
 //! - <https://man7.org/linux/man-pages/man7/signal.7.html>: `SIGSTOP` para todo el proceso y no
 //!   se puede capturar ni ignorar; `SIGCONT` lo reanuda.
+//! - <https://man7.org/linux/man-pages/man2/ioprio_set.2.html>: sin `ioprio` propio, la prioridad
+//!   de E/S sigue al nice; también es por hilo; la clase IDLE solo usa el disco cuando nadie más
+//!   lo necesita y no pide privilegios desde Linux 2.6.25; 0 vuelve al comportamiento por defecto.
+//!   Constantes de `include/uapi/linux/ioprio.h` (`IOPRIO_CLASS_SHIFT = 13`,
+//!   `IOPRIO_CLASS_IDLE = 3`, `IOPRIO_WHO_PROCESS = 1`).
+//!
+//! E/S (decisión del usuario, 2026-11-26): solo la prioridad Baja (`Idle`) pasa a la clase IDLE;
+//! el resto sigue al nice. Al poner otra prioridad, un hilo en IDLE vuelve a 0 (seguir al nice);
+//! uno con otra clase propia no se toca.
 //!
 //! Revalidación (It2.4): se abre un pidfd y después se comprueba `(pid, start_time, exe_path)`;
 //! si coincide, el pidfd es del proceso que se quería. Las señales van por ese pidfd. `nice` y
@@ -228,6 +237,48 @@ fn set_nice(tid: libc::pid_t, nice: libc::c_int) -> io::Result<()> {
     }
 }
 
+const IOPRIO_WHO_PROCESS: libc::c_int = 1;
+const IOPRIO_CLASS_SHIFT: libc::c_int = 13;
+const IOPRIO_CLASS_IDLE: libc::c_int = 3;
+/// Clase IDLE (no tiene nivel).
+const IOPRIO_IDLE: libc::c_int = IOPRIO_CLASS_IDLE << IOPRIO_CLASS_SHIFT;
+
+/// Clase de un valor de `ioprio` (`IOPRIO_PRIO_CLASS`).
+fn io_class(ioprio: libc::c_int) -> libc::c_int {
+    (ioprio >> IOPRIO_CLASS_SHIFT) & 7
+}
+
+fn get_ioprio(tid: libc::pid_t) -> io::Result<libc::c_int> {
+    // SAFETY: ioprio_get no toma punteros.
+    let r = unsafe { libc::syscall(libc::SYS_ioprio_get, IOPRIO_WHO_PROCESS, tid) };
+    if r < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        libc::c_int::try_from(r).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))
+    }
+}
+
+fn set_ioprio(tid: libc::pid_t, ioprio: libc::c_int) -> io::Result<()> {
+    // SAFETY: ioprio_set no toma punteros.
+    let r = unsafe { libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, tid, ioprio) };
+    if r == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Prioridad de E/S de un hilo según `priority`: Baja → IDLE; otra → si estaba en IDLE, 0.
+fn set_io_priority(tid: libc::pid_t, priority: Priority) -> io::Result<()> {
+    if priority == Priority::Idle {
+        set_ioprio(tid, IOPRIO_IDLE)
+    } else if io_class(get_ioprio(tid)?) == IOPRIO_CLASS_IDLE {
+        set_ioprio(tid, 0)
+    } else {
+        Ok(())
+    }
+}
+
 /// Número de CPU que caben en un `cpu_set_t`.
 const CPU_SETSIZE: usize = libc::CPU_SETSIZE as usize;
 
@@ -319,11 +370,17 @@ impl ProcessControl for LinuxPlatform {
         Ok(priority_of(nice))
     }
 
-    /// En todos los hilos. Subir la prioridad (bajar el nice) pide `CAP_SYS_NICE`.
+    /// En todos los hilos, el nice y la prioridad de E/S. Subir la prioridad (bajar el nice) pide
+    /// `CAP_SYS_NICE`.
     fn set_priority(&self, target: &Target, priority: Priority) -> Result<()> {
         let nice = nice_of(priority);
         self.or_helper(
-            || Pidfd::open(target)?.each_thread(|tid| set_nice(tid, nice)),
+            || {
+                Pidfd::open(target)?.each_thread(|tid| {
+                    set_nice(tid, nice)?;
+                    set_io_priority(tid, priority)
+                })
+            },
             |h| h.set_priority(target, priority),
         )
     }
@@ -480,6 +537,14 @@ mod tests {
     }
 
     #[test]
+    fn io_class_reads_the_high_bits() {
+        assert_eq!(io_class(IOPRIO_IDLE), IOPRIO_CLASS_IDLE);
+        assert_eq!(io_class(0), 0);
+        // BE (2), nivel 4.
+        assert_eq!(io_class((2 << IOPRIO_CLASS_SHIFT) | 4), 2);
+    }
+
+    #[test]
     fn cpu_set_rejects_empty_and_out_of_range() {
         assert!(cpu_set(&[]).is_err());
         assert!(cpu_set(&[CPU_SETSIZE]).is_err());
@@ -509,10 +574,16 @@ mod tests {
             linux.priority(&target).unwrap(),
             priority_of(get_nice(0).unwrap())
         );
+        let tid = main_thread(&target).unwrap();
+        assert_ne!(io_class(get_ioprio(tid).unwrap()), IOPRIO_CLASS_IDLE);
         linux.set_priority(&target, Priority::Idle).unwrap();
         assert_eq!(linux.priority(&target).unwrap(), Priority::Idle);
+        assert_eq!(io_class(get_ioprio(tid).unwrap()), IOPRIO_CLASS_IDLE);
         match linux.set_priority(&target, Priority::Normal) {
-            Ok(()) => assert_eq!(linux.priority(&target).unwrap(), Priority::Normal),
+            Ok(()) => {
+                assert_eq!(linux.priority(&target).unwrap(), Priority::Normal);
+                assert_ne!(io_class(get_ioprio(tid).unwrap()), IOPRIO_CLASS_IDLE);
+            }
             Err(e) => assert!(matches!(e, PlatformError::AccessDenied(_)), "{e}"),
         }
     }
