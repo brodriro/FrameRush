@@ -578,3 +578,27 @@ fn steam_reads_the_running_game_from_the_environment() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Turbo en Linux: sin `--yes` solo muestra el plan del juego de `--appid` y no abre sesión.
+#[cfg(target_os = "linux")]
+#[test]
+fn turbo_is_a_dry_run_without_yes() {
+    let dir = temp_dir("turbo-linux");
+    let steamapps = dir.join("steamapps");
+    std::fs::create_dir_all(steamapps.join("common/Counter-Strike Global Offensive")).unwrap();
+    std::fs::write(
+        steamapps.join("appmanifest_730.acf"),
+        "\"AppState\"\n{\n\t\"appid\"\t\t\"730\"\n\t\"name\"\t\t\"Counter-Strike 2\"\n\t\"installdir\"\t\t\"Counter-Strike Global Offensive\"\n}\n",
+    )
+    .unwrap();
+
+    let (ok, stdout) = framerush_in(&dir, &["turbo", "--appid", "730"]);
+    assert!(ok, "{stdout}");
+    assert!(
+        stdout.contains("Turbo para «Counter-Strike 2» (730)"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("no se aplica sin --yes"), "{stdout}");
+    assert!(!dir.join("session.json").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}

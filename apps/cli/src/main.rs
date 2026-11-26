@@ -24,7 +24,7 @@
 //! Las opciones del adaptador del juego (`--tune`, `--lock`, `--fps-cap`, `--bench`) son opt-in
 //! y van al juego de `--appid` (aunque esté cerrado) o al de Steam en marcha.
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod turbo;
 
 use anyhow::{Context, Result, bail};
@@ -48,7 +48,7 @@ use tracing_subscriber::EnvFilter;
 type Native = framerush_platform::WindowsPlatform;
 #[cfg(target_os = "linux")]
 type Native = framerush_platform::LinuxPlatform;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use turbo::{TurboArgs, turbo};
 
 /// Sube los FPS limitando procesos de fondo por niveles.
@@ -104,8 +104,8 @@ enum Command {
     },
     /// Turbo (It5.2): lanza el juego de Steam si no está abierto, aplica el nivel congelando en
     /// vez de cerrar, congela cada `--rescan` lo nuevo y lo deshace al cerrar el juego o con
-    /// Ctrl+C. Sin `--yes` solo muestra el plan. Solo Windows por ahora.
-    #[cfg(windows)]
+    /// Ctrl+C. Sin `--yes` solo muestra el plan.
+    #[cfg(any(windows, target_os = "linux"))]
     Turbo(TurboArgs),
     /// Procesos congelados por otro programa: todos sus hilos suspendidos y no los congeló
     /// FrameRush (p. ej. un script «Turbo» que se cerró sin reanudarlos). Con `--resume` los
@@ -317,7 +317,7 @@ fn run_command(command: Command) -> Result<()> {
             Some(PowerCommand::Set { id, yes }) => power_set(&id, yes),
         },
         Command::Steam => steam(),
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         Command::Turbo(args) => turbo(&args),
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         Command::Frozen { resume } => frozen(resume),
@@ -1329,10 +1329,6 @@ struct TurboApply<'a> {
 }
 
 /// Lo que Turbo vigila tras aplicar: las reglas congeladas y los procesos del juego.
-#[cfg_attr(
-    not(windows),
-    expect(dead_code, reason = "Turbo solo existe en Windows por ahora")
-)]
 struct Applied {
     suspended: Vec<String>,
     game: Vec<framerush_platform::Target>,
@@ -1887,8 +1883,8 @@ fn tweak_states() -> Result<Vec<(Tweak, Vec<SavedValue>)>> {
 /// Operación del motor sobre la plataforma nativa.
 #[derive(Debug)]
 #[cfg_attr(
-    not(windows),
-    expect(dead_code, reason = "fuera de Windows `run` todavía no ejecuta nada")
+    not(any(windows, target_os = "linux")),
+    expect(dead_code, reason = "en macOS `run` todavía no ejecuta nada")
 )]
 enum Op<'a> {
     Apply(Box<ApplyRequest<'a>>),

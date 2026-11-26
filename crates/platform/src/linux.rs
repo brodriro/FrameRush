@@ -11,7 +11,7 @@ mod system;
 
 pub use helper::{Helper, serve_helper};
 pub use process::LinuxPlatform;
-pub use steam::{steam_root, steam_running_app};
+pub use steam::{steam_launch, steam_root, steam_running_app};
 
 use crate::xdg::{base_dir, user_dir};
 use std::path::PathBuf;

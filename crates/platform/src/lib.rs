@@ -25,7 +25,7 @@ pub use error::{PlatformError, Result};
 pub use lang::Lang;
 #[cfg(target_os = "linux")]
 pub use linux::{
-    Helper, LinuxPlatform, downloads_dir, serve_helper, steam_root, steam_running_app,
+    Helper, LinuxPlatform, downloads_dir, serve_helper, steam_launch, steam_root, steam_running_app,
 };
 #[cfg(target_os = "macos")]
 pub use macos::{MacosPlatform, downloads_dir};

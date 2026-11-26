@@ -606,7 +606,7 @@ pub fn launch_game(appid: u32, lang: Lang) -> Result<bool> {
     Ok(false)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn steam_launch(appid: u32, lang: Lang) -> Result<()> {
     framerush_platform::steam_launch(appid).context(lang.pick(
         "no se pudo lanzar el juego desde Steam",
@@ -614,11 +614,11 @@ fn steam_launch(appid: u32, lang: Lang) -> Result<()> {
     ))
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn steam_launch(_appid: u32, lang: Lang) -> Result<()> {
     anyhow::bail!(lang.pick(
-        "lanzar juegos de Steam solo está implementado en Windows por ahora",
-        "launching Steam games is only implemented on Windows for now",
+        "lanzar juegos de Steam solo está implementado en Windows y Linux por ahora",
+        "launching Steam games is only implemented on Windows and Linux for now",
     ))
 }
 

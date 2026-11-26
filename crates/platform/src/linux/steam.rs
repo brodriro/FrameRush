@@ -97,11 +97,42 @@ fn start_ticks(pid: u32) -> Option<u64> {
         .ok()
 }
 
+/// Pide a Steam que lance el juego `appid` abriendo `steam://rungameid/<appid>` con `xdg-open`,
+/// que lo entrega al manejador del escritorio (xdg-open(1): «opens a file or URL in the user's
+/// preferred application»); es lo que hace `ShellExecuteW` en Windows. Vuelve cuando `xdg-open`
+/// termina: que el juego arranque se ve después en [`steam_running_app`] o en sus procesos.
+pub fn steam_launch(appid: u32) -> crate::Result<()> {
+    let url = steam_url(appid);
+    let status = std::process::Command::new("xdg-open")
+        .arg(&url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| crate::PlatformError::Os(format!("xdg-open: {e}")))?;
+    if !status.success() {
+        return Err(crate::PlatformError::Os(format!(
+            "xdg-open no pudo abrir {url} ({status})"
+        )));
+    }
+    Ok(())
+}
+
+/// URL con la que Steam lanza el juego (PLAN.md It5.2): `steam://rungameid/<appid>`.
+fn steam_url(appid: u32) -> String {
+    format!("steam://rungameid/{appid}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn the_launch_url_is_the_steam_protocol_one() {
+        assert_eq!(steam_url(730), "steam://rungameid/730");
+    }
 
     #[test]
     fn reads_the_app_id_from_the_environment() {
