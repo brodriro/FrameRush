@@ -48,8 +48,9 @@ impl PowerControl for LinuxPlatform {
 
 /// sysfs no da el modo actual de los monitores; el compositor sí, pero aún no está.
 impl DisplayControl for LinuxPlatform {
+    /// Por DRM/KMS (`/dev/dri/cardN`): el modo actual del monitor y los que admite.
     fn displays(&self) -> Result<Vec<Display>> {
-        Err(PlatformError::Unsupported("monitores"))
+        super::drm::displays()
     }
 
     fn set_refresh_rate(&self, _id: &str, _hz: u32) -> Result<()> {

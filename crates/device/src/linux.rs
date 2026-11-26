@@ -36,11 +36,13 @@ use std::path::Path;
 /// power-profiles-daemon (sin él, ninguno).
 #[cfg(target_os = "linux")]
 pub fn detect() -> DeviceProfile {
-    use framerush_platform::{LinuxPlatform, PowerControl};
+    use framerush_platform::{DisplayControl, LinuxPlatform, PowerControl};
     let mut device = detect_at(Path::new("/"));
     let platform = LinuxPlatform::new();
     device.power_plans = platform.power_plans().unwrap_or_default();
     device.active_power_plan = platform.active_power_plan().ok().map(|p| p.id);
+    // Monitores y Hz por DRM/KMS; sin permisos en los nodos, ninguno.
+    device.displays = platform.displays().unwrap_or_default();
     device
 }
 
