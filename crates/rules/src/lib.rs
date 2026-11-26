@@ -370,10 +370,23 @@ description = "Indexador de búsqueda."
         assert!(!onedrive.matches_process(os, "OneDrive.Sync.exe"));
     }
 
+    /// Nombres de Linux verificados (V20): procesos por ruta y servicios por unidad.
+    #[test]
+    fn linux_names_match_processes_and_units() {
+        let rules = embedded().unwrap();
+        let rule = |id: &str| rules.iter().find(|r| r.id == id).unwrap();
+        let os = framerush_platform::Os::Linux;
+        assert!(rule("desktop-indexer").matches_process(os, "/usr/libexec/tracker-miner-fs-3"));
+        assert!(rule("firefox").matches_process(os, "/usr/lib/firefox-esr/firefox-esr"));
+        assert!(rule("spooler").matches_service(os, "cups.service"));
+        assert!(rule("apt-daily").matches_service(os, "apt-daily-upgrade.timer"));
+        assert!(!rule("spooler").matches_service(framerush_platform::Os::Windows, "cups.service"));
+    }
+
     #[test]
     fn embedded_rules_are_valid() {
         let rules = embedded().unwrap();
-        assert_eq!(rules.len(), 58);
+        assert_eq!(rules.len(), 63);
         // Los navegadores vienen desmarcados (PLAN.md §3).
         assert!(
             rules

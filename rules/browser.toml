@@ -1,12 +1,15 @@
 # Reglas de FrameRush (navegadores y apps). Esquema en PLAN.md §3, "Modelo de reglas".
 # Fuente de los nombres de Windows: proyecto de referencia CS2-FPS-Boost ($SuspendNames).
-# Los nombres de Linux y macOS faltan hasta verificarlos (PLAN.md §6, V20).
+# Nombres de Linux: listas de archivos de los paquetes de Debian (packages.debian.org) y el
+# instalador de Chromium (PLAN.md §6, V20 Linux; docs/investigacion/inv-linux-macos.md §3).
+# Faltan los de macOS hasta verificarlos.
 
 # Navegadores: opcionales en Agresivo (desmarcados), PLAN.md §3.
 
 [[rule]]
 id = "chrome"
-match = { windows = ["chrome"] }
+# Linux: `PROGNAME=chrome` en chrome/installer/linux/common/chromium-browser.info.
+match = { windows = ["chrome"], linux = ["chrome"] }
 category = "browser"
 action = "suspend"
 min_level = "agresivo"
@@ -39,7 +42,8 @@ optional = true
 
 [[rule]]
 id = "firefox"
-match = { windows = ["firefox"] }
+# Linux: `firefox-esr` de Debian; el `firefox` del tarball de Mozilla está sin verificar.
+match = { windows = ["firefox"], linux = ["firefox-esr"] }
 category = "browser"
 action = "suspend"
 min_level = "agresivo"
@@ -213,3 +217,30 @@ min_level = "agresivo"
 risk = "low"
 description = "Procesos de fondo de Adobe Acrobat y Creative Cloud."
 description_en = "Adobe Acrobat and Creative Cloud background processes."
+
+# Indexadores de archivos del escritorio en Linux (el equivalente de Windows Search, que en
+# Windows es el servicio WSearch). Son unidades de usuario de systemd, que el helper no gestiona,
+# así que se congelan como procesos. Debian: tracker-miner-fs (bookworm), localsearch (sid),
+# baloo6 (trixie) y baloo-kf5 (bookworm).
+[[rule]]
+id = "desktop-indexer"
+match = { linux = ["tracker-miner-fs-3", "localsearch-3", "localsearch-extractor-3", "baloo_file", "baloo_file_extractor"] }
+category = "browser"
+action = "suspend"
+min_level = "agresivo"
+risk = "low"
+description = "Indexador de archivos del escritorio (Tracker, LocalSearch o Baloo): CPU y disco en segundo plano."
+description_en = "Desktop file indexer (Tracker, LocalSearch or Baloo): background CPU and disk."
+
+# GNOME Software: busca actualizaciones en segundo plano (arranca con la sesión por
+# /etc/xdg/autostart/org.gnome.Software.desktop; Debian gnome-software, trixie). Solo Extremo,
+# como Windows Update.
+[[rule]]
+id = "gnome-software"
+match = { linux = ["gnome-software"] }
+category = "updater"
+action = "suspend"
+min_level = "extremo"
+risk = "low"
+description = "GNOME Software: comprobación de actualizaciones en segundo plano."
+description_en = "GNOME Software: background update checks."

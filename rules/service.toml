@@ -1,6 +1,8 @@
 # Reglas de FrameRush (servicios grupo A y B). Esquema en PLAN.md §3, "Modelo de reglas".
 # Fuente de los nombres de Windows: proyecto de referencia CS2-FPS-Boost ($SvcAggressive y $SvcExtremeExtra).
-# Los nombres de Linux y macOS faltan hasta verificarlos (PLAN.md §6, V20).
+# Nombres de Linux: listas de archivos de los paquetes de Debian (packages.debian.org) y el
+# instalador de Chromium (PLAN.md §6, V20 Linux; docs/investigacion/inv-linux-macos.md §3).
+# Unidades de sistema de systemd (vía helper). Faltan los de macOS hasta verificarlos.
 
 # Grupo A: desde Agresivo. Se detienen solo durante la sesión, sin cambiar el tipo de inicio.
 
@@ -212,7 +214,9 @@ description_en = "Windows Update repair; Windows may refuse to stop it."
 
 [[rule]]
 id = "spooler"
-match = { windows = ["Spooler"] }
+# Linux: cups.service (Debian cups-daemon). cups.socket puede volver a arrancarlo si alguien
+# imprime.
+match = { windows = ["Spooler"], linux = ["cups.service"] }
 category = "service"
 action = "stop_service"
 min_level = "extremo"
@@ -309,3 +313,35 @@ min_level = "extremo"
 risk = "low"
 description = "Telefonía."
 description_en = "Telephony."
+
+# Linux, grupo B (solo Extremo, como Windows Update): actualizaciones en segundo plano.
+
+[[rule]]
+id = "packagekit"
+match = { linux = ["packagekit.service"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "PackageKit: busca e instala actualizaciones en segundo plano."
+description_en = "PackageKit: checks for and installs updates in the background."
+
+[[rule]]
+id = "apt-daily"
+match = { linux = ["apt-daily.timer", "apt-daily-upgrade.timer"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "Temporizadores de APT: descarga e instalación diaria de actualizaciones."
+description_en = "APT timers: daily download and installation of updates."
+
+[[rule]]
+id = "fwupd"
+match = { linux = ["fwupd.service", "fwupd-refresh.timer"] }
+category = "service"
+action = "stop_service"
+min_level = "extremo"
+risk = "low"
+description = "fwupd: actualizaciones de firmware y su comprobación periódica."
+description_en = "fwupd: firmware updates and their periodic check."
