@@ -198,6 +198,12 @@ impl GameAdapter for Cs2 {
         "exec fpsbench"
     }
 
+    /// La tienda de Steam lo da en la categoría 8, «Valve Anti-Cheat enabled»
+    /// (`store.steampowered.com/api/appdetails?appids=730`, consultado el 2026-11-26).
+    fn anticheat(&self) -> Option<&'static str> {
+        Some("VAC")
+    }
+
     fn launch_options(&self) -> &'static str {
         "-console +exec framerush -fullscreen"
     }
@@ -266,6 +272,14 @@ impl GameAdapter for Cs2 {
 mod tests {
     use super::*;
     use framerush_device::samples;
+
+    #[test]
+    fn declares_vac_without_a_process() {
+        assert_eq!(
+            crate::adapter(Cs2::APPID).and_then(|a| a.anticheat()),
+            Some("VAC")
+        );
+    }
 
     const VIDEO: &str = "\"video.cfg\"\r\n{\r\n\t\"Version\"\t\t\"16\"\r\n\t\"setting.mat_vsync\"\t\t\"1\"\r\n\t\"setting.mat_vsync_extra\"\t\t\"7\"\r\n}\r\n";
 
