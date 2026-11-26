@@ -32,10 +32,16 @@ use framerush_platform::{Battery, Core, CoreKind, Cpu, Gpu, GpuVendor, Os, PciId
 use std::fs;
 use std::path::Path;
 
-/// Perfil del equipo con lo que exponen sysfs y procfs.
+/// Perfil del equipo con lo que exponen sysfs y procfs, y los perfiles de energía de
+/// power-profiles-daemon (sin él, ninguno).
 #[cfg(target_os = "linux")]
 pub fn detect() -> DeviceProfile {
-    detect_at(Path::new("/"))
+    use framerush_platform::{LinuxPlatform, PowerControl};
+    let mut device = detect_at(Path::new("/"));
+    let platform = LinuxPlatform::new();
+    device.power_plans = platform.power_plans().unwrap_or_default();
+    device.active_power_plan = platform.active_power_plan().ok().map(|p| p.id);
+    device
 }
 
 fn detect_at(root: &Path) -> DeviceProfile {
