@@ -79,6 +79,7 @@ fn boost(m: &MockPlatform, priority: Priority, confirmed: bool) -> ApplyRequest<
             affinity: None,
             high_performance_gpu: false,
             persistent_priority: false,
+            gamemode: false,
         }),
     }
 }

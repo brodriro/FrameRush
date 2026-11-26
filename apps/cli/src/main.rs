@@ -192,6 +192,10 @@ struct GameArgs {
     /// detectada (R8).
     #[arg(long)]
     no_gpu_alto: bool,
+    /// No registrar el juego en Feral GameMode (`linux-gamemode`, de sesión), que por defecto se
+    /// usa si está instalado. Solo Linux.
+    #[arg(long)]
+    no_gamemode: bool,
     /// `cpu-affinity` (opt-in, de sesión): CPU lógicas para el juego, como `2,3,6-11`, o `auto`
     /// para `cpu-affinity-cores` del equipo. Con anticheat se rechaza (P2).
     #[arg(long, value_name = "CPUS|auto")]
@@ -795,6 +799,28 @@ fn gpu_mark(args: &GameArgs, device: &DeviceProfile, has_game: bool) -> Option<M
     })
 }
 
+/// `linux-gamemode` para este juego, o `None` si no se ofrece: sin juego o sin Feral GameMode
+/// en el bus de sesión. Por defecto activo; `--no-gamemode` lo desmarca.
+fn gamemode_mark(args: &GameArgs, has_game: bool) -> Option<Mark> {
+    (has_game && native_gamemode()).then_some(if args.no_gamemode {
+        Mark::Off
+    } else {
+        Mark::On
+    })
+}
+
+/// Feral GameMode está en el bus de sesión o se puede activar.
+#[cfg(target_os = "linux")]
+fn native_gamemode() -> bool {
+    use framerush_platform::GameTuning;
+    Native::new().gamemode_available()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn native_gamemode() -> bool {
+    false
+}
+
 /// CPU de `--affinity`, o `None` si no se pidió. Falla con anticheat (P2) o si `auto` no tiene
 /// topología con la que elegir (R8: no se inventa una).
 fn game_affinity(
@@ -1091,6 +1117,7 @@ fn print_game(
     args: &GameArgs,
     persistent: Option<Mark>,
     gpu: Option<Mark>,
+    gamemode: Option<Mark>,
     affinity: Option<&[usize]>,
 ) {
     match game {
@@ -1116,6 +1143,13 @@ fn print_game(
                     println!("[x] gpu-preference = alto          persistente · {exes}")
                 }
                 Some(_) => println!("[ ] gpu-preference = alto          persistente · {exes}"),
+                None => {}
+            }
+            match gamemode {
+                Some(Mark::On) => {
+                    println!("[x] linux-gamemode                   sesión · Feral GameMode")
+                }
+                Some(_) => println!("[ ] linux-gamemode                   sesión · Feral GameMode"),
                 None => {}
             }
             if let Some(cpus) = affinity {
@@ -1155,6 +1189,7 @@ fn show_plan(level: Level, admin: bool, args: &GameArgs) -> Result<()> {
         args,
         persistent_mark(level, admin, args, game.is_some(), &[]),
         gpu_mark(args, &device, game.is_some()),
+        gamemode_mark(args, game.is_some()),
         affinity.as_deref(),
     );
     print_adapter(adapter.as_ref(), args);
@@ -1303,6 +1338,7 @@ fn apply_with(
     require_game(&args.game, game.as_ref())?;
     let affinity = game_affinity(&args.game, &plan, &device)?;
     let gpu = gpu_mark(&args.game, &device, game.is_some());
+    let gamemode = gamemode_mark(&args.game, game.is_some());
     // En Turbo, `--appid` elige el juego aunque no se toque su config.
     let adapter = if turbo.is_some() && !args.game.wants_adapter() {
         None
@@ -1381,6 +1417,7 @@ fn apply_with(
             &args.game,
             persistent,
             gpu,
+            gamemode,
             affinity.as_deref(),
         );
         print_adapter(adapter.as_ref(), &args.game);
@@ -1431,6 +1468,7 @@ fn apply_with(
             affinity,
             high_performance_gpu: gpu == Some(Mark::On),
             persistent_priority: persistent == Some(Mark::On),
+            gamemode: gamemode == Some(Mark::On),
         }),
         game_files: adapter.map(|a| a.plan.writes).unwrap_or_default(),
         defender_exclusions: defender,

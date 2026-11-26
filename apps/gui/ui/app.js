@@ -48,7 +48,7 @@
   const BACKEND_IDS = ['game-dvr-off', 'windows-game-mode', 'notifications-off', 'visual-effects-performance', 'uwp-background-off',
     'scheduler-foreground-boost', 'power-throttling-off', 'mmcss-games', 'defender-exclusions', 'hags', 'vbs-hvci-off', 'cstates-off',
     'memory-trim', 'standby-purge', 'custom-power-plan', 'refresh-rate-max', 'game-priority-persistent', 'fullscreen-optimizations-off',
-    'gpu-preference', 'cpu-affinity', 'timer-resolution'];
+    'gpu-preference', 'cpu-affinity', 'timer-resolution', 'linux-gamemode'];
   const NO_GAME = { name: t('no-game'), exe: '', appid: '', pids: [] };
   const GB = 1024 ** 3, MB = 1024 ** 2;
 

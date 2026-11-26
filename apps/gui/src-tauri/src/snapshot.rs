@@ -323,6 +323,9 @@ pub fn build(sensors: SensorInfo, phase: &dyn Fn(&'static str), lang: Lang) -> R
     if windows && gpu_pref.is_some() {
         available.push("gpu-preference");
     }
+    if native_gamemode() {
+        available.push("linux-gamemode");
+    }
     // Solo con Defender como antivirus activo: con otro, excluir en Defender no sirve (P15).
     if caps.defender_exclusions && device.defender_active == Some(true) {
         available.push("defender-exclusions");
@@ -1006,6 +1009,18 @@ type Tweaks = Vec<framerush_platform::Tweak>;
 type Native = framerush_platform::WindowsPlatform;
 #[cfg(target_os = "linux")]
 type Native = framerush_platform::LinuxPlatform;
+
+/// Feral GameMode está en el bus de sesión o se puede activar (`linux-gamemode`).
+#[cfg(target_os = "linux")]
+fn native_gamemode() -> bool {
+    use framerush_platform::GameTuning;
+    Native::new().gamemode_available()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn native_gamemode() -> bool {
+    false
+}
 
 /// Ajustes que admite la plataforma, los que piden admin y sus capacidades.
 #[cfg(any(windows, target_os = "linux"))]

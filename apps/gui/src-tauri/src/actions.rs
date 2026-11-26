@@ -24,6 +24,8 @@ const REFRESH_RATE_MAX: &str = "refresh-rate-max";
 /// Ajustes del exe del juego que llegan como ids de `settings`.
 const PERSISTENT_PRIORITY: &str = "game-priority-persistent";
 const FSO_OFF: &str = "fullscreen-optimizations-off";
+/// `linux-gamemode`: registrar el juego en Feral GameMode durante la sesión (P16).
+const GAMEMODE: &str = "linux-gamemode";
 /// `defender-exclusions`: opt-in, carpeta y exe del juego (It5.9).
 const DEFENDER_EXCLUSIONS: &str = "defender-exclusions";
 /// `game-config-lock` llega en `settings` (es del nivel); lo aplica el adaptador.
@@ -365,10 +367,11 @@ pub fn apply(
             high_performance_gpu: g.high_performance_gpu
                 && defaults::gpu_preference(&device).is_some(),
             persistent_priority: persistent && helper.is_some(),
+            gamemode: wanted(GAMEMODE),
         })
     });
     if game.is_none() {
-        for id in [FSO_OFF, PERSISTENT_PRIORITY] {
+        for id in [FSO_OFF, PERSISTENT_PRIORITY, GAMEMODE] {
             if wanted(id) {
                 notes.push(lang.pick(
                     format!("{id}: no hay juego en marcha"),
