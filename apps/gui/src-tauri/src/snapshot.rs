@@ -615,6 +615,8 @@ struct AdapterView {
     cfg: String,
     bench: String,
     launch_options: &'static str,
+    /// Anticheat sin proceso propio (p. ej. VAC): solo se muestra, no activa P2 ni P10.
+    anticheat: Option<&'static str>,
 }
 
 fn adapter_view(
@@ -657,6 +659,7 @@ fn adapter_view(
             format!("{} in the console", adapter.bench_command()),
         ),
         launch_options: adapter.launch_options(),
+        anticheat: adapter.anticheat(),
     })
 }
 

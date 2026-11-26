@@ -62,6 +62,7 @@ windows-abre-el-juego-con = Windows abre el juego con prioridad Alta aunque Fram
 desactivar-optimizaciones-de-pantalla-completa = Desactivar optimizaciones de pantalla completa
 opcional-solo-para-este-juego = Opcional · solo para este juego · puede empeorar juegos DX12
 ajustes-del-juego = Ajustes del juego ·
+adapter-anticheat = · anticheat { $name } (sin proceso propio; no limita ningún ajuste)
 ajustes-de-video-recomendados = Ajustes de vídeo recomendados
 opcional-se-eligen-segun-tu = · opcional: se eligen según tu equipo
 bloquear-la-configuracion-del-juego = Bloquear la configuración del juego

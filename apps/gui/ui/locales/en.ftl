@@ -62,6 +62,7 @@ windows-abre-el-juego-con = Windows opens the game with High priority even when 
 desactivar-optimizaciones-de-pantalla-completa = Turn off fullscreen optimizations
 opcional-solo-para-este-juego = Optional · only for this game · may make DX12 games worse
 ajustes-del-juego = Game settings ·
+adapter-anticheat = · anti-cheat { $name } (no process of its own; does not limit any setting)
 ajustes-de-video-recomendados = Recommended video settings
 opcional-se-eligen-segun-tu = · optional: picked for your computer
 bloquear-la-configuracion-del-juego = Lock the game settings

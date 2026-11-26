@@ -245,6 +245,7 @@
     if (g.adapter) {
       setText('.adName', g.adapter.name); setText('.adCfg', g.adapter.cfg);
       setText('.adBench', g.adapter.bench); setText('.adOpts', g.adapter.launchOptions);
+      setText('.adAc', g.adapter.anticheat ? t('adapter-anticheat', { name: g.adapter.anticheat }) : '');
     }
     device();
   }
